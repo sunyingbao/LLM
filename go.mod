@@ -4,10 +4,12 @@ go 1.25.0
 
 require (
 	code.byted.org/flowdevops/fornax_sdk v1.2.59
+	code.byted.org/gopkg/tos v1.5.4
 	code.byted.org/overpass/ad_genai_lb_proxy v0.0.0-20251110085806-5c0d6807448b
 	code.byted.org/overpass/ad_site_creative_common_server v0.0.0-20260401130308-21c71d55c11a
 	code.byted.org/overpass/ad_site_creative_meta_server v0.0.0-20260625031545-56e7bc369f93
 	code.byted.org/overpass/lab_creative_model_gateway v0.0.0-20240531050809-42894aba4b4d
+	code.byted.org/videoarch/alpha-go-sdk v0.1.32
 	code.byted.org/videoarch/imagex-sdk-golang v1.0.21
 	code.byted.org/videoarch/uploader_v5 v1.0.31
 	github.com/bmatcuk/doublestar/v4 v4.10.0
@@ -91,7 +93,6 @@ require (
 	code.byted.org/gopkg/tccclient v1.6.0 // indirect
 	code.byted.org/gopkg/tccclient/v3 v3.0.4 // indirect
 	code.byted.org/gopkg/thrift v1.14.2 // indirect
-	code.byted.org/gopkg/tos v1.5.4 // indirect
 	code.byted.org/hystrix/hystrix-go v0.0.0-20190214095017-a2a890c81cd5 // indirect
 	code.byted.org/iespkg/bytedkits-go/goext v0.4.0 // indirect
 	code.byted.org/iespkg/retry-go v0.1.2 // indirect
@@ -149,7 +150,6 @@ require (
 	code.byted.org/trace/trace-client-go v1.3.7 // indirect
 	code.byted.org/ttarch/byteconf-cel-go v0.0.3 // indirect
 	code.byted.org/ttarch/spd_kitex_section v1.0.1 // indirect
-	code.byted.org/videoarch/alpha-go-sdk v0.1.32 // indirect
 	code.byted.org/videoarch/bktmeta-simple-sdk v1.0.21 // indirect
 	code.byted.org/videoarch/cdn_schedule_sdk v1.9.14-rc3 // indirect
 	code.byted.org/videoarch/env v1.0.8 // indirect

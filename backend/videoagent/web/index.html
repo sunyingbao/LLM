@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Video Agent Canvas</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <main class="app-shell">
+    <header class="topbar">
+      <div>
+        <div class="eyebrow">VIDEO AGENT</div>
+        <h1>广告视频工作台</h1>
+      </div>
+      <div class="topbar-actions">
+        <span id="run-status" class="status-pill">未运行</span>
+        <button id="run-button" class="primary">运行当前工作流</button>
+        <button id="retry-button" disabled>重试运行</button>
+        <button id="cancel-button" disabled>取消运行</button>
+      </div>
+    </header>
+
+    <section class="workspace">
+      <section class="canvas-panel">
+        <div class="panel-toolbar">
+          <div class="toolbar-group">
+            <button data-tool="select" class="tool-button active">选择</button>
+            <button data-tool="connect" class="tool-button">连线</button>
+            <select id="node-kind" aria-label="新增节点"></select>
+            <button id="add-node" class="tool-button">新增节点</button>
+            <button id="delete-node" class="tool-button">删除所选</button>
+            <button id="save-workflow" class="tool-button">保存画布</button>
+          </div>
+          <div class="toolbar-help">拖动节点调整布局，连线工具连接端口</div>
+        </div>
+        <div id="node-palette" class="node-palette" aria-label="节点面板"></div>
+        <div id="canvas" class="canvas" aria-label="工作流画布">
+          <svg id="edges" class="edges" aria-hidden="true"></svg>
+          <svg id="artifact-edges" class="artifact-edges" aria-hidden="true"></svg>
+          <div id="artifact-nodes" class="artifact-nodes"></div>
+          <div id="nodes" class="nodes"></div>
+        </div>
+      </section>
+
+      <aside class="side-panel">
+        <section class="input-card">
+          <div class="section-heading">
+            <div>
+              <div class="eyebrow">RUN INPUT</div>
+              <h2>创建视频任务</h2>
+            </div>
+          </div>
+          <label>商品名称<input id="product-name" value="软底厚底休闲鞋" /></label>
+          <label>商品图片 URL（每行一条）<textarea id="product-images" placeholder="https://example.com/product.png"></textarea></label>
+          <label>需求描述<textarea id="brief">请结合商品卖点生成一条短视频广告</textarea></label>
+          <div class="input-actions">
+            <button id="reset-workflow" class="secondary">恢复默认流程</button>
+            <span id="project-id" class="muted">project: demo</span>
+          </div>
+        </section>
+
+        <section class="conversation-card">
+          <div class="section-heading"><h2>Agent 对话</h2><span class="muted">运行观察</span></div>
+          <div id="messages" class="messages"></div>
+          <textarea id="agent-message" placeholder="例如：请生成一条商品广告"></textarea>
+          <button id="send-agent" class="secondary">发送给 Agent</button>
+        </section>
+
+        <section class="artifact-card">
+          <div class="section-heading"><h2>产物</h2><span id="artifact-count" class="muted">0 个</span></div>
+          <div id="artifacts" class="artifacts"></div>
+        </section>
+      </aside>
+    </section>
+  </main>
+  <script src="/app.js"></script>
+</body>
+</html>

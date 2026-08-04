@@ -1,0 +1,12 @@
+{
+  "provider": "fornax",
+  "model": "agent-supervisor-endpoint",
+  "api_key": "replace-with-model-api-key",
+  "base_url": "https://ark-cn-beijing.bytedance.net/api/v3",
+  "fornax": {
+    "app_id": 0,
+    "ak": "replace-with-fornax-ak",
+    "sk": "replace-with-fornax-sk",
+    "region": "cn-beijing"
+  }
+}

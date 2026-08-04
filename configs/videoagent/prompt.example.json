@@ -1,0 +1,43 @@
+{
+  "fornax": {
+    "app_id": 0,
+    "ak": "replace-with-fornax-ak",
+    "sk": "replace-with-fornax-sk",
+    "region": "cn-beijing"
+  },
+  "planner": {
+    "requirement": {
+      "key": "aic.aic_tool.user_req_analysis",
+      "bindings": {
+        "query": "brief",
+        "prod_name": "product_name",
+        "product_img": "product_images"
+      }
+    },
+    "clipscript": {
+      "key": "jichuang.creative.dr_script_e2e",
+      "bindings": {
+        "query": "brief",
+        "prod_name": "product_name",
+        "product_img": "product_images",
+        "requirement": "requirement",
+        "creative_brief": "requirement_markdown"
+      }
+    },
+    "competition": {
+      "key": "aic.jichuang_agent.infringing_items_detection_new_schema",
+      "model": "ad.genai.seedream_4_5",
+      "width": 1440,
+      "height": 2560
+    },
+    "tts": {
+      "key": "aic.aic_agent.aigc_prompttts_raw2"
+    },
+    "character": {
+      "key": "aic.aic_agent.aigc_planning",
+      "model": "gemini-3-pro-image-preview",
+      "width": 1024,
+      "height": 1536
+    }
+  }
+}
