@@ -10,12 +10,21 @@ import (
 	"time"
 )
 
-type storeData struct {
-	Runs     map[string]Run       `json:"runs"`
-	Receipts map[string]time.Time `json:"receipts"`
+type callbackEvent struct {
+	Provider string    `json:"provider"`
+	EventID  string    `json:"event_id"`
+	JobID    string    `json:"job_id"`
+	At       time.Time `json:"at"`
 }
 
-// Store persists workflow state in one atomically replaced JSON file.
+type storeData struct {
+	Runs     map[string]Run           `json:"runs"`
+	Receipts map[string]time.Time     `json:"receipts"`
+	Inbox    map[string]callbackEvent `json:"callback_inbox"`
+}
+
+// Store keeps all workflow state in one atomically replaced JSON file.
+// It is intentionally single-process; production must use a shared database.
 type Store struct {
 	path string
 	mu   sync.Mutex
@@ -50,6 +59,21 @@ func (store *Store) Get(_ context.Context, runID string) (Run, error) {
 	return run, nil
 }
 
+func (store *Store) List(_ context.Context) ([]Run, error) {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+
+	data, err := store.load()
+	if err != nil {
+		return nil, err
+	}
+	runs := make([]Run, 0, len(data.Runs))
+	for _, run := range data.Runs {
+		runs = append(runs, run)
+	}
+	return runs, nil
+}
+
 func (store *Store) claimReady(runID string) (command Command, claimed bool, err error) {
 	err = store.update(func(data *storeData) error {
 		run, exists := data.Runs[runID]
@@ -74,14 +98,32 @@ func (store *Store) claimReady(runID string) (command Command, claimed bool, err
 	return
 }
 
-func (store *Store) claimUnconfirmed(runID string) (command Command, claimed bool, err error) {
+func (store *Store) markSubmitStarted(command Command) error {
+	return store.update(func(data *storeData) error {
+		run, exists := data.Runs[command.RunID]
+		if !exists {
+			return fmt.Errorf("run not found: %s", command.RunID)
+		}
+		index := findNodeRun(run, command.NodeRun)
+		if index < 0 || run.NodeRuns[index].State != Running {
+			return fmt.Errorf("node is not ready to submit: %s/%s", command.NodeRun.NodeID, command.NodeRun.InstanceKey)
+		}
+		run.NodeRuns[index].SubmitStarted = true
+		data.Runs[command.RunID] = run
+		return nil
+	})
+}
+
+// claimSubmitted claims a submission that may have crossed a process crash.
+// Refresh must query by job ID or submit key; it must never submit again.
+func (store *Store) claimSubmitted(runID string) (command Command, claimed bool, err error) {
 	err = store.update(func(data *storeData) error {
 		run, exists := data.Runs[runID]
 		if !exists {
 			return fmt.Errorf("run not found: %s", runID)
 		}
 		for _, node := range run.NodeRuns {
-			if node.InstanceKey != "" && node.State == Running && node.Provider != "" && node.JobID == "" {
+			if node.InstanceKey != "" && node.State == Running && node.SubmitStarted {
 				command = newCommand(run, node)
 				claimed = true
 				return nil
@@ -99,11 +141,12 @@ func (store *Store) claimWaiting(runID string, skipped map[string]bool) (command
 			return fmt.Errorf("run not found: %s", runID)
 		}
 		for index := range run.NodeRuns {
-			if run.NodeRuns[index].State != Waiting || skipped[nodeRunKey(run.NodeRuns[index])] {
+			node := &run.NodeRuns[index]
+			if node.State != Waiting || skipped[nodeRunKey(*node)] {
 				continue
 			}
-			run.NodeRuns[index].State = Running
-			command = newCommand(run, run.NodeRuns[index])
+			node.State = Running
+			command = newCommand(run, *node)
 			data.Runs[runID] = run
 			claimed = true
 			return nil
@@ -113,6 +156,7 @@ func (store *Store) claimWaiting(runID string, skipped map[string]bool) (command
 	return
 }
 
+// claimCallback stores an early callback until the submission is durable.
 func (store *Store) claimCallback(provider, eventID, jobID string) (command Command, claimed bool, err error) {
 	err = store.update(func(data *storeData) error {
 		receiptKey := provider + ":" + eventID
@@ -133,6 +177,7 @@ func (store *Store) claimCallback(provider, eventID, jobID string) (command Comm
 				return nil
 			}
 		}
+		data.Inbox[receiptKey] = callbackEvent{Provider: provider, EventID: eventID, JobID: jobID, At: time.Now().UTC()}
 		return nil
 	})
 	return
@@ -161,23 +206,25 @@ func (store *Store) apply(command Command, result Result) error {
 		if result.JobID != "" {
 			node.JobID = result.JobID
 		}
-		if result.Output != nil {
-			node.Output = result.Output
-		}
 		if result.Artifacts != nil {
 			node.Artifacts = result.Artifacts
 		}
 		if result.FallbackSubmitted {
 			node.FallbackSubmitted = true
 		}
+		if result.ResetSubmission {
+			node.SubmitStarted = false
+		}
 		if result.Message != "" {
 			node.Message = result.Message
 		}
 		for _, child := range result.Children {
-			if findNodeRun(run, child) < 0 {
-				run.NodeRuns = append(run.NodeRuns, child)
+			if findNodeRun(run, child) >= 0 {
+				return fmt.Errorf("duplicate node instance: %s/%s", child.NodeID, child.InstanceKey)
 			}
+			run.NodeRuns = append(run.NodeRuns, child)
 		}
+		consumeCallbackInbox(data, node)
 		settleResourceController(&run, nodeID)
 		data.Runs[command.RunID] = run
 		return nil
@@ -196,6 +243,34 @@ func (store *Store) requeue(command Command) error {
 		}
 		run.NodeRuns[index].State = Waiting
 		data.Runs[command.RunID] = run
+		return nil
+	})
+}
+
+func (store *Store) recover(runID string) error {
+	return store.update(func(data *storeData) error {
+		run, exists := data.Runs[runID]
+		if !exists {
+			return fmt.Errorf("run not found: %s", runID)
+		}
+		for index := range run.NodeRuns {
+			node := &run.NodeRuns[index]
+			if node.State != Running {
+				continue
+			}
+			if node.InstanceKey == "" {
+				if !hasChildren(run, node.NodeID) {
+					node.State = Pending
+				}
+				continue
+			}
+			if node.SubmitStarted {
+				node.State = Waiting
+			} else {
+				node.State = Pending
+			}
+		}
+		data.Runs[runID] = run
 		return nil
 	})
 }
@@ -220,7 +295,7 @@ func (store *Store) load() (storeData, error) {
 	}
 	payload, err := os.ReadFile(store.path)
 	if os.IsNotExist(err) {
-		return storeData{Runs: make(map[string]Run), Receipts: make(map[string]time.Time)}, nil
+		return storeData{Runs: map[string]Run{}, Receipts: map[string]time.Time{}, Inbox: map[string]callbackEvent{}}, nil
 	}
 	if err != nil {
 		return storeData{}, err
@@ -231,10 +306,13 @@ func (store *Store) load() (storeData, error) {
 		return storeData{}, err
 	}
 	if data.Runs == nil {
-		data.Runs = make(map[string]Run)
+		data.Runs = map[string]Run{}
 	}
 	if data.Receipts == nil {
-		data.Receipts = make(map[string]time.Time)
+		data.Receipts = map[string]time.Time{}
+	}
+	if data.Inbox == nil {
+		data.Inbox = map[string]callbackEvent{}
 	}
 	return data, nil
 }
@@ -258,15 +336,36 @@ func (store *Store) save(data storeData) error {
 	return nil
 }
 
+func consumeCallbackInbox(data *storeData, node *NodeRun) {
+	if data == nil || node == nil || node.Provider == "" || node.JobID == "" {
+		return
+	}
+	for receiptKey, event := range data.Inbox {
+		if event.Provider != node.Provider || event.JobID != node.JobID {
+			continue
+		}
+		if node.State == Waiting {
+			node.State = Running
+		}
+		data.Receipts[receiptKey] = event.At
+		delete(data.Inbox, receiptKey)
+		return
+	}
+}
+
 func newCommand(run Run, node NodeRun) Command {
 	return Command{RunID: run.ID, Input: run.Input, NodeRun: node, Inputs: inputArtifacts(run, node)}
 }
 
 func providerFor(kind NodeKind) string {
-	if kind == PromptTTSNode {
+	switch kind {
+	case PromptTTSNode:
 		return "tts"
+	case PreviewNode, FinalVideoNode:
+		return "video"
+	default:
+		return "image"
 	}
-	return "image"
 }
 
 func ready(run Run, node NodeRun) bool {
@@ -282,13 +381,8 @@ func ready(run Run, node NodeRun) bool {
 		return false
 	}
 	for _, edge := range run.Workflow.Edges {
-		if edge.To != node.NodeID {
-			continue
-		}
-		for _, dependency := range run.NodeRuns {
-			if dependency.NodeID == edge.From && dependency.InstanceKey == "" && dependency.State != Succeeded {
-				return false
-			}
+		if edge.ToNodeID == node.NodeID && !controllerSucceeded(run, edge.FromNodeID) {
+			return false
 		}
 	}
 	return true
@@ -297,11 +391,11 @@ func ready(run Run, node NodeRun) bool {
 func inputArtifacts(run Run, node NodeRun) []Artifact {
 	artifacts := make([]Artifact, 0)
 	for _, edge := range run.Workflow.Edges {
-		if edge.To != node.NodeID {
+		if edge.ToNodeID != node.NodeID || !controllerSucceeded(run, edge.FromNodeID) {
 			continue
 		}
 		for _, dependency := range run.NodeRuns {
-			if dependency.NodeID != edge.From || dependency.InstanceKey != "" || dependency.State != Succeeded {
+			if dependency.NodeID != edge.FromNodeID {
 				continue
 			}
 			for _, artifact := range dependency.Artifacts {
@@ -312,6 +406,15 @@ func inputArtifacts(run Run, node NodeRun) []Artifact {
 		}
 	}
 	return artifacts
+}
+
+func controllerSucceeded(run Run, nodeID string) bool {
+	for _, node := range run.NodeRuns {
+		if node.NodeID == nodeID && node.InstanceKey == "" {
+			return node.State == Succeeded
+		}
+	}
+	return false
 }
 
 func findNodeRun(run Run, target NodeRun) int {
@@ -327,6 +430,15 @@ func nodeRunKey(node NodeRun) string {
 	return node.NodeID + ":" + node.InstanceKey
 }
 
+func hasChildren(run Run, nodeID string) bool {
+	for _, node := range run.NodeRuns {
+		if node.NodeID == nodeID && node.InstanceKey != "" {
+			return true
+		}
+	}
+	return false
+}
+
 func settleResourceController(run *Run, nodeID string) {
 	if run == nil {
 		return
@@ -339,9 +451,9 @@ func settleResourceController(run *Run, nodeID string) {
 		}
 		if node.InstanceKey == "" {
 			controllerIndex = index
-			continue
+		} else {
+			children = append(children, node)
 		}
-		children = append(children, node)
 	}
 	if controllerIndex < 0 || !run.NodeRuns[controllerIndex].Kind.resource() || len(children) == 0 {
 		return

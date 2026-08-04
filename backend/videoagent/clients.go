@@ -14,7 +14,7 @@ type Scene struct {
 	Visual    string `json:"visual"`
 }
 
-type Storyboard struct {
+type ClipScript struct {
 	Title  string  `json:"title"`
 	Scenes []Scene `json:"scenes"`
 }
@@ -22,6 +22,7 @@ type Storyboard struct {
 type ResourcePlan struct {
 	ID               string   `json:"id"`
 	ParentArtifactID string   `json:"parent_artifact_id"`
+	ArtifactIDs      []string `json:"artifact_ids,omitempty"`
 	Prompt           string   `json:"prompt,omitempty"`
 	Speaker          string   `json:"speaker,omitempty"`
 	Text             string   `json:"text,omitempty"`
@@ -32,10 +33,10 @@ type ResourcePlan struct {
 
 type Planner interface {
 	AnalyzeRequirement(context.Context, RunInput) (Requirement, error)
-	CreateStoryboard(context.Context, Requirement) (Storyboard, error)
-	PlanCompetition(context.Context, Storyboard, RunInput) ([]ResourcePlan, error)
-	PlanTTS(context.Context, Storyboard) ([]ResourcePlan, error)
-	PlanCharacterReferences(context.Context, Storyboard, RunInput) ([]ResourcePlan, error)
+	CreateClipScript(context.Context, Requirement) (ClipScript, error)
+	PlanCompetition(context.Context, ClipScript, RunInput) ([]ResourcePlan, error)
+	PlanTTS(context.Context, ClipScript) ([]ResourcePlan, error)
+	PlanCharacterReferences(context.Context, ClipScript, RunInput) ([]ResourcePlan, error)
 }
 
 type ImageRequest struct {
@@ -86,6 +87,20 @@ type TTSClient interface {
 	FindTTSBySubmitKey(context.Context, string) (SubmittedJob, bool, error)
 }
 
+type VideoRequest struct {
+	Inputs    []Artifact
+	SubmitKey string
+}
+
+type VideoClient interface {
+	SubmitPreview(context.Context, VideoRequest) (SubmittedJob, error)
+	GetPreview(context.Context, string) (JobStatus, error)
+	FindPreviewBySubmitKey(context.Context, string) (SubmittedJob, bool, error)
+	SubmitFinalVideo(context.Context, VideoRequest) (SubmittedJob, error)
+	GetFinalVideo(context.Context, string) (JobStatus, error)
+	FindFinalVideoBySubmitKey(context.Context, string) (SubmittedJob, bool, error)
+}
+
 type ImageAuditor interface {
 	CheckImage(context.Context, string) error
 }
@@ -98,6 +113,7 @@ type Clients struct {
 	Planner Planner
 	Image   ImageClient
 	TTS     TTSClient
+	Video   VideoClient
 	Audit   ImageAuditor
 	Shield  PromptShield
 }

@@ -8,22 +8,25 @@ import (
 )
 
 func TestRunCompletesAndReusesTTSExampleAudio(t *testing.T) {
-	runner, store, images, tts := testRunner(t)
+	runner, store, images, tts, videos := testRunner(t)
 	run, err := runner.StartRun(context.Background(), "project-1", RunInput{ProductName: "shoe", Brief: "summer video"})
 	if err != nil {
 		t.Fatalf("StartRun() error = %v", err)
 	}
-	images.succeedAll()
-	tts.succeedAll()
-	if err := runner.Poll(context.Background(), run.ID); err != nil {
-		t.Fatalf("Poll() error = %v", err)
+	for range 3 {
+		images.succeedAll()
+		tts.succeedAll()
+		videos.succeedAll()
+		if err := runner.Poll(context.Background(), run.ID); err != nil {
+			t.Fatalf("Poll() error = %v", err)
+		}
 	}
 
 	run, err = store.Get(context.Background(), run.ID)
 	if err != nil {
 		t.Fatalf("Get() error = %v", err)
 	}
-	for _, nodeID := range []string{"requirement", "storyboard", "competition", "tts", "character_reference"} {
+	for _, nodeID := range []string{"requirement", "clipscript", "competition", "tts", "character_reference", "preview", "finalvideo"} {
 		if node := nodeRun(run, nodeID, ""); node.State != Succeeded {
 			t.Fatalf("%s state = %s, want succeeded", nodeID, node.State)
 		}
@@ -39,7 +42,7 @@ func TestRunCompletesAndReusesTTSExampleAudio(t *testing.T) {
 	}
 
 	competition := nodeRun(run, "competition", "competition-1").Artifacts
-	if len(competition) != 2 || competition[1].Kind != "storyboard_annotation" {
+	if len(competition) != 2 || competition[1].Kind != "clipscript_annotation" {
 		t.Fatalf("competition artifacts = %#v, want image plus separate annotation", competition)
 	}
 	if got := len(images.submissions); got != 2 {
@@ -51,7 +54,7 @@ func TestRunCompletesAndReusesTTSExampleAudio(t *testing.T) {
 }
 
 func TestUncertainSubmissionIsRecoveredBySubmitKeyWithoutResubmitting(t *testing.T) {
-	runner, store, _, tts := testRunner(t)
+	runner, store, _, tts, _ := testRunner(t)
 	tts.submitErr = fmt.Errorf("connection reset after submit")
 	run, err := runner.StartRun(context.Background(), "project-1", RunInput{ProductName: "shoe"})
 	if err != nil {
@@ -86,7 +89,7 @@ func TestUncertainSubmissionIsRecoveredBySubmitKeyWithoutResubmitting(t *testing
 }
 
 func TestReconcileRecoversSubmissionBeforeJobIDIsPersisted(t *testing.T) {
-	runner, store, _, tts := testRunner(t)
+	runner, store, _, tts, _ := testRunner(t)
 	run, err := runner.StartRun(context.Background(), "project-1", RunInput{ProductName: "shoe"})
 	if err != nil {
 		t.Fatalf("StartRun() error = %v", err)
@@ -108,8 +111,8 @@ func TestReconcileRecoversSubmissionBeforeJobIDIsPersisted(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewRunner() after restart error = %v", err)
 	}
-	if err := resumedRunner.Reconcile(context.Background(), run.ID); err != nil {
-		t.Fatalf("Reconcile() error = %v", err)
+	if err := resumedRunner.Recover(context.Background(), run.ID); err != nil {
+		t.Fatalf("Recover() error = %v", err)
 	}
 	run, err = store.Get(context.Background(), run.ID)
 	if err != nil {
@@ -124,7 +127,7 @@ func TestReconcileRecoversSubmissionBeforeJobIDIsPersisted(t *testing.T) {
 }
 
 func TestFailedResourceDoesNotBlockItsController(t *testing.T) {
-	runner, store, images, tts := testRunner(t)
+	runner, store, images, tts, _ := testRunner(t)
 	run, err := runner.StartRun(context.Background(), "project-1", RunInput{ProductName: "shoe"})
 	if err != nil {
 		t.Fatalf("StartRun() error = %v", err)
@@ -152,7 +155,7 @@ func TestFailedResourceDoesNotBlockItsController(t *testing.T) {
 }
 
 func TestCallbackIsIdempotentAndCharacterUsesOneFallback(t *testing.T) {
-	runner, store, images, tts := testRunner(t)
+	runner, store, images, tts, _ := testRunner(t)
 	run, err := runner.StartRun(context.Background(), "project-1", RunInput{ProductName: "shoe"})
 	if err != nil {
 		t.Fatalf("StartRun() error = %v", err)
@@ -203,21 +206,23 @@ func TestCallbackIsIdempotentAndCharacterUsesOneFallback(t *testing.T) {
 	}
 }
 
-func testRunner(t *testing.T) (*Runner, *Store, *fakeImages, *fakeTTS) {
+func testRunner(t *testing.T) (*Runner, *Store, *fakeImages, *fakeTTS, *fakeVideos) {
 	t.Helper()
 	images := newFakeImages()
 	tts := newFakeTTS()
+	videos := newFakeVideos()
 	runner, err := NewRunner(NewStore(t.TempDir()+"/workflow.json"), Clients{
 		Planner: testPlanner{},
 		Image:   images,
 		TTS:     tts,
+		Video:   videos,
 		Audit:   allowAudit{},
 		Shield:  allowShield{},
 	})
 	if err != nil {
 		t.Fatalf("NewRunner() error = %v", err)
 	}
-	return runner, runner.store, images, tts
+	return runner, runner.store, images, tts, videos
 }
 
 func nodeRun(run Run, nodeID, instanceKey string) NodeRun {
@@ -235,19 +240,19 @@ func (testPlanner) AnalyzeRequirement(context.Context, RunInput) (Requirement, e
 	return Requirement{Objective: "sell shoes"}, nil
 }
 
-func (testPlanner) CreateStoryboard(context.Context, Requirement) (Storyboard, error) {
-	return Storyboard{Title: "shoe story", Scenes: []Scene{{ID: "scene-1", Voiceover: "comfortable shoes"}}}, nil
+func (testPlanner) CreateClipScript(context.Context, Requirement) (ClipScript, error) {
+	return ClipScript{Title: "shoe story", Scenes: []Scene{{ID: "scene-1", Voiceover: "comfortable shoes"}}}, nil
 }
 
-func (testPlanner) PlanCompetition(context.Context, Storyboard, RunInput) ([]ResourcePlan, error) {
+func (testPlanner) PlanCompetition(context.Context, ClipScript, RunInput) ([]ResourcePlan, error) {
 	return []ResourcePlan{{ID: "competition-1", Prompt: "shoe on street", Model: "primary"}}, nil
 }
 
-func (testPlanner) PlanTTS(context.Context, Storyboard) ([]ResourcePlan, error) {
+func (testPlanner) PlanTTS(context.Context, ClipScript) ([]ResourcePlan, error) {
 	return []ResourcePlan{{ID: "speaker-1", Speaker: "narrator", Text: "comfortable shoes"}}, nil
 }
 
-func (testPlanner) PlanCharacterReferences(context.Context, Storyboard, RunInput) ([]ResourcePlan, error) {
+func (testPlanner) PlanCharacterReferences(context.Context, ClipScript, RunInput) ([]ResourcePlan, error) {
 	return []ResourcePlan{{ID: "character-1", Prompt: "young woman", Model: "primary", FallbackModel: "fallback"}}, nil
 }
 
@@ -324,6 +329,54 @@ func (tts *fakeTTS) FindTTSBySubmitKey(_ context.Context, key string) (Submitted
 func (tts *fakeTTS) succeedAll() {
 	for jobID := range tts.jobs {
 		tts.jobs[jobID] = JobStatus{State: JobSucceeded, ExampleURI: "example://speaker-1"}
+	}
+}
+
+type fakeVideos struct {
+	jobsByKey map[string]SubmittedJob
+	jobs      map[string]JobStatus
+}
+
+func newFakeVideos() *fakeVideos {
+	return &fakeVideos{jobsByKey: make(map[string]SubmittedJob), jobs: make(map[string]JobStatus)}
+}
+
+func (videos *fakeVideos) SubmitPreview(_ context.Context, request VideoRequest) (SubmittedJob, error) {
+	return videos.submit("preview", request.SubmitKey)
+}
+
+func (videos *fakeVideos) GetPreview(_ context.Context, jobID string) (JobStatus, error) {
+	return videos.jobs[jobID], nil
+}
+
+func (videos *fakeVideos) FindPreviewBySubmitKey(_ context.Context, key string) (SubmittedJob, bool, error) {
+	job, found := videos.jobsByKey[key]
+	return job, found, nil
+}
+
+func (videos *fakeVideos) SubmitFinalVideo(_ context.Context, request VideoRequest) (SubmittedJob, error) {
+	return videos.submit("finalvideo", request.SubmitKey)
+}
+
+func (videos *fakeVideos) GetFinalVideo(_ context.Context, jobID string) (JobStatus, error) {
+	return videos.jobs[jobID], nil
+}
+
+func (videos *fakeVideos) FindFinalVideoBySubmitKey(_ context.Context, key string) (SubmittedJob, bool, error) {
+	job, found := videos.jobsByKey[key]
+	return job, found, nil
+}
+
+func (videos *fakeVideos) submit(kind, key string) (SubmittedJob, error) {
+	job := SubmittedJob{Provider: "video", JobID: fmt.Sprintf("%s-%d", kind, len(videos.jobs)+1)}
+	videos.jobsByKey[key] = job
+	videos.jobs[job.JobID] = JobStatus{State: JobPending}
+	return job, nil
+}
+
+func (videos *fakeVideos) succeedAll() {
+	for jobID := range videos.jobs {
+		videos.jobs[jobID] = JobStatus{State: JobSucceeded, URI: "video://" + jobID, URL: "https://example/" + jobID}
 	}
 }
 

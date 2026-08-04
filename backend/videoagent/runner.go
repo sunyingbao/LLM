@@ -9,26 +9,34 @@ import (
 type Runner struct {
 	store   *Store
 	handler nodeHandler
+	catalog NodeCatalog
 }
 
 func NewRunner(store *Store, clients Clients) (*Runner, error) {
 	if store == nil {
 		return nil, fmt.Errorf("workflow store is nil")
 	}
-	if clients.Planner == nil || clients.Image == nil || clients.TTS == nil || clients.Audit == nil || clients.Shield == nil {
+	if clients.Planner == nil || clients.Image == nil || clients.TTS == nil || clients.Video == nil || clients.Audit == nil || clients.Shield == nil {
 		return nil, fmt.Errorf("video agent clients are incomplete")
 	}
-	return &Runner{store: store, handler: nodeHandler{clients: clients}}, nil
+	return &Runner{store: store, handler: nodeHandler{clients: clients}, catalog: defaultNodeCatalog()}, nil
 }
 
 // StartRun persists the static workflow before executing any model or remote call.
 func (runner *Runner) StartRun(ctx context.Context, projectID string, input RunInput) (run Run, err error) {
+	return runner.StartWorkflow(ctx, projectID, VideoWorkflow(), input)
+}
+
+// StartWorkflow validates a user-edited graph and stores an immutable Run snapshot.
+func (runner *Runner) StartWorkflow(ctx context.Context, projectID string, workflow Workflow, input RunInput) (run Run, err error) {
 	if projectID == "" {
 		return run, fmt.Errorf("project id is empty")
 	}
+	if err = runner.catalog.validate(workflow); err != nil {
+		return run, err
+	}
 
 	runID := newID("run")
-	workflow := StoryboardWorkflow()
 	nodeRuns := make([]NodeRun, 0, len(workflow.Nodes))
 	for _, node := range workflow.Nodes {
 		nodeRuns = append(nodeRuns, NodeRun{
@@ -38,7 +46,13 @@ func (runner *Runner) StartRun(ctx context.Context, projectID string, input RunI
 			SubmitKey: newSubmitKey(runID, node.ID, ""),
 		})
 	}
-	run = Run{ID: runID, ProjectID: projectID, Workflow: workflow, Input: input, NodeRuns: nodeRuns}
+	run = Run{
+		ID:        runID,
+		ProjectID: projectID,
+		Workflow:  WorkflowVersion{ID: newID("workflow"), ProjectID: projectID, Revision: 1, Workflow: cloneWorkflow(workflow)},
+		Input:     input,
+		NodeRuns:  nodeRuns,
+	}
 	if err = runner.store.Create(ctx, run); err != nil {
 		return run, err
 	}
@@ -51,7 +65,7 @@ func (runner *Runner) StartRun(ctx context.Context, projectID string, input RunI
 // Advance executes ready nodes until the graph only contains waiting or blocked nodes.
 func (runner *Runner) Advance(ctx context.Context, runID string) error {
 	for {
-		command, claimed, err := runner.store.claimUnconfirmed(runID)
+		command, claimed, err := runner.store.claimSubmitted(runID)
 		if err != nil {
 			return err
 		}
@@ -70,6 +84,11 @@ func (runner *Runner) Advance(ctx context.Context, runID string) error {
 			return nil
 		}
 
+		if command.NodeRun.InstanceKey != "" {
+			if err := runner.store.markSubmitStarted(command); err != nil {
+				return err
+			}
+		}
 		result, err := runner.handler.Start(ctx, command)
 		if err != nil {
 			result = failedResult(command, err)
@@ -80,25 +99,9 @@ func (runner *Runner) Advance(ctx context.Context, runID string) error {
 	}
 }
 
-// Reconcile only queries jobs whose submission result was not durably recorded.
-func (runner *Runner) Reconcile(ctx context.Context, runID string) error {
-	for {
-		command, claimed, err := runner.store.claimUnconfirmed(runID)
-		if err != nil {
-			return err
-		}
-		if !claimed {
-			return runner.Advance(ctx, runID)
-		}
-		if err := runner.refresh(ctx, command); err != nil {
-			return err
-		}
-	}
-}
-
 // Poll uses the same refresh path as callbacks and never submits a new job.
 func (runner *Runner) Poll(ctx context.Context, runID string) error {
-	if err := runner.Reconcile(ctx, runID); err != nil {
+	if err := runner.Advance(ctx, runID); err != nil {
 		return err
 	}
 	skipped := make(map[string]bool)
@@ -115,6 +118,14 @@ func (runner *Runner) Poll(ctx context.Context, runID string) error {
 			return err
 		}
 	}
+}
+
+// Recover restores a Run after process restart without resubmitting a started job.
+func (runner *Runner) Recover(ctx context.Context, runID string) error {
+	if err := runner.store.recover(runID); err != nil {
+		return err
+	}
+	return runner.Poll(ctx, runID)
 }
 
 // OnCallback deduplicates delivery, refreshes the existing job, then advances dependents.

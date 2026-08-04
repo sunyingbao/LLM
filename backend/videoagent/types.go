@@ -1,5 +1,5 @@
 // Package videoagent owns the recoverable workflow from requirement analysis
-// to storyboard resource preparation.
+// through clipscript resources, preview, and finalvideo.
 package videoagent
 
 import (
@@ -13,10 +13,12 @@ type NodeKind string
 
 const (
 	RequirementNode          NodeKind = "requirement"
-	StoryboardNode           NodeKind = "storyboard"
+	ClipScriptNode           NodeKind = "clipscript"
 	CompetitionReferenceNode NodeKind = "competition_reference_image"
 	PromptTTSNode            NodeKind = "prompt_tts"
 	CharacterReferenceNode   NodeKind = "character_reference_image"
+	PreviewNode              NodeKind = "preview"
+	FinalVideoNode           NodeKind = "finalvideo"
 )
 
 type NodeState string
@@ -29,36 +31,59 @@ const (
 	Failed    NodeState = "failed"
 )
 
-type Node struct {
-	ID   string   `json:"node_id"`
-	Kind NodeKind `json:"kind"`
+type WorkflowNode struct {
+	ID     string          `json:"node_id"`
+	Kind   NodeKind        `json:"kind"`
+	Config json.RawMessage `json:"config,omitempty"`
+	Layout NodeLayout      `json:"layout,omitempty"`
 }
 
-type Edge struct {
-	From string `json:"from_node"`
-	To   string `json:"to_node"`
+type NodeLayout struct {
+	X float64 `json:"x"`
+	Y float64 `json:"y"`
+}
+
+type WorkflowEdge struct {
+	FromNodeID string `json:"from_node"`
+	FromPort   string `json:"from_port,omitempty"`
+	ToNodeID   string `json:"to_node"`
+	ToPort     string `json:"to_port,omitempty"`
+}
+
+type Workflow struct {
+	Nodes []WorkflowNode `json:"nodes"`
+	Edges []WorkflowEdge `json:"edges"`
 }
 
 type WorkflowVersion struct {
-	Nodes []Node `json:"nodes"`
-	Edges []Edge `json:"edges"`
+	ID        string `json:"workflow_version_id"`
+	ProjectID string `json:"project_id"`
+	Revision  int    `json:"revision"`
+	Workflow
 }
 
-// StoryboardWorkflow is immutable for a Run once it has been persisted.
-func StoryboardWorkflow() WorkflowVersion {
-	return WorkflowVersion{
-		Nodes: []Node{
+// VideoWorkflow returns the default workflow used by a new local Run.
+func VideoWorkflow() Workflow {
+	return Workflow{
+		Nodes: []WorkflowNode{
 			{ID: "requirement", Kind: RequirementNode},
-			{ID: "storyboard", Kind: StoryboardNode},
+			{ID: "clipscript", Kind: ClipScriptNode},
 			{ID: "competition", Kind: CompetitionReferenceNode},
 			{ID: "tts", Kind: PromptTTSNode},
 			{ID: "character_reference", Kind: CharacterReferenceNode},
+			{ID: "preview", Kind: PreviewNode},
+			{ID: "finalvideo", Kind: FinalVideoNode},
 		},
-		Edges: []Edge{
-			{From: "requirement", To: "storyboard"},
-			{From: "storyboard", To: "competition"},
-			{From: "storyboard", To: "tts"},
-			{From: "storyboard", To: "character_reference"},
+		Edges: []WorkflowEdge{
+			{FromNodeID: "requirement", FromPort: "requirement", ToNodeID: "clipscript", ToPort: "requirement"},
+			{FromNodeID: "clipscript", FromPort: "clipscript", ToNodeID: "competition", ToPort: "clipscript"},
+			{FromNodeID: "clipscript", FromPort: "clipscript", ToNodeID: "tts", ToPort: "clipscript"},
+			{FromNodeID: "clipscript", FromPort: "clipscript", ToNodeID: "character_reference", ToPort: "clipscript"},
+			{FromNodeID: "clipscript", FromPort: "clipscript", ToNodeID: "preview", ToPort: "clipscript"},
+			{FromNodeID: "competition", FromPort: "competition_reference_image", ToNodeID: "preview", ToPort: "resources"},
+			{FromNodeID: "tts", FromPort: "voice_preview", ToNodeID: "preview", ToPort: "resources"},
+			{FromNodeID: "character_reference", FromPort: "character_reference_image", ToNodeID: "preview", ToPort: "resources"},
+			{FromNodeID: "preview", FromPort: "preview_video", ToNodeID: "finalvideo", ToPort: "preview_video"},
 		},
 	}
 }
@@ -89,6 +114,7 @@ type NodeRun struct {
 	Output            json.RawMessage `json:"output,omitempty"`
 	Artifacts         []Artifact      `json:"artifacts,omitempty"`
 	FallbackSubmitted bool            `json:"fallback_submitted,omitempty"`
+	SubmitStarted     bool            `json:"submit_started,omitempty"`
 	Message           string          `json:"message,omitempty"`
 }
 
@@ -112,10 +138,10 @@ type Result struct {
 	Provider          string
 	JobID             string
 	ClearJobID        bool
-	Output            json.RawMessage
 	Artifacts         []Artifact
 	Children          []NodeRun
 	FallbackSubmitted bool
+	ResetSubmission   bool
 	Message           string
 }
 
@@ -124,7 +150,12 @@ func (state NodeState) terminal() bool {
 }
 
 func (kind NodeKind) resource() bool {
-	return kind == CompetitionReferenceNode || kind == PromptTTSNode || kind == CharacterReferenceNode
+	switch kind {
+	case CompetitionReferenceNode, PromptTTSNode, CharacterReferenceNode, PreviewNode, FinalVideoNode:
+		return true
+	default:
+		return false
+	}
 }
 
 var idSequence atomic.Uint64
