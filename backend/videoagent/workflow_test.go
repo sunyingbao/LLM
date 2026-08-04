@@ -34,6 +34,14 @@ func TestWorkflowValidationRejectsCycle(t *testing.T) {
 	}
 }
 
+func TestStartWorkflowRejectsEmptyCanvas(t *testing.T) {
+	runner, _, _, _, _ := testRunner(t)
+	_, err := runner.StartWorkflow(context.Background(), "project-1", Workflow{}, RunInput{ProductName: "shoe"})
+	if err == nil || !strings.Contains(err.Error(), "no nodes") {
+		t.Fatalf("StartWorkflow() error = %v, want empty workflow error", err)
+	}
+}
+
 func TestStartWorkflowPersistsCustomLayoutAndVersion(t *testing.T) {
 	runner, store, _, _, _ := testRunner(t)
 	workflow := Workflow{

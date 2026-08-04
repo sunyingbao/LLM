@@ -3,10 +3,16 @@ package videoagent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
+	"time"
+
+	"github.com/cloudwego/eino/components/model"
 )
 
 type LocalJob struct {
@@ -20,14 +26,21 @@ type LocalJob struct {
 }
 
 type localJobData struct {
-	Jobs       map[string]LocalJob `json:"jobs"`
-	SubmitKeys map[string]string   `json:"submit_keys"`
+	Revision   int64               `json:"revision" bson:"revision"`
+	Jobs       map[string]LocalJob `json:"jobs" bson:"jobs"`
+	SubmitKeys map[string]string   `json:"submit_keys" bson:"submit_keys"`
 }
 
-// LocalJobs is the JSON-backed replacement for a task database in local mode.
+type jobStateBackend interface {
+	Load() (localJobData, error)
+	Save(localJobData) error
+}
+
+// LocalJobs keeps task submission and delivery semantics independent of storage.
 type LocalJobs struct {
-	path string
-	mu   sync.Mutex
+	path    string
+	backend jobStateBackend
+	mu      sync.Mutex
 }
 
 func NewLocalJobs(path string) *LocalJobs {
@@ -36,6 +49,7 @@ func NewLocalJobs(path string) *LocalJobs {
 
 func (jobs *LocalJobs) Submit(provider string, kind NodeKind, submitKey string) (job LocalJob, created bool, err error) {
 	err = jobs.update(func(data *localJobData) error {
+		job, created = LocalJob{}, false
 		if jobID := data.SubmitKeys[submitKey]; jobID != "" {
 			job = data.Jobs[jobID]
 			return nil
@@ -86,6 +100,7 @@ func (jobs *LocalJobs) Status(jobID string) (JobStatus, error) {
 func (jobs *LocalJobs) Complete(jobID string) (LocalJob, error) {
 	var completed LocalJob
 	err := jobs.update(func(data *localJobData) error {
+		completed = LocalJob{}
 		job, exists := data.Jobs[jobID]
 		if !exists {
 			return fmt.Errorf("job not found: %s", jobID)
@@ -99,6 +114,21 @@ func (jobs *LocalJobs) Complete(jobID string) (LocalJob, error) {
 		return nil
 	})
 	return completed, err
+}
+
+func (jobs *LocalJobs) Cancel(jobID string) error {
+	return jobs.update(func(data *localJobData) error {
+		job, exists := data.Jobs[jobID]
+		if !exists {
+			return fmt.Errorf("job not found: %s", jobID)
+		}
+		if job.State == JobPending {
+			job.State = JobFailed
+			job.Status = JobStatus{State: JobFailed, Message: "job canceled"}
+			data.Jobs[jobID] = job
+		}
+		return nil
+	})
 }
 
 func (jobs *LocalJobs) PendingDelivery() ([]string, error) {
@@ -134,20 +164,37 @@ func (jobs *LocalJobs) update(change func(*localJobData) error) error {
 	jobs.mu.Lock()
 	defer jobs.mu.Unlock()
 
-	data, err := jobs.load()
-	if err != nil {
-		return err
+	for attempt := 0; attempt < 3; attempt++ {
+		data, err := jobs.load()
+		if err != nil {
+			return err
+		}
+		if err := change(&data); err != nil {
+			return err
+		}
+		if err := jobs.save(data); err != nil {
+			if jobs.backend != nil && strings.Contains(err.Error(), "changed before save") && attempt < 2 {
+				continue
+			}
+			return err
+		}
+		return nil
 	}
-	if err := change(&data); err != nil {
-		return err
-	}
-	return jobs.save(data)
+	return fmt.Errorf("mongo job state changed after retries")
 }
 
 func (jobs *LocalJobs) load() (localJobData, error) {
+	if jobs.backend != nil {
+		data, err := jobs.backend.Load()
+		if err != nil {
+			return localJobData{}, err
+		}
+		return normalizeLocalJobData(data), nil
+	}
+
 	payload, err := os.ReadFile(jobs.path)
 	if os.IsNotExist(err) {
-		return localJobData{Jobs: map[string]LocalJob{}, SubmitKeys: map[string]string{}}, nil
+		return emptyLocalJobData(), nil
 	}
 	if err != nil {
 		return localJobData{}, err
@@ -156,16 +203,14 @@ func (jobs *LocalJobs) load() (localJobData, error) {
 	if err := json.Unmarshal(payload, &data); err != nil {
 		return localJobData{}, err
 	}
-	if data.Jobs == nil {
-		data.Jobs = map[string]LocalJob{}
-	}
-	if data.SubmitKeys == nil {
-		data.SubmitKeys = map[string]string{}
-	}
-	return data, nil
+	return normalizeLocalJobData(data), nil
 }
 
 func (jobs *LocalJobs) save(data localJobData) error {
+	if jobs.backend != nil {
+		return jobs.backend.Save(data)
+	}
+
 	if err := os.MkdirAll(filepath.Dir(jobs.path), 0o755); err != nil {
 		return err
 	}
@@ -178,6 +223,23 @@ func (jobs *LocalJobs) save(data localJobData) error {
 		return err
 	}
 	return os.Rename(temporaryPath, jobs.path)
+}
+
+func emptyLocalJobData() localJobData {
+	return localJobData{
+		Jobs:       map[string]LocalJob{},
+		SubmitKeys: map[string]string{},
+	}
+}
+
+func normalizeLocalJobData(data localJobData) localJobData {
+	if data.Jobs == nil {
+		data.Jobs = map[string]LocalJob{}
+	}
+	if data.SubmitKeys == nil {
+		data.SubmitKeys = map[string]string{}
+	}
+	return data
 }
 
 func localJobStatus(job LocalJob) JobStatus {
@@ -196,16 +258,17 @@ func localJobStatus(job LocalJob) JobStatus {
 
 // LocalQueue is a durable-job trigger. Jobs remain recoverable because LocalJobs is the source of truth.
 type LocalQueue struct {
-	jobs    *LocalJobs
-	runner  *Runner
-	pending chan string
-	done    chan struct{}
-	once    sync.Once
-	wg      sync.WaitGroup
+	jobs      *LocalJobs
+	publisher MessagePublisher
+	pending   chan string
+	done      chan struct{}
+	once      sync.Once
+	closeOnce sync.Once
+	wg        sync.WaitGroup
 }
 
-func NewLocalQueue(jobs *LocalJobs, runner *Runner) *LocalQueue {
-	return &LocalQueue{jobs: jobs, runner: runner, pending: make(chan string, 128), done: make(chan struct{})}
+func NewLocalQueue(jobs *LocalJobs, publisher MessagePublisher) *LocalQueue {
+	return &LocalQueue{jobs: jobs, publisher: publisher, pending: make(chan string, 128), done: make(chan struct{})}
 }
 
 func (queue *LocalQueue) Start() {
@@ -226,13 +289,13 @@ func (queue *LocalQueue) Start() {
 }
 
 func (queue *LocalQueue) Close() {
-	select {
-	case <-queue.done:
+	if queue == nil {
 		return
-	default:
+	}
+	queue.closeOnce.Do(func() {
 		close(queue.done)
 		queue.wg.Wait()
-	}
+	})
 }
 
 func (queue *LocalQueue) Enqueue(jobID string) {
@@ -258,8 +321,19 @@ func (queue *LocalQueue) process(jobID string) {
 	if err != nil {
 		return
 	}
-	if err := queue.runner.OnCallback(context.Background(), job.Provider, "local:"+job.ID, job.ID); err != nil {
-		queue.Enqueue(jobID)
+	if queue.publisher == nil {
+		return
+	}
+	message := CallbackMessage{Provider: job.Provider, EventID: "local:" + job.ID, JobID: job.ID}
+	publishContext, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	err = queue.publisher.Publish(publishContext, message)
+	cancel()
+	if err != nil {
+		select {
+		case <-time.After(time.Second):
+			queue.Enqueue(jobID)
+		case <-queue.done:
+		}
 		return
 	}
 	_ = queue.jobs.MarkDelivered(jobID)
@@ -275,20 +349,25 @@ func (clients *LocalClients) AnalyzeRequirement(_ context.Context, input RunInpu
 	return Requirement{Objective: input.Brief, Audience: "interested shoppers", Selling: []string{input.ProductName, "comfortable", "easy to style"}}, nil
 }
 
-func (clients *LocalClients) CreateClipScript(_ context.Context, requirement Requirement) (ClipScript, error) {
+func (clients *LocalClients) CreateClipScript(_ context.Context, requirement Requirement, _ RunInput) (ClipScript, error) {
 	return ClipScript{Title: requirement.Objective, Scenes: []Scene{{ID: "scene-1", Voiceover: "Show the product benefit", Visual: "Product close-up"}, {ID: "scene-2", Voiceover: "Invite the viewer to act", Visual: "Lifestyle usage"}}}, nil
 }
 
 func (clients *LocalClients) PlanCompetition(_ context.Context, clipScript ClipScript, _ RunInput) ([]ResourcePlan, error) {
-	return []ResourcePlan{{ID: "competition-1", Prompt: clipScript.Scenes[0].Visual, Model: "local-image"}}, nil
+	return []ResourcePlan{{ID: "competition-1", SceneID: clipScript.Scenes[0].ID, Prompt: clipScript.Scenes[0].Visual, Model: "local-image"}}, nil
 }
 
 func (clients *LocalClients) PlanTTS(_ context.Context, clipScript ClipScript) ([]ResourcePlan, error) {
-	return []ResourcePlan{{ID: "speaker-1", Speaker: "local-narrator", Text: clipScript.Scenes[0].Voiceover}}, nil
+	plans := make([]ResourcePlan, 0, len(clipScript.Scenes))
+	for _, scene := range clipScript.Scenes {
+		plans = append(plans, ResourcePlan{ID: "voice-" + scene.ID, SceneID: scene.ID, Speaker: "local-narrator", Text: scene.Voiceover})
+	}
+	return plans, nil
 }
 
 func (clients *LocalClients) PlanCharacterReferences(_ context.Context, clipScript ClipScript, _ RunInput) ([]ResourcePlan, error) {
-	return []ResourcePlan{{ID: "character-1", Prompt: clipScript.Scenes[1].Visual, Model: "local-image", FallbackModel: "local-image-fallback"}}, nil
+	scene := clipScript.Scenes[len(clipScript.Scenes)-1]
+	return []ResourcePlan{{ID: "character-1", SceneID: scene.ID, Prompt: scene.Visual, Model: "local-image", FallbackModel: "local-image-fallback"}}, nil
 }
 
 func (clients *LocalClients) SubmitImage(_ context.Context, request ImageRequest) (SubmittedJob, error) {
@@ -297,6 +376,10 @@ func (clients *LocalClients) SubmitImage(_ context.Context, request ImageRequest
 
 func (clients *LocalClients) GetImage(_ context.Context, jobID string) (JobStatus, error) {
 	return clients.jobs.Status(jobID)
+}
+
+func (clients *LocalClients) CancelImage(_ context.Context, jobID string) error {
+	return clients.jobs.Cancel(jobID)
 }
 
 func (clients *LocalClients) FindImageBySubmitKey(_ context.Context, key string) (SubmittedJob, bool, error) {
@@ -311,6 +394,10 @@ func (clients *LocalClients) GetTTS(_ context.Context, jobID string) (JobStatus,
 	return clients.jobs.Status(jobID)
 }
 
+func (clients *LocalClients) CancelTTS(_ context.Context, jobID string) error {
+	return clients.jobs.Cancel(jobID)
+}
+
 func (clients *LocalClients) FindTTSBySubmitKey(_ context.Context, key string) (SubmittedJob, bool, error) {
 	return clients.jobs.Find(key)
 }
@@ -321,6 +408,10 @@ func (clients *LocalClients) SubmitPreview(_ context.Context, request VideoReque
 
 func (clients *LocalClients) GetPreview(_ context.Context, jobID string) (JobStatus, error) {
 	return clients.jobs.Status(jobID)
+}
+
+func (clients *LocalClients) CancelVideo(_ context.Context, jobID string) error {
+	return clients.jobs.Cancel(jobID)
 }
 
 func (clients *LocalClients) FindPreviewBySubmitKey(_ context.Context, key string) (SubmittedJob, bool, error) {
@@ -354,11 +445,243 @@ func (clients *LocalClients) submit(provider string, kind NodeKind, submitKey st
 	return SubmittedJob{Provider: job.Provider, JobID: job.ID}, nil
 }
 
-// LocalApplication wires the local store, queue and direct local clients into a runnable service.
+// Application contains workflow dependencies shared by every deployment mode.
+type Application struct {
+	Runner            *Runner
+	Store             *Store
+	Agent             ChatAgent
+	callbackVerifier  CallbackVerifier
+	callbackPublisher MessagePublisher
+	callbackConsumer  MessageConsumer
+	cancelConsumer    context.CancelFunc
+	consumerDone      chan error
+	pollInterval      time.Duration
+	pollerDone        chan error
+	close             func() error
+}
+
+func NewApplication(store *Store, clients Clients, agent ChatAgent) (*Application, error) {
+	if store == nil {
+		return nil, fmt.Errorf("workflow store is nil")
+	}
+	runner, err := NewRunner(store, clients)
+	if err != nil {
+		return nil, err
+	}
+	return &Application{Runner: runner, Store: store, Agent: agent}, nil
+}
+
+// UseChatModel replaces local planning and Canvas intent parsing with one injected model.
+func (application *Application) UseChatModel(chatModel model.BaseChatModel) error {
+	if application == nil || application.Runner == nil || application.Store == nil {
+		return fmt.Errorf("application is not initialized")
+	}
+	planner, err := NewModelPlanner(chatModel)
+	if err != nil {
+		return err
+	}
+	agent, err := NewCanvasAgent(chatModel, application.Store)
+	if err != nil {
+		return err
+	}
+	application.Runner.handler.clients.Planner = planner
+	application.Agent = agent
+	return nil
+}
+
+// UsePlanner replaces only the workflow planning capability.
+func (application *Application) UsePlanner(planner Planner) error {
+	if application == nil || application.Runner == nil {
+		return fmt.Errorf("application is not initialized")
+	}
+	if planner == nil {
+		return fmt.Errorf("planner is nil")
+	}
+	application.Runner.handler.clients.Planner = planner
+	return nil
+}
+
+// SetMessageConsumer injects the production MQ adapter used for async callbacks.
+func (application *Application) SetMessageConsumer(consumer MessageConsumer) {
+	if application != nil {
+		application.callbackConsumer = consumer
+	}
+}
+
+// SetMessagePublisher injects the production MQ publisher used by HTTP callbacks.
+func (application *Application) SetMessagePublisher(publisher MessagePublisher) {
+	if application != nil {
+		application.callbackPublisher = publisher
+	}
+}
+
+// SetJobPollInterval enables polling providers that do not support callbacks.
+func (application *Application) SetJobPollInterval(interval time.Duration) {
+	if application != nil {
+		application.pollInterval = interval
+	}
+}
+
+// SetCallbackVerifier injects the provider-specific callback authentication policy.
+func (application *Application) SetCallbackVerifier(verifier CallbackVerifier) {
+	if application != nil {
+		application.callbackVerifier = verifier
+	}
+}
+
+// Close releases deployment-specific resources such as a Mongo client.
+func (application *Application) Close() error {
+	if application == nil {
+		return nil
+	}
+	if application.cancelConsumer != nil {
+		application.cancelConsumer()
+	}
+	var closeErr error
+	if application.consumerDone != nil {
+		consumerErr := <-application.consumerDone
+		application.consumerDone = nil
+		application.cancelConsumer = nil
+		if consumerErr != nil && !errors.Is(consumerErr, context.Canceled) {
+			closeErr = errors.Join(closeErr, consumerErr)
+		}
+	}
+	if application.pollerDone != nil {
+		pollerErr := <-application.pollerDone
+		application.pollerDone = nil
+		if pollerErr != nil && !errors.Is(pollerErr, context.Canceled) {
+			closeErr = errors.Join(closeErr, pollerErr)
+		}
+	}
+	if application.close != nil {
+		closeErr = errors.Join(closeErr, application.close())
+	}
+	return closeErr
+}
+
+// SetClose registers the resource cleanup owned by the application builder.
+func (application *Application) SetClose(close func() error) {
+	if application != nil {
+		application.close = close
+	}
+}
+
+func EnsureProject(ctx context.Context, store *Store, projectID string) error {
+	if store == nil || projectID == "" {
+		return fmt.Errorf("store and project id are required")
+	}
+	project, err := store.GetProject(ctx, projectID)
+	if err == nil {
+		current, currentErr := currentWorkflow(project)
+		if currentErr != nil {
+			return currentErr
+		}
+		workflow, changed := upgradeDefaultWorkflow(current.Workflow)
+		if !changed {
+			return nil
+		}
+		if err := defaultNodeCatalog().validate(workflow); err != nil {
+			return err
+		}
+		version := WorkflowVersion{
+			ID:        newID("workflow"),
+			ProjectID: projectID,
+			Revision:  len(project.WorkflowVersions) + 1,
+			Workflow:  workflow,
+		}
+		project.WorkflowVersions = append(project.WorkflowVersions, version)
+		project.CurrentWorkflowVersion = version.ID
+		return store.SaveProject(ctx, project)
+	}
+	workflow := VideoWorkflow()
+	version := WorkflowVersion{ID: newID("workflow"), ProjectID: projectID, Revision: 1, Workflow: cloneWorkflow(workflow)}
+	return store.SaveProject(ctx, Project{ID: projectID, Name: projectID, CurrentWorkflowVersion: version.ID, WorkflowVersions: []WorkflowVersion{version}})
+}
+
+func upgradeDefaultWorkflow(workflow Workflow) (Workflow, bool) {
+	current := cloneWorkflow(workflow)
+	wanted := VideoWorkflow()
+	if !hasDefaultNodes(current.Nodes, wanted.Nodes) {
+		return Workflow{}, false
+	}
+	changed := false
+	for _, edge := range wanted.Edges {
+		if !containsWorkflowEdge(current.Edges, edge) {
+			current.Edges = append(current.Edges, edge)
+			changed = true
+		}
+	}
+	return current, changed
+}
+
+func hasDefaultNodes(nodes, wanted []WorkflowNode) bool {
+	if len(nodes) != len(wanted) {
+		return false
+	}
+	byID := make(map[string]NodeKind, len(nodes))
+	for _, node := range nodes {
+		byID[node.ID] = node.Kind
+	}
+	for _, node := range wanted {
+		if byID[node.ID] != node.Kind {
+			return false
+		}
+	}
+	return true
+}
+
+func containsWorkflowEdge(edges []WorkflowEdge, wanted WorkflowEdge) bool {
+	for _, edge := range edges {
+		if edge == wanted {
+			return true
+		}
+	}
+	return false
+}
+
+// Start recovers in-flight runs for an injected production application.
+func (application *Application) Start(ctx context.Context) error {
+	if application == nil || application.Runner == nil || application.Store == nil {
+		return fmt.Errorf("application is not initialized")
+	}
+	runs, err := application.Store.List(ctx)
+	if err != nil {
+		return err
+	}
+	for _, run := range runs {
+		if err := application.Runner.Restore(ctx, run.ID); err != nil {
+			log.Printf("restore video run %s: %v", run.ID, err)
+		}
+	}
+	if application.callbackConsumer != nil {
+		var poller *JobPoller
+		if application.pollInterval > 0 {
+			poller, err = NewJobPoller(application.Store, application.callbackPublisher, application.pollInterval)
+			if err != nil {
+				return err
+			}
+		}
+
+		consumerCtx, cancel := context.WithCancel(ctx)
+		application.cancelConsumer = cancel
+		application.consumerDone = make(chan error, 1)
+		go func() {
+			application.consumerDone <- ConsumeCallbacks(consumerCtx, application.callbackConsumer, CallbackProcessor{Runner: application.Runner})
+		}()
+		if poller != nil {
+			application.pollerDone = make(chan error, 1)
+			go func() {
+				application.pollerDone <- poller.Run(consumerCtx)
+			}()
+		}
+	}
+	return nil
+}
+
+// LocalApplication adds the local queue and restart recovery to Application.
 type LocalApplication struct {
-	Runner *Runner
-	Store  *Store
-	Queue  *LocalQueue
+	*Application
+	Queue *LocalQueue
 }
 
 func NewLocalApplication(dataDir string) (*LocalApplication, error) {
@@ -366,30 +689,55 @@ func NewLocalApplication(dataDir string) (*LocalApplication, error) {
 		return nil, fmt.Errorf("local data directory is empty")
 	}
 	store := NewStore(filepath.Join(dataDir, "workflow.json"))
-	jobs := NewLocalJobs(filepath.Join(dataDir, "jobs.json"))
+	return newLocalApplication(dataDir, store, NewLocalJobs(filepath.Join(dataDir, "jobs.json")), nil)
+}
+
+func newLocalApplication(dataDir string, store *Store, jobs *LocalJobs, closeStore func() error) (*LocalApplication, error) {
+	if dataDir == "" || store == nil || jobs == nil {
+		return nil, fmt.Errorf("local data directory, store and jobs are required")
+	}
 	clients := &LocalClients{jobs: jobs}
-	runner, err := NewRunner(store, Clients{Planner: clients, Image: clients, TTS: clients, Video: clients, Audit: clients, Shield: clients})
+	application, err := NewApplication(store, Clients{Planner: clients, Image: clients, TTS: clients, Video: clients, Audit: clients, Shield: clients}, nil)
 	if err != nil {
 		return nil, err
 	}
-	queue := NewLocalQueue(jobs, runner)
+	application.SetCallbackVerifier(AllowAllCallbackVerifier{})
+	application.SetClose(closeStore)
+	queue := NewLocalQueue(jobs, nil)
 	clients.queue = queue
-	return &LocalApplication{Runner: runner, Store: store, Queue: queue}, nil
+	if err := EnsureProject(context.Background(), store, "demo"); err != nil {
+		return nil, err
+	}
+	agent, err := NewCanvasAgent(nil, store)
+	if err != nil {
+		return nil, err
+	}
+	application.Agent = agent
+	return &LocalApplication{Application: application, Queue: queue}, nil
+}
+
+// SetMessageQueue routes local job completion and provider callbacks through the same durable queue.
+func (application *LocalApplication) SetMessageQueue(publisher MessagePublisher, consumer MessageConsumer) {
+	if application == nil || application.Application == nil {
+		return
+	}
+	application.SetMessagePublisher(publisher)
+	application.SetMessageConsumer(consumer)
+	if application.Queue != nil {
+		application.Queue.publisher = publisher
+	}
 }
 
 func (application *LocalApplication) Start(ctx context.Context) error {
 	if application == nil || application.Runner == nil || application.Store == nil || application.Queue == nil {
 		return fmt.Errorf("local application is not initialized")
 	}
-	application.Queue.Start()
-	runs, err := application.Store.List(ctx)
-	if err != nil {
-		return err
+	if application.Queue.publisher == nil {
+		return fmt.Errorf("local message publisher is not configured")
 	}
-	for _, run := range runs {
-		if err := application.Runner.Recover(ctx, run.ID); err != nil {
-			return err
-		}
+	application.Queue.Start()
+	if err := application.Application.Start(ctx); err != nil {
+		return err
 	}
 	return application.Queue.Recover()
 }
@@ -397,5 +745,8 @@ func (application *LocalApplication) Start(ctx context.Context) error {
 func (application *LocalApplication) Close() {
 	if application != nil && application.Queue != nil {
 		application.Queue.Close()
+	}
+	if application != nil && application.Application != nil {
+		_ = application.Application.Close()
 	}
 }

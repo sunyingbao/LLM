@@ -2,56 +2,122 @@ package videoagent
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"log"
+	"strings"
+	"time"
 )
+
+var ErrCallbackNotReady = errors.New("callback job is not ready")
+var ErrJobPending = errors.New("remote job is still pending")
 
 // Runner advances the persisted graph. It never resubmits an uncertain job.
 type Runner struct {
 	store   *Store
 	handler nodeHandler
 	catalog NodeCatalog
+	monitor Monitor
+	Metrics *Metrics
 }
 
 func NewRunner(store *Store, clients Clients) (*Runner, error) {
 	if store == nil {
 		return nil, fmt.Errorf("workflow store is nil")
 	}
-	if clients.Planner == nil || clients.Image == nil || clients.TTS == nil || clients.Video == nil || clients.Audit == nil || clients.Shield == nil {
-		return nil, fmt.Errorf("video agent clients are incomplete")
+	if err := clients.validate(); err != nil {
+		return nil, err
 	}
-	return &Runner{store: store, handler: nodeHandler{clients: clients}, catalog: defaultNodeCatalog()}, nil
+	metrics := NewMetrics()
+	return &Runner{store: store, handler: nodeHandler{clients: clients, store: store}, catalog: defaultNodeCatalog(), monitor: metrics, Metrics: metrics}, nil
+}
+
+// SetMonitor replaces the optional execution observer while keeping built-in counters available.
+func (runner *Runner) SetMonitor(monitor Monitor) {
+	if runner != nil && monitor != nil {
+		runner.monitor = MonitorFunc(func(ctx context.Context, event RunEvent) {
+			if runner.Metrics != nil {
+				runner.Metrics.Record(ctx, event)
+			}
+			monitor.Record(ctx, event)
+		})
+	}
 }
 
 // StartRun persists the static workflow before executing any model or remote call.
 func (runner *Runner) StartRun(ctx context.Context, projectID string, input RunInput) (run Run, err error) {
-	return runner.StartWorkflow(ctx, projectID, VideoWorkflow(), input)
+	project, err := runner.store.GetProject(ctx, projectID)
+	if err != nil || len(project.WorkflowVersions) == 0 {
+		version, saveErr := runner.SaveWorkflow(ctx, projectID, VideoWorkflow())
+		if saveErr != nil {
+			return run, saveErr
+		}
+		return runner.StartWorkflow(ctx, projectID, version.Workflow, input)
+	}
+	version, err := currentWorkflow(project)
+	if err != nil {
+		return run, err
+	}
+	return runner.StartWorkflow(ctx, projectID, version.Workflow, input)
+}
+
+// SaveWorkflow validates and publishes the latest editable canvas version.
+func (runner *Runner) SaveWorkflow(ctx context.Context, projectID string, workflow Workflow) (WorkflowVersion, error) {
+	if projectID == "" {
+		return WorkflowVersion{}, fmt.Errorf("project id is empty")
+	}
+	if err := runner.catalog.validateDraft(workflow); err != nil {
+		return WorkflowVersion{}, err
+	}
+	project, err := runner.store.GetProject(ctx, projectID)
+	if err != nil {
+		project = Project{ID: projectID, Name: projectID}
+	}
+	version := WorkflowVersion{ID: newID("workflow"), ProjectID: projectID, Revision: len(project.WorkflowVersions) + 1, Workflow: cloneWorkflow(workflow)}
+	project.WorkflowVersions = append(project.WorkflowVersions, version)
+	project.CurrentWorkflowVersion = version.ID
+	if err := runner.store.SaveProject(ctx, project); err != nil {
+		return WorkflowVersion{}, err
+	}
+	return version, nil
 }
 
 // StartWorkflow validates a user-edited graph and stores an immutable Run snapshot.
 func (runner *Runner) StartWorkflow(ctx context.Context, projectID string, workflow Workflow, input RunInput) (run Run, err error) {
+	return runner.startWorkflow(ctx, projectID, workflow, input, newID("run"))
+}
+
+func (runner *Runner) startWorkflow(ctx context.Context, projectID string, workflow Workflow, input RunInput, runID string) (run Run, err error) {
 	if projectID == "" {
 		return run, fmt.Errorf("project id is empty")
 	}
 	if err = runner.catalog.validate(workflow); err != nil {
 		return run, err
 	}
+	if existing, getErr := runner.store.Get(ctx, runID); getErr == nil {
+		return existing, nil
+	}
 
-	runID := newID("run")
 	nodeRuns := make([]NodeRun, 0, len(workflow.Nodes))
 	for _, node := range workflow.Nodes {
 		nodeRuns = append(nodeRuns, NodeRun{
 			NodeID:    node.ID,
 			Kind:      node.Kind,
+			Config:    append([]byte(nil), node.Config...),
 			State:     Pending,
 			SubmitKey: newSubmitKey(runID, node.ID, ""),
 		})
 	}
+	workflowID := "workflow:" + runID
 	run = Run{
 		ID:        runID,
 		ProjectID: projectID,
-		Workflow:  WorkflowVersion{ID: newID("workflow"), ProjectID: projectID, Revision: 1, Workflow: cloneWorkflow(workflow)},
+		Workflow:  WorkflowVersion{ID: workflowID, ProjectID: projectID, Workflow: cloneWorkflow(workflow)},
 		Input:     input,
 		NodeRuns:  nodeRuns,
+	}
+	if project, projectErr := runner.store.GetProject(ctx, projectID); projectErr == nil {
+		run.Workflow.Revision = len(project.WorkflowVersions) + 1
 	}
 	if err = runner.store.Create(ctx, run); err != nil {
 		return run, err
@@ -62,6 +128,208 @@ func (runner *Runner) StartWorkflow(ctx context.Context, projectID string, workf
 	return runner.store.Get(ctx, runID)
 }
 
+// ConfirmOperation applies a confirmed Canvas operation or starts its workflow.
+func (runner *Runner) ConfirmOperation(ctx context.Context, operationID string) (CanvasOperation, *Run, error) {
+	operation, err := runner.store.GetOperation(ctx, operationID)
+	if err != nil {
+		return CanvasOperation{}, nil, err
+	}
+	if operation.Status == OperationRejected {
+		return CanvasOperation{}, nil, fmt.Errorf("operation is rejected")
+	}
+	if operation.Status == OperationApplied {
+		if operation.RunID == "" {
+			return operation, nil, nil
+		}
+		run, err := runner.store.Get(ctx, operation.RunID)
+		if err != nil {
+			return operation, nil, err
+		}
+		return operation, &run, nil
+	}
+	if operation.Status != OperationPending && operation.Status != OperationConfirmed {
+		return CanvasOperation{}, nil, fmt.Errorf("operation is not pending: %s", operation.Status)
+	}
+	if operation.Type == OperationRun {
+		project, err := runner.store.GetProject(ctx, operation.ProjectID)
+		if err != nil {
+			return CanvasOperation{}, nil, err
+		}
+		if len(project.WorkflowVersions) == 0 {
+			return CanvasOperation{}, nil, fmt.Errorf("project has no workflow: %s", operation.ProjectID)
+		}
+		latest, err := currentWorkflow(project)
+		if err != nil {
+			return CanvasOperation{}, nil, err
+		}
+		input, err := decode[RunInput](operation.Payload)
+		if err != nil {
+			return CanvasOperation{}, nil, err
+		}
+		if err := runner.catalog.validate(latest.Workflow); err != nil {
+			return operation, nil, err
+		}
+		if operation.Status == OperationPending {
+			operation, err = runner.store.claimOperation(ctx, operationID, "run:operation:"+operationID)
+			if err != nil {
+				operation, err = runner.store.GetOperation(ctx, operationID)
+				if err != nil || (operation.Status != OperationConfirmed && operation.Status != OperationApplied) {
+					return CanvasOperation{}, nil, err
+				}
+			}
+		}
+		runID := operation.RunID
+		if runID == "" {
+			runID = "run:operation:" + operationID
+		}
+		run, err := runner.startWorkflow(ctx, operation.ProjectID, latest.Workflow, input, runID)
+		if err != nil {
+			return operation, nil, err
+		}
+		if operation.Status != OperationApplied {
+			if err := runner.store.applyOperation(ctx, operationID, OperationConfirmed, OperationApplied); err != nil {
+				return operation, &run, err
+			}
+		}
+		operation.Status = OperationApplied
+		return operation, &run, nil
+	}
+	if operation.Type == OperationRetry || operation.Type == OperationCancel {
+		return runner.confirmRunOperation(ctx, operationID, operation)
+	}
+
+	project, err := runner.store.GetProject(ctx, operation.ProjectID)
+	if err != nil {
+		return CanvasOperation{}, nil, err
+	}
+	if len(project.WorkflowVersions) == 0 {
+		return CanvasOperation{}, nil, fmt.Errorf("project has no workflow: %s", operation.ProjectID)
+	}
+	latest, err := currentWorkflow(project)
+	if err != nil {
+		return CanvasOperation{}, nil, err
+	}
+	versionID := "workflow:operation:" + operationID
+	for _, version := range project.WorkflowVersions {
+		if version.ID == versionID {
+			operation, err = runner.store.markOperationApplied(ctx, operationID)
+			return operation, nil, err
+		}
+	}
+	updated, err := applyWorkflowOperation(latest.Workflow, operation)
+	if err != nil {
+		return operation, nil, err
+	}
+	if err := runner.catalog.validateDraft(updated); err != nil {
+		return operation, nil, err
+	}
+	if operation.Status == OperationPending {
+		operation, err = runner.store.claimOperation(ctx, operationID, "")
+		if err != nil {
+			operation, err = runner.store.GetOperation(ctx, operationID)
+			if err != nil || (operation.Status != OperationConfirmed && operation.Status != OperationApplied) {
+				return CanvasOperation{}, nil, err
+			}
+		}
+	}
+	version := WorkflowVersion{ID: versionID, ProjectID: operation.ProjectID, Revision: len(project.WorkflowVersions) + 1, Workflow: cloneWorkflow(updated)}
+	project.WorkflowVersions = append(project.WorkflowVersions, version)
+	project.CurrentWorkflowVersion = version.ID
+	if err := runner.store.SaveProject(ctx, project); err != nil {
+		return operation, nil, err
+	}
+	if operation.Status != OperationApplied {
+		if err := runner.store.applyOperation(ctx, operationID, OperationConfirmed, OperationApplied); err != nil {
+			return operation, nil, err
+		}
+	}
+	operation.Status = OperationApplied
+	return operation, nil, nil
+}
+
+func currentWorkflow(project Project) (WorkflowVersion, error) {
+	if project.CurrentWorkflowVersion != "" {
+		for _, version := range project.WorkflowVersions {
+			if version.ID == project.CurrentWorkflowVersion {
+				return version, nil
+			}
+		}
+		return WorkflowVersion{}, fmt.Errorf("current workflow version not found: %s", project.CurrentWorkflowVersion)
+	}
+	if len(project.WorkflowVersions) == 0 {
+		return WorkflowVersion{}, fmt.Errorf("project has no workflow: %s", project.ID)
+	}
+	return project.WorkflowVersions[len(project.WorkflowVersions)-1], nil
+}
+
+func (runner *Runner) confirmRunOperation(ctx context.Context, operationID string, operation CanvasOperation) (CanvasOperation, *Run, error) {
+	if operation.RunID == "" {
+		input, err := decode[struct {
+			RunID string `json:"run_id"`
+		}](operation.Payload)
+		if err != nil || input.RunID == "" {
+			return operation, nil, fmt.Errorf("%s operation requires run_id", operation.Type)
+		}
+		operation.RunID = input.RunID
+	}
+	if operation.Status == OperationPending {
+		claimed, err := runner.store.claimOperation(ctx, operationID, operation.RunID)
+		if err != nil {
+			operation, err = runner.store.GetOperation(ctx, operationID)
+			if err != nil {
+				return CanvasOperation{}, nil, err
+			}
+			if operation.Status == OperationApplied {
+				run, runErr := runner.store.Get(ctx, operation.RunID)
+				return operation, &run, runErr
+			}
+			if operation.Status != OperationConfirmed {
+				return operation, nil, err
+			}
+		} else {
+			operation = claimed
+		}
+	}
+	if operation.Type == OperationRetry {
+		if err := runner.retry(operation.RunID); err != nil {
+			return operation, nil, err
+		}
+	} else if err := runner.Cancel(ctx, operation.RunID); err != nil {
+		return operation, nil, err
+	}
+	if err := runner.store.applyOperation(ctx, operationID, OperationConfirmed, OperationApplied); err != nil {
+		return operation, nil, err
+	}
+	operation.Status = OperationApplied
+	run, err := runner.store.Get(ctx, operation.RunID)
+	if err != nil {
+		return operation, nil, err
+	}
+	if operation.Type == OperationRetry {
+		err = runner.Advance(ctx, operation.RunID)
+		if err != nil {
+			return operation, &run, err
+		}
+		run, err = runner.store.Get(ctx, operation.RunID)
+	}
+	return operation, &run, err
+}
+
+func (runner *Runner) RejectOperation(ctx context.Context, operationID string) (CanvasOperation, error) {
+	operation, err := runner.store.GetOperation(ctx, operationID)
+	if err != nil {
+		return CanvasOperation{}, err
+	}
+	if operation.Status != OperationPending {
+		return CanvasOperation{}, fmt.Errorf("operation is not pending: %s", operation.Status)
+	}
+	if err := runner.store.applyOperation(ctx, operationID, OperationPending, OperationRejected); err != nil {
+		return CanvasOperation{}, err
+	}
+	operation.Status = OperationRejected
+	return operation, nil
+}
+
 // Advance executes ready nodes until the graph only contains waiting or blocked nodes.
 func (runner *Runner) Advance(ctx context.Context, runID string) error {
 	for {
@@ -70,7 +338,7 @@ func (runner *Runner) Advance(ctx context.Context, runID string) error {
 			return err
 		}
 		if claimed {
-			if err := runner.refresh(ctx, command); err != nil {
+			if _, err := runner.refresh(ctx, command); err != nil {
 				return err
 			}
 			continue
@@ -89,13 +357,16 @@ func (runner *Runner) Advance(ctx context.Context, runID string) error {
 				return err
 			}
 		}
+		runner.record(ctx, RunEvent{Action: MonitorNodeStarted, RunID: command.RunID, NodeID: command.NodeRun.NodeID, Kind: command.NodeRun.Kind, State: Running})
 		result, err := runner.handler.Start(ctx, command)
 		if err != nil {
 			result = failedResult(command, err)
 		}
+		runner.cancelLateSubmission(ctx, command, result)
 		if err := runner.store.apply(command, result); err != nil {
 			return err
 		}
+		runner.record(ctx, RunEvent{Action: monitorAction(result.State), RunID: command.RunID, NodeID: command.NodeRun.NodeID, Kind: command.NodeRun.Kind, State: result.State, Message: result.Message})
 	}
 }
 
@@ -114,7 +385,7 @@ func (runner *Runner) Poll(ctx context.Context, runID string) error {
 			return runner.Advance(ctx, runID)
 		}
 		skipped[nodeRunKey(command.NodeRun)] = true
-		if err := runner.refresh(ctx, command); err != nil {
+		if _, err := runner.refresh(ctx, command); err != nil {
 			return err
 		}
 	}
@@ -128,30 +399,138 @@ func (runner *Runner) Recover(ctx context.Context, runID string) error {
 	return runner.Poll(ctx, runID)
 }
 
-// OnCallback deduplicates delivery, refreshes the existing job, then advances dependents.
-func (runner *Runner) OnCallback(ctx context.Context, provider, eventID, jobID string) error {
-	if provider == "" || eventID == "" || jobID == "" {
-		return fmt.Errorf("callback provider, event id and job id are required")
-	}
-	command, claimed, err := runner.store.claimCallback(provider, eventID, jobID)
-	if err != nil || !claimed {
+// Restore repairs persisted orchestration state without querying remote jobs.
+func (runner *Runner) Restore(ctx context.Context, runID string) error {
+	if err := runner.store.recover(runID); err != nil {
 		return err
 	}
-	if err := runner.refresh(ctx, command); err != nil {
-		return err
-	}
-	return runner.Advance(ctx, command.RunID)
+	return runner.Advance(ctx, runID)
 }
 
-func (runner *Runner) refresh(ctx context.Context, command Command) error {
+// Retry clears failed nodes and advances the same immutable workflow version.
+func (runner *Runner) Retry(ctx context.Context, runID string) error {
+	if err := runner.retry(runID); err != nil {
+		return err
+	}
+	return runner.Advance(ctx, runID)
+}
+
+func (runner *Runner) retry(runID string) error {
+	return runner.store.retry(runID)
+}
+
+// Cancel stops orchestration for a Run and makes later callbacks no-ops.
+func (runner *Runner) Cancel(ctx context.Context, runID string) error {
+	if runner == nil || runner.store == nil {
+		return fmt.Errorf("runner is not initialized")
+	}
+	if err := runner.store.requestCancel(runID); err != nil {
+		return err
+	}
+	run, err := runner.store.Get(ctx, runID)
+	if err != nil {
+		return err
+	}
+	if err := runner.handler.Cancel(ctx, run); err != nil {
+		log.Printf("cancel remote video jobs for run %s: %v", runID, err)
+	}
+	return runner.store.completeCancel(runID)
+}
+
+func (runner *Runner) cancelLateSubmission(ctx context.Context, command Command, result Result) {
+	if result.JobID == "" || (result.State != Waiting && result.State != Running) {
+		return
+	}
+	run, err := runner.store.Get(ctx, command.RunID)
+	if err != nil || (!run.CancelRequested && !run.Canceled) {
+		return
+	}
+	node := command.NodeRun
+	node.State = Waiting
+	node.Provider = result.Provider
+	node.JobID = result.JobID
+	if err := runner.handler.Cancel(ctx, Run{NodeRuns: []NodeRun{node}}); err != nil {
+		log.Printf("cancel late submission %s/%s for run %s: %v", node.NodeID, node.InstanceKey, command.RunID, err)
+	}
+}
+
+// OnCallback refreshes an existing job and records deduplication only after the Run advances.
+func (runner *Runner) OnCallback(ctx context.Context, provider, eventID, jobID string) error {
+	return runner.ProcessCallback(ctx, CallbackMessage{Provider: provider, EventID: eventID, JobID: jobID})
+}
+
+// ProcessCallback resumes one persisted job from a durable MQ message.
+func (runner *Runner) ProcessCallback(ctx context.Context, message CallbackMessage) error {
+	if message.Provider == "" || message.EventID == "" || (message.JobID == "" && message.SubmitKey == "") {
+		return fmt.Errorf("callback provider, event id and job id or submit key are required")
+	}
+	runner.record(ctx, RunEvent{Action: MonitorCallback, Message: message.Provider + ":" + firstNonEmpty(message.JobID, message.SubmitKey)})
+	command, claimed, needsRefresh, duplicate, err := runner.store.claimCallback(message)
+	if err != nil {
+		return err
+	}
+	if duplicate {
+		return nil
+	}
+	if !claimed {
+		if isPollingMessage(message) {
+			return nil
+		}
+		return ErrCallbackNotReady
+	}
+	if needsRefresh {
+		state, err := runner.refresh(ctx, command)
+		if err != nil {
+			return err
+		}
+		if state == Waiting {
+			return ErrJobPending
+		}
+	}
+	if err := runner.Advance(ctx, command.RunID); err != nil {
+		return err
+	}
+	return runner.store.completeCallback(message)
+}
+
+func isPollingMessage(message CallbackMessage) bool {
+	return strings.HasPrefix(message.EventID, "poll:") || strings.HasPrefix(message.EventID, "reconcile:")
+}
+
+func (runner *Runner) refresh(ctx context.Context, command Command) (NodeState, error) {
 	result, err := runner.handler.Refresh(ctx, command)
 	if err != nil {
 		if requeueErr := runner.store.requeue(command); requeueErr != nil {
-			return requeueErr
+			return Waiting, errors.Join(requeueErr, runner.store.releaseClaim(command))
 		}
-		return err
+		runner.record(ctx, RunEvent{Action: MonitorNodeFailed, RunID: command.RunID, NodeID: command.NodeRun.NodeID, Kind: command.NodeRun.Kind, State: Waiting, Message: err.Error()})
+		return Waiting, err
 	}
-	return runner.store.apply(command, result)
+	if err := runner.store.apply(command, result); err != nil {
+		if requeueErr := runner.store.requeue(command); requeueErr != nil {
+			return Waiting, errors.Join(err, requeueErr, runner.store.releaseClaim(command))
+		}
+		return Waiting, err
+	}
+	runner.record(ctx, RunEvent{Action: monitorAction(result.State), RunID: command.RunID, NodeID: command.NodeRun.NodeID, Kind: command.NodeRun.Kind, State: result.State, Message: result.Message})
+	return result.State, nil
+}
+
+func (runner *Runner) record(ctx context.Context, event RunEvent) {
+	if runner == nil || runner.monitor == nil {
+		return
+	}
+	if event.At.IsZero() {
+		event.At = time.Now().UTC()
+	}
+	runner.monitor.Record(ctx, event)
+}
+
+func monitorAction(state NodeState) string {
+	if state == Failed {
+		return MonitorNodeFailed
+	}
+	return MonitorNodeCompleted
 }
 
 func failedResult(command Command, err error) Result {

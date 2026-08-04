@@ -29,6 +29,7 @@ const (
 	Waiting   NodeState = "waiting"
 	Succeeded NodeState = "succeeded"
 	Failed    NodeState = "failed"
+	Canceled  NodeState = "canceled"
 )
 
 type WorkflowNode struct {
@@ -62,6 +63,85 @@ type WorkflowVersion struct {
 	Workflow
 }
 
+type Project struct {
+	ID                     string            `json:"project_id"`
+	Name                   string            `json:"name,omitempty"`
+	CurrentWorkflowVersion string            `json:"current_workflow_version,omitempty"`
+	WorkflowVersions       []WorkflowVersion `json:"workflow_versions,omitempty"`
+}
+
+type Conversation struct {
+	ID        string    `json:"conversation_id"`
+	ProjectID string    `json:"project_id"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+type ProjectSession struct {
+	Conversation *Conversation `json:"conversation,omitempty"`
+	RunID        string        `json:"run_id,omitempty"`
+}
+
+type MessagePart struct {
+	Type        string `json:"type"`
+	Text        string `json:"text,omitempty"`
+	ArtifactID  string `json:"artifact_id,omitempty"`
+	OperationID string `json:"operation_id,omitempty"`
+}
+
+type Message struct {
+	ID             string        `json:"message_id"`
+	ConversationID string        `json:"conversation_id"`
+	IdempotencyKey string        `json:"idempotency_key,omitempty"`
+	Role           string        `json:"role"`
+	Parts          []MessagePart `json:"parts"`
+	CreatedAt      time.Time     `json:"created_at"`
+}
+
+type AgentChatInput struct {
+	ProjectID      string `json:"project_id"`
+	ConversationID string `json:"conversation_id,omitempty"`
+	IdempotencyKey string `json:"idempotency_key,omitempty"`
+	RunID          string `json:"run_id,omitempty"`
+	Text           string `json:"text"`
+	RunInput
+}
+
+type AgentChatReply struct {
+	Conversation Conversation     `json:"conversation"`
+	Messages     []Message        `json:"messages"`
+	Operation    *CanvasOperation `json:"operation,omitempty"`
+}
+
+type CanvasOperation struct {
+	ID              string          `json:"operation_id"`
+	ProjectID       string          `json:"project_id"`
+	RunID           string          `json:"run_id,omitempty"`
+	IdempotencyKey  string          `json:"idempotency_key,omitempty"`
+	SourceMessageID string          `json:"source_message_id,omitempty"`
+	Type            string          `json:"type"`
+	TargetNodeID    string          `json:"target_node_id,omitempty"`
+	Payload         json.RawMessage `json:"payload,omitempty"`
+	Status          string          `json:"status"`
+	CreatedAt       time.Time       `json:"created_at"`
+}
+
+const (
+	OperationAddNode        = "add_node"
+	OperationDeleteNode     = "delete_node"
+	OperationConnect        = "connect"
+	OperationUpdateNode     = "update_node"
+	OperationUpdateInput    = "update_input"
+	OperationUpdateWorkflow = "update_workflow"
+	OperationRun            = "run"
+	OperationRetry          = "retry"
+	OperationCancel         = "cancel"
+
+	OperationPending   = "pending"
+	OperationConfirmed = "confirmed"
+	OperationApplied   = "applied"
+	OperationRejected  = "rejected"
+)
+
 // VideoWorkflow returns the default workflow used by a new local Run.
 func VideoWorkflow() Workflow {
 	return Workflow{
@@ -84,6 +164,8 @@ func VideoWorkflow() Workflow {
 			{FromNodeID: "tts", FromPort: "voice_preview", ToNodeID: "preview", ToPort: "resources"},
 			{FromNodeID: "character_reference", FromPort: "character_reference_image", ToNodeID: "preview", ToPort: "resources"},
 			{FromNodeID: "preview", FromPort: "preview_video", ToNodeID: "finalvideo", ToPort: "preview_video"},
+			{FromNodeID: "tts", FromPort: "voice_preview", ToNodeID: "finalvideo", ToPort: "resources"},
+			{FromNodeID: "clipscript", FromPort: "clipscript", ToNodeID: "finalvideo", ToPort: "clipscript"},
 		},
 	}
 }
@@ -106,24 +188,31 @@ type Artifact struct {
 type NodeRun struct {
 	NodeID            string          `json:"node_id"`
 	Kind              NodeKind        `json:"kind"`
+	Config            json.RawMessage `json:"config,omitempty"`
 	InstanceKey       string          `json:"instance_key,omitempty"`
 	State             NodeState       `json:"state"`
 	Provider          string          `json:"provider,omitempty"`
 	JobID             string          `json:"job_id,omitempty"`
 	SubmitKey         string          `json:"submit_key"`
+	Attempt           int             `json:"attempt,omitempty"`
+	ClaimToken        string          `json:"claim_token,omitempty"`
+	ClaimedAt         *time.Time      `json:"claimed_at,omitempty"`
 	Output            json.RawMessage `json:"output,omitempty"`
 	Artifacts         []Artifact      `json:"artifacts,omitempty"`
 	FallbackSubmitted bool            `json:"fallback_submitted,omitempty"`
 	SubmitStarted     bool            `json:"submit_started,omitempty"`
+	SubmissionUnknown bool            `json:"submission_unknown,omitempty"`
 	Message           string          `json:"message,omitempty"`
 }
 
 type Run struct {
-	ID        string          `json:"run_id"`
-	ProjectID string          `json:"project_id"`
-	Workflow  WorkflowVersion `json:"workflow"`
-	Input     RunInput        `json:"input"`
-	NodeRuns  []NodeRun       `json:"node_runs"`
+	ID              string          `json:"run_id"`
+	ProjectID       string          `json:"project_id"`
+	Workflow        WorkflowVersion `json:"workflow"`
+	Input           RunInput        `json:"input"`
+	NodeRuns        []NodeRun       `json:"node_runs"`
+	CancelRequested bool            `json:"cancel_requested,omitempty"`
+	Canceled        bool            `json:"canceled,omitempty"`
 }
 
 type Command struct {
@@ -142,11 +231,24 @@ type Result struct {
 	Children          []NodeRun
 	FallbackSubmitted bool
 	ResetSubmission   bool
+	SubmissionUnknown bool
 	Message           string
 }
 
 func (state NodeState) terminal() bool {
-	return state == Succeeded || state == Failed
+	return state == Succeeded || state == Failed || state == Canceled
+}
+
+func (run Run) terminal() bool {
+	if len(run.NodeRuns) == 0 {
+		return false
+	}
+	for _, node := range run.NodeRuns {
+		if !node.State.terminal() {
+			return false
+		}
+	}
+	return true
 }
 
 func (kind NodeKind) resource() bool {

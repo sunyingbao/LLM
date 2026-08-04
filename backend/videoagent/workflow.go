@@ -27,11 +27,26 @@ func defaultNodeCatalog() NodeCatalog {
 			{Name: "clipscript", ArtifactKind: "clipscript", Required: true},
 			{Name: "resources", ArtifactKind: "resource"},
 		}, Outputs: []PortDefinition{{Name: "preview_video", ArtifactKind: "preview_video"}}},
-		FinalVideoNode: {Kind: FinalVideoNode, Inputs: []PortDefinition{{Name: "preview_video", ArtifactKind: "preview_video", Required: true}}, Outputs: []PortDefinition{{Name: "finalvideo", ArtifactKind: "finalvideo"}}},
+		FinalVideoNode: {Kind: FinalVideoNode, Inputs: []PortDefinition{
+			{Name: "clipscript", ArtifactKind: "clipscript", Required: true},
+			{Name: "preview_video", ArtifactKind: "preview_video", Required: true},
+			{Name: "resources", ArtifactKind: "resource"},
+		}, Outputs: []PortDefinition{{Name: "finalvideo", ArtifactKind: "finalvideo"}}},
 	}
 }
 
 func (catalog NodeCatalog) validate(workflow Workflow) error {
+	return catalog.validateWorkflow(workflow, true)
+}
+
+func (catalog NodeCatalog) validateDraft(workflow Workflow) error {
+	return catalog.validateWorkflow(workflow, false)
+}
+
+func (catalog NodeCatalog) validateWorkflow(workflow Workflow, requireInputs bool) error {
+	if requireInputs && len(workflow.Nodes) == 0 {
+		return fmt.Errorf("workflow has no nodes")
+	}
 	nodes := make(map[string]WorkflowNode, len(workflow.Nodes))
 	for _, node := range workflow.Nodes {
 		if node.ID == "" {
@@ -45,13 +60,13 @@ func (catalog NodeCatalog) validate(workflow Workflow) error {
 		}
 		nodes[node.ID] = node
 	}
-	if err := catalog.validateEdges(workflow.Edges, nodes); err != nil {
+	if err := catalog.validateEdges(workflow.Edges, nodes, requireInputs); err != nil {
 		return err
 	}
 	return validateAcyclic(workflow)
 }
 
-func (catalog NodeCatalog) validateEdges(edges []WorkflowEdge, nodes map[string]WorkflowNode) error {
+func (catalog NodeCatalog) validateEdges(edges []WorkflowEdge, nodes map[string]WorkflowNode, requireInputs bool) error {
 	seen := make(map[string]struct{}, len(edges))
 	connectedInputs := make(map[string]map[string]bool, len(nodes))
 	for _, edge := range edges {
@@ -87,10 +102,12 @@ func (catalog NodeCatalog) validateEdges(edges []WorkflowEdge, nodes map[string]
 		}
 		connectedInputs[edge.ToNodeID][edge.ToPort] = true
 	}
-	for nodeID, node := range nodes {
-		for _, input := range catalog[node.Kind].Inputs {
-			if input.Required && !connectedInputs[nodeID][input.Name] {
-				return fmt.Errorf("required input is not connected: %s.%s", nodeID, input.Name)
+	if requireInputs {
+		for nodeID, node := range nodes {
+			for _, input := range catalog[node.Kind].Inputs {
+				if input.Required && !connectedInputs[nodeID][input.Name] {
+					return fmt.Errorf("required input is not connected: %s.%s", nodeID, input.Name)
+				}
 			}
 		}
 	}

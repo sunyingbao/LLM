@@ -1,6 +1,7 @@
 .eino-cli/
 .claude/worktrees/
 .idea/
+/bin/
 /yaml/extensions_config.example.json
 # config.yaml 本地化(API key / 临时调试值),不入 git。
 # 形状改动必须同步记到 yaml/CHANGELOG.md,见 AGENTS.md "yaml/config.yaml 改动" 段。
