@@ -422,4 +422,11 @@ func normalizedDurationMS(duration int) int {
 	return 5000
 }
 
+func finalVideoUpscaleSize(width, height int) (int, int) {
+	if width > height {
+		return 1920, 1080
+	}
+	return 1080, 1920
+}
+
 var _ FinalVideoClient = (*MetaFinalVideoClient)(nil)

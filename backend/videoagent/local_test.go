@@ -7,6 +7,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -23,25 +24,34 @@ func TestApplicationStartContinuesAfterOneRunFailsToRestore(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewRunner() error = %v", err)
 	}
-	application := &Application{Runner: runner, Store: store}
+	application := &Application{Runner: runner, Store: store, pollInterval: time.Millisecond}
 	if err := application.Start(context.Background()); err != nil {
 		t.Fatalf("Start() error = %v", err)
 	}
-	if backend.saves < 2 {
-		t.Fatalf("restore saves = %d, want restoration to continue after the injected failure", backend.saves)
+	deadline := time.Now().Add(time.Second)
+	for backend.saves.Load() < 3 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if saves := backend.saves.Load(); saves < 3 {
+		t.Fatalf("restore saves = %d, want failed run to be retried", saves)
+	}
+	if got := runner.Metrics.Snapshot()[MonitorRestoreFailed]; got != 1 {
+		t.Fatalf("restore failure events = %d, want 1", got)
+	}
+	if err := application.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
 	}
 }
 
 type failFirstStateSave struct {
 	data  storeData
-	saves int
+	saves atomic.Int64
 }
 
 func (backend *failFirstStateSave) Load() (storeData, error) { return backend.data, nil }
 
 func (backend *failFirstStateSave) Save(data storeData) error {
-	backend.saves++
-	if backend.saves == 1 {
+	if backend.saves.Add(1) == 1 {
 		return errors.New("injected restore failure")
 	}
 	backend.data = data

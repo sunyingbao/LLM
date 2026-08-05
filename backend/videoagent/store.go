@@ -3,6 +3,7 @@ package videoagent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -37,7 +38,12 @@ type Store struct {
 	mu      sync.Mutex
 }
 
-const nodeClaimTTL = 15 * time.Minute
+const (
+	nodeClaimTTL               = 15 * time.Minute
+	mongoStoreOperationTimeout = time.Minute
+)
+
+var ErrProjectNotFound = errors.New("project not found")
 
 func NewStore(path string) *Store {
 	return &Store{path: path}
@@ -95,7 +101,7 @@ func (store *Store) updateProject(projectID string, create bool, change func(*Pr
 		current, exists := data.Projects[projectID]
 		if !exists {
 			if !create {
-				return fmt.Errorf("project not found: %s", projectID)
+				return fmt.Errorf("%w: %s", ErrProjectNotFound, projectID)
 			}
 			current = Project{ID: projectID, Name: projectID}
 		}
@@ -121,7 +127,7 @@ func (store *Store) GetProject(_ context.Context, projectID string) (Project, er
 	}
 	project, ok := data.Projects[projectID]
 	if !ok {
-		return Project{}, fmt.Errorf("project not found: %s", projectID)
+		return Project{}, fmt.Errorf("%w: %s", ErrProjectNotFound, projectID)
 	}
 	return project, nil
 }
@@ -478,6 +484,9 @@ func (store *Store) markSubmitStarted(command Command) error {
 		if !exists {
 			return fmt.Errorf("run not found: %s", command.RunID)
 		}
+		if run.CancelRequested || run.Canceled {
+			return errRunCancelRequested
+		}
 		index := findNodeRun(run, command.NodeRun)
 		if index < 0 || run.NodeRuns[index].State != Running {
 			return fmt.Errorf("node is not ready to submit: %s/%s", command.NodeRun.NodeID, command.NodeRun.InstanceKey)
@@ -580,7 +589,7 @@ func (store *Store) claimCallback(message CallbackMessage) (command Command, cla
 				if matchesJob && !matchesSubmit && node.Provider != message.Provider {
 					continue
 				}
-				if run.Canceled || run.CancelRequested {
+				if run.Canceled {
 					data.Receipts[receiptKey] = time.Now().UTC()
 					duplicate = true
 					return nil
@@ -688,7 +697,11 @@ func (store *Store) requeue(command Command) error {
 		if err := checkNodeClaim(run.NodeRuns[index], command); err != nil {
 			return err
 		}
-		run.NodeRuns[index].State = Waiting
+		if run.NodeRuns[index].SubmitStarted {
+			run.NodeRuns[index].State = Waiting
+		} else {
+			run.NodeRuns[index].State = Pending
+		}
 		clearNodeClaim(&run.NodeRuns[index])
 		data.Runs[command.RunID] = run
 		return nil
@@ -846,19 +859,46 @@ func (store *Store) completeCancel(runID string) error {
 		if !exists {
 			return fmt.Errorf("run not found: %s", runID)
 		}
-		run.CancelRequested = false
-		run.Canceled = true
-		for index := range run.NodeRuns {
-			if run.NodeRuns[index].State.terminal() {
-				continue
-			}
-			run.NodeRuns[index].State = Canceled
-			run.NodeRuns[index].Message = "run canceled"
-			clearNodeClaim(&run.NodeRuns[index])
-		}
+		completeCanceledRun(&run)
 		data.Runs[runID] = run
 		return nil
 	})
+}
+
+func (store *Store) completeCancelIfIdle(runID string, canceledJobs map[string]string) error {
+	return store.update(func(data *storeData) error {
+		run, exists := data.Runs[runID]
+		if !exists {
+			return fmt.Errorf("run not found: %s", runID)
+		}
+		if run.Canceled || !run.CancelRequested {
+			return nil
+		}
+		for _, node := range run.NodeRuns {
+			if node.State.terminal() || !node.SubmitStarted {
+				continue
+			}
+			if node.JobID == "" || canceledJobs[nodeRunKey(node)] != node.JobID {
+				return nil
+			}
+		}
+		completeCanceledRun(&run)
+		data.Runs[runID] = run
+		return nil
+	})
+}
+
+func completeCanceledRun(run *Run) {
+	run.CancelRequested = false
+	run.Canceled = true
+	for index := range run.NodeRuns {
+		if run.NodeRuns[index].State.terminal() {
+			continue
+		}
+		run.NodeRuns[index].State = Canceled
+		run.NodeRuns[index].Message = "run canceled"
+		clearNodeClaim(&run.NodeRuns[index])
+	}
 }
 
 func (store *Store) update(change func(*storeData) error) error {
@@ -1015,7 +1055,9 @@ type mongoReceiptDocument struct {
 }
 
 func (backend *mongoStateBackend) init() error {
-	_, err := backend.operations.Indexes().CreateOne(context.Background(), mongo.IndexModel{
+	ctx, cancel := context.WithTimeout(context.Background(), mongoStoreOperationTimeout)
+	defer cancel()
+	_, err := backend.operations.Indexes().CreateOne(ctx, mongo.IndexModel{
 		Keys: bson.D{{Key: "project_id", Value: 1}, {Key: "idempotency_key", Value: 1}},
 		Options: options.Index().SetUnique(true).SetPartialFilterExpression(bson.M{
 			"idempotency_key": bson.M{"$exists": true},
@@ -1025,7 +1067,8 @@ func (backend *mongoStateBackend) init() error {
 }
 
 func (backend *mongoStateBackend) Load() (storeData, error) {
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), mongoStoreOperationTimeout)
+	defer cancel()
 	data := emptyStoreData()
 	var err error
 	if data.Runs, backend.runRevisions, err = loadMongoValues[Run](ctx, backend.runs); err != nil {
@@ -1072,7 +1115,8 @@ func cloneStoreData(data storeData) (storeData, error) {
 }
 
 func (backend *mongoStateBackend) Save(data storeData) error {
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), mongoStoreOperationTimeout)
+	defer cancel()
 	var err error
 	if backend.runRevisions, err = syncMongoValues(ctx, backend.runs, backend.loaded.Runs, data.Runs, backend.runRevisions); err != nil {
 		return err

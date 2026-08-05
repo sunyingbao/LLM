@@ -3,6 +3,7 @@ package videoagent
 import (
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 )
 
@@ -44,11 +45,15 @@ func parseClipScript(content string) (ClipScript, error) {
 	if err != nil {
 		return ClipScript{}, err
 	}
+	result := ClipScript{Title: creativePlanTitle, CreativePlan: json.RawMessage(creativePlan)}
+	if parseNestedClipScript(clipScriptJSON, &result) {
+		return result, nil
+	}
+
 	var raw drClipScript
 	if err := json.Unmarshal([]byte(clipScriptJSON), &raw); err != nil {
 		return ClipScript{}, fmt.Errorf("decode dr clipscript: %w", err)
 	}
-	result := ClipScript{Title: creativePlanTitle, CreativePlan: json.RawMessage(creativePlan)}
 	for _, character := range raw.Characters {
 		result.Characters = append(result.Characters, Character{
 			ID: character.ID, Age: character.Age, Gender: character.Gender, Description: character.Description,
@@ -76,6 +81,45 @@ func parseClipScript(content string) (ClipScript, error) {
 		return ClipScript{}, fmt.Errorf("clipscript has no scenes")
 	}
 	return result, nil
+}
+
+type nestedClipScript struct {
+	Scenes []struct {
+		Shots []struct {
+			Visual    string `json:"shot"`
+			Duration  string `json:"duration"`
+			Voiceover string `json:"dialogue"`
+		} `json:"shots"`
+	} `json:"scenes"`
+}
+
+func parseNestedClipScript(content string, result *ClipScript) bool {
+	var raw nestedClipScript
+	if json.Unmarshal([]byte(content), &raw) != nil || len(raw.Scenes) == 0 {
+		return false
+	}
+	for sceneIndex, scene := range raw.Scenes {
+		for shotIndex, shot := range scene.Shots {
+			result.Scenes = append(result.Scenes, Scene{
+				ID:         fmt.Sprintf("scene-%d-%d", sceneIndex+1, shotIndex+1),
+				SemanticID: fmt.Sprintf("semantic-%d", sceneIndex+1),
+				Voiceover:  strings.TrimSpace(shot.Voiceover),
+				Visual:     strings.TrimSpace(shot.Visual),
+				DurationMS: parseDurationMS(shot.Duration),
+			})
+		}
+	}
+	return len(result.Scenes) > 0
+}
+
+func parseDurationMS(value string) int {
+	seconds := strings.TrimSpace(value)
+	seconds = strings.TrimSpace(strings.TrimSuffix(strings.TrimSuffix(seconds, "秒"), "s"))
+	parsed, err := strconv.ParseFloat(seconds, 64)
+	if err != nil || parsed <= 0 {
+		return 0
+	}
+	return int(parsed * 1000)
 }
 
 type drClipScript struct {

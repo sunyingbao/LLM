@@ -31,3 +31,9 @@ func TestFornaxModelRejectsIncompleteMaaSConfig(t *testing.T) {
 		}
 	}
 }
+
+func TestFornaxIdentityDoesNotRequireAppID(t *testing.T) {
+	if err := validateFornaxConfig(&FornaxConfig{AK: "real-ak", SK: "real-sk"}); err != nil {
+		t.Fatalf("validateFornaxConfig() error = %v", err)
+	}
+}

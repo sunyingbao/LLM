@@ -129,7 +129,6 @@ function resetWorkflow() {
   state.selectedEdge = null;
   state.connectFrom = null;
   state.artifacts = [];
-  renderArtifactCanvas();
   render();
 }
 
@@ -220,6 +219,7 @@ function connectNodes(fromNode, toNode) {
 function renderEdges() {
   const svg = $("edges");
   svg.replaceChildren();
+  const lineagePairs = artifactLineagePairs();
   state.edges.forEach((edge, index) => {
     const from = state.nodes.find((node) => node.id === edge.fromNode);
     const to = state.nodes.find((node) => node.id === edge.toNode);
@@ -229,60 +229,38 @@ function renderEdges() {
     const y1 = from.y + 48;
     const x2 = to.x;
     const y2 = to.y + 48;
-    const bend = Math.max(30, (x2 - x1) / 2);
-    path.setAttribute("d", `M ${x1} ${y1} C ${x1 + bend} ${y1}, ${x2 - bend} ${y2}, ${x2} ${y2}`);
-	path.classList.toggle("active", state.selectedEdge === index);
-	path.addEventListener("pointerdown", (event) => {
-	  event.stopPropagation();
-	  state.selected = null;
-	  state.selectedEdge = index;
-	  render();
-	});
+    const direction = x2 >= x1 ? 1 : -1;
+    const bend = Math.min(80, Math.abs(x2 - x1) / 2);
+    path.setAttribute("d", `M ${x1} ${y1} C ${x1 + direction * bend} ${y1}, ${x2 - direction * bend} ${y2}, ${x2} ${y2}`);
+    path.classList.toggle("active", state.selectedEdge === index);
+    path.classList.toggle("lineage", lineagePairs.has(`${from.id}->${to.id}`));
+    path.addEventListener("pointerdown", (event) => {
+      event.stopPropagation();
+      state.selected = null;
+      state.selectedEdge = index;
+      render();
+    });
     svg.appendChild(path);
   });
 }
 
-function renderArtifactCanvas() {
+function artifactLineagePairs() {
   const owners = new Map();
   state.artifacts.forEach((artifact) => {
     const owner = state.nodes.find((node) => node.artifacts?.includes(artifactKey(artifact)));
     if (owner) owners.set(artifactKey(artifact), owner);
   });
-  const container = $("artifact-nodes");
-  container.replaceChildren();
-  state.artifacts.forEach((artifact, index) => {
-    const owner = owners.get(artifactKey(artifact));
-    if (!owner) return;
-    const element = document.createElement("div");
-    element.className = "artifact-node";
-    element.style.left = `${owner.x + (index % 2) * 150}px`;
-    element.style.top = `${owner.y + 112 + Math.floor(index / 2) * 42}px`;
-    const title = document.createElement("strong");
-    title.textContent = artifact.kind;
-    const status = document.createElement("div");
-    status.className = "artifact-node-status";
-    status.textContent = artifact.status;
-    element.append(title, status);
-    container.appendChild(element);
-  });
-
-  const svg = $("artifact-edges");
-  svg.replaceChildren();
+  const pairs = new Set();
   state.artifacts.forEach((artifact) => {
     const target = owners.get(artifactKey(artifact));
     if (!target) return;
     artifact.parent_ids?.forEach((parentID) => {
       const source = owners.get(parentID);
-      if (!source) return;
-      const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
-      const x1 = source.x + 89;
-      const y1 = source.y + 88;
-      const x2 = target.x + 70;
-      const y2 = target.y + 112;
-      path.setAttribute("d", `M ${x1} ${y1} L ${x2} ${y2}`);
-      svg.appendChild(path);
+      if (!source || source.id === target.id) return;
+      pairs.add(`${source.id}->${target.id}`);
     });
   });
+  return pairs;
 }
 
 function workflowPayload() {
@@ -477,7 +455,6 @@ function updateRun(run) {
   });
   state.artifacts = artifacts;
   render();
-  renderArtifactCanvas();
   renderArtifacts(artifacts);
 	const final = artifacts.find((artifact) => artifact.kind === "finalvideo" && artifact.status === "succeeded");
 	const failed = run.node_runs.some((node) => node.state === "failed");

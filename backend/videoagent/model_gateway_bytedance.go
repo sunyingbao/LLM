@@ -36,6 +36,9 @@ func (bytedanceModelGateway) CreateTask(ctx context.Context, request ModelTaskRe
 	if err != nil {
 		return "", err
 	}
+	if response == nil || response.GetTaskId() == "" {
+		return "", fmt.Errorf("model gateway returned an empty task id")
+	}
 	return response.GetTaskId(), nil
 }
 
@@ -43,6 +46,9 @@ func (bytedanceModelGateway) GetTask(ctx context.Context, taskID string) (ModelT
 	response, err := lab_creative_model_gateway.RawCall.GetTaskResult_(ctx, &creative_model.GetTaskResultReq{TaskId: taskID})
 	if err != nil {
 		return ModelTaskStatus{}, err
+	}
+	if response == nil {
+		return ModelTaskStatus{}, fmt.Errorf("model gateway returned an empty task status")
 	}
 	return ModelTaskStatus{
 		Code: response.GetCode(), Status: response.GetStatus(), Result: response.GetResult_(),

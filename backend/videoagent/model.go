@@ -61,8 +61,8 @@ func NewChatModel(ctx context.Context, config ChatModelConfig) (model.BaseChatMo
 }
 
 func validateFornaxConfig(config *FornaxConfig) error {
-	if config == nil || config.AppID <= 0 || invalidCredential(config.AK) || invalidCredential(config.SK) {
-		return fmt.Errorf("Fornax app_id, ak and sk are required and cannot be placeholders")
+	if config == nil || invalidCredential(config.AK) || invalidCredential(config.SK) {
+		return fmt.Errorf("Fornax ak and sk are required and cannot be placeholders")
 	}
 	return nil
 }

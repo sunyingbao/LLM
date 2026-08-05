@@ -2,6 +2,7 @@ package videoagent
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -138,5 +139,103 @@ func TestMongoConcurrentProjectUpdatesKeepBothVersions(t *testing.T) {
 	}
 	if len(project.WorkflowVersions) != 3 {
 		t.Fatalf("workflow versions = %d, want initial plus two concurrent versions", len(project.WorkflowVersions))
+	}
+}
+
+func TestMongoEnsureProjectDoesNotOverwriteConcurrentWorkflow(t *testing.T) {
+	uri := os.Getenv("VIDEO_AGENT_MONGO_URI")
+	if uri == "" {
+		t.Skip("VIDEO_AGENT_MONGO_URI is not set")
+	}
+
+	ctx := context.Background()
+	database := "video_agent_ensure_project_test_" + newID("mongo")
+	first, err := NewMongoLocalApplication(t.TempDir(), uri, database, "workflow_state")
+	if err != nil {
+		t.Fatalf("NewMongoLocalApplication(first) error = %v", err)
+	}
+	defer first.Close()
+	second, err := NewMongoLocalApplication(t.TempDir(), uri, database, "workflow_state")
+	if err != nil {
+		t.Fatalf("NewMongoLocalApplication(second) error = %v", err)
+	}
+	defer second.Close()
+
+	var group sync.WaitGroup
+	group.Add(2)
+	var ensureErr error
+	var saved WorkflowVersion
+	var saveErr error
+	go func() {
+		defer group.Done()
+		ensureErr = EnsureProject(ctx, first.Store, "demo")
+	}()
+	go func() {
+		defer group.Done()
+		saved, saveErr = second.Runner.SaveWorkflow(ctx, "demo", VideoWorkflow())
+	}()
+	group.Wait()
+	if ensureErr != nil || saveErr != nil {
+		t.Fatalf("concurrent initialization errors = (%v, %v)", ensureErr, saveErr)
+	}
+
+	project, err := first.Store.GetProject(ctx, "demo")
+	if err != nil {
+		t.Fatalf("GetProject() error = %v", err)
+	}
+	found := false
+	for _, version := range project.WorkflowVersions {
+		found = found || version.ID == saved.ID
+	}
+	if !found {
+		t.Fatalf("concurrently saved workflow %s was overwritten: %#v", saved.ID, project.WorkflowVersions)
+	}
+}
+
+func TestMongoClaimTakeoverCancelsPreviousExecution(t *testing.T) {
+	uri := os.Getenv("VIDEO_AGENT_MONGO_URI")
+	if uri == "" {
+		t.Skip("VIDEO_AGENT_MONGO_URI is not set")
+	}
+
+	ctx := context.Background()
+	database := "video_agent_claim_fencing_test_" + newID("mongo")
+	first, err := NewMongoLocalApplication(t.TempDir(), uri, database, "workflow_state")
+	if err != nil {
+		t.Fatalf("NewMongoLocalApplication(first) error = %v", err)
+	}
+	defer first.Close()
+	second, err := NewMongoLocalApplication(t.TempDir(), uri, database, "workflow_state")
+	if err != nil {
+		t.Fatalf("NewMongoLocalApplication(second) error = %v", err)
+	}
+	defer second.Close()
+
+	run := Run{ID: "run-claim-fencing", NodeRuns: []NodeRun{{NodeID: "requirement", Kind: RequirementNode, State: Pending}}}
+	if err := first.Store.Create(ctx, run); err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	command, claimed, err := first.Store.claimReady(run.ID)
+	if err != nil || !claimed {
+		t.Fatalf("claimReady() = (%#v, %t, %v)", command, claimed, err)
+	}
+	if err := second.Store.update(func(data *storeData) error {
+		current := data.Runs[run.ID]
+		current.NodeRuns[0].ClaimToken = "replacement-claim"
+		now := time.Now().UTC()
+		current.NodeRuns[0].ClaimedAt = &now
+		data.Runs[run.ID] = current
+		return nil
+	}); err != nil {
+		t.Fatalf("replace claim error = %v", err)
+	}
+
+	first.Runner.claimHeartbeat = time.Millisecond
+	_, err = first.Runner.withClaimHeartbeat(ctx, command, func(executeCtx context.Context, _ Command) (Result, error) {
+		<-executeCtx.Done()
+		return Result{}, context.Cause(executeCtx)
+	})
+	if !errors.Is(err, ErrClaimHeartbeat) {
+		t.Fatalf("withClaimHeartbeat() error = %v, want ErrClaimHeartbeat", err)
 	}
 }

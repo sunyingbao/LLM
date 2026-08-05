@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -222,6 +224,29 @@ func TestUncertainSubmissionIsRecoveredFromMQBySubmitKeyWithoutResubmitting(t *t
 	}
 }
 
+func TestCallbackMonitorIncludesClaimedNode(t *testing.T) {
+	runner, _, _, tts, _ := testRunner(t)
+	run, err := runner.StartRun(context.Background(), "project-1", RunInput{ProductName: "shoe"})
+	if err != nil {
+		t.Fatalf("StartRun() error = %v", err)
+	}
+	ttsNode := nodeRun(run, "tts", "speaker-1")
+	tts.jobs[ttsNode.JobID] = JobStatus{State: JobSucceeded, ExampleURI: "example://speaker-1"}
+
+	var callback RunEvent
+	runner.SetMonitor(MonitorFunc(func(_ context.Context, event RunEvent) {
+		if event.Action == MonitorCallback {
+			callback = event
+		}
+	}))
+	if err := runner.ProcessCallback(context.Background(), CallbackMessage{Provider: ttsNode.Provider, EventID: "done:" + ttsNode.JobID, JobID: ttsNode.JobID}); err != nil {
+		t.Fatalf("ProcessCallback() error = %v", err)
+	}
+	if callback.RunID != run.ID || callback.NodeID != ttsNode.NodeID || callback.Kind != ttsNode.Kind || callback.Provider != ttsNode.Provider {
+		t.Fatalf("callback event = %#v, want claimed node identity", callback)
+	}
+}
+
 func TestSubmitAndReconcileFailureStaysVisibleAndRecoverable(t *testing.T) {
 	runner, store, _, tts, _ := testRunner(t)
 	tts.submitErr = fmt.Errorf("connection reset after submit")
@@ -232,7 +257,7 @@ func TestSubmitAndReconcileFailureStaysVisibleAndRecoverable(t *testing.T) {
 	}
 
 	node := nodeRun(run, "tts", "speaker-1")
-	if node.State != Waiting || node.JobID != "" {
+	if node.State != Waiting || node.JobID != "" || !node.SubmissionUnknown {
 		t.Fatalf("uncertain tts node = %#v, want waiting without job id", node)
 	}
 	if node.Message == "" {
@@ -248,6 +273,15 @@ func TestSubmitAndReconcileFailureStaysVisibleAndRecoverable(t *testing.T) {
 	}
 	if node := nodeRun(stored, "tts", "speaker-1"); node.State != Waiting {
 		t.Fatalf("tts state after failed reconciliation = %s, want waiting", node.State)
+	}
+	if got := runner.Metrics.Snapshot()[MonitorReconcileFailed]; got != 1 {
+		t.Fatalf("reconcile failure events = %d, want 1", got)
+	}
+	if got := runner.Metrics.Snapshot()[MonitorNodeFailed]; got != 0 {
+		t.Fatalf("node failure events = %d, want 0 for a recoverable reconciliation error", got)
+	}
+	if got := runner.Metrics.Snapshot()[MonitorSubmissionUnknown]; got != 1 {
+		t.Fatalf("submission unknown events = %d, want 1", got)
 	}
 }
 
@@ -276,6 +310,9 @@ func TestRetryDoesNotDuplicateUnknownSubmission(t *testing.T) {
 	}
 	if got := len(tts.submissions); got != 1 {
 		t.Fatalf("tts submissions = %d, want 1", got)
+	}
+	if got := runner.Metrics.Snapshot()[MonitorSubmissionUnknown]; got != 1 {
+		t.Fatalf("submission unknown events = %d, want 1", got)
 	}
 }
 
@@ -521,6 +558,9 @@ func TestCallbackRequeuesWhenRefreshResultCannotBeSaved(t *testing.T) {
 	if node := nodeRun(stored, "tts", "speaker-1"); node.State != Running {
 		t.Fatalf("tts state after apply and requeue failures = %s, want running", node.State)
 	}
+	if got := runner.Metrics.Snapshot()[MonitorReconcileFailed]; got != 1 {
+		t.Fatalf("reconcile failure events = %d, want 1 after apply failure", got)
+	}
 	if err := runner.OnCallback(context.Background(), "tts", "event-save", ttsNode.JobID); err != nil {
 		t.Fatalf("retried OnCallback() error = %v", err)
 	}
@@ -574,7 +614,7 @@ func TestCancelRejectsCompletedRun(t *testing.T) {
 	}
 }
 
-func TestCancelCompletesWhenProviderDoesNotSupportCancellation(t *testing.T) {
+func TestCancelStaysRequestedWhenProviderDoesNotSupportCancellation(t *testing.T) {
 	images := newFakeImages()
 	runner, err := NewRunner(NewStore(t.TempDir()+"/workflow.json"), Clients{
 		Planner: testPlanner{}, Image: imageWithoutCancel{client: images}, TTS: newFakeTTS(),
@@ -587,12 +627,122 @@ func TestCancelCompletesWhenProviderDoesNotSupportCancellation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("StartRun() error = %v", err)
 	}
-	if err := runner.Cancel(context.Background(), run.ID); err != nil {
-		t.Fatalf("Cancel() error = %v", err)
+	if err := runner.Cancel(context.Background(), run.ID); !errors.Is(err, ErrCancellationUnsupported) {
+		t.Fatalf("Cancel() error = %v, want ErrCancellationUnsupported", err)
 	}
 	run, err = runner.store.Get(context.Background(), run.ID)
-	if err != nil || !run.Canceled || run.CancelRequested {
-		t.Fatalf("canceled run = (%#v, %v)", run, err)
+	if err != nil || run.Canceled || !run.CancelRequested {
+		t.Fatalf("cancel-pending run = (%#v, %v)", run, err)
+	}
+	if got := runner.Metrics.Snapshot()[MonitorCancelFailed]; got != 1 {
+		t.Fatalf("cancel failure events = %d, want 1", got)
+	}
+}
+
+func TestCallbacksSettleJobsWhileCancellationIsPending(t *testing.T) {
+	images := newFakeImages()
+	runner, err := NewRunner(NewStore(t.TempDir()+"/workflow.json"), Clients{
+		Planner: testPlanner{}, Image: imageWithoutCancel{client: images}, TTS: newFakeTTS(),
+		Video: newFakeVideos(), Audit: allowAudit{}, Shield: allowShield{},
+	})
+	if err != nil {
+		t.Fatalf("NewRunner() error = %v", err)
+	}
+	workflow := Workflow{
+		Nodes: []WorkflowNode{
+			{ID: "requirement", Kind: RequirementNode},
+			{ID: "clipscript", Kind: ClipScriptNode},
+			{ID: "competition", Kind: CompetitionReferenceNode},
+		},
+		Edges: []WorkflowEdge{
+			{FromNodeID: "requirement", FromPort: "requirement", ToNodeID: "clipscript", ToPort: "requirement"},
+			{FromNodeID: "clipscript", FromPort: "clipscript", ToNodeID: "competition", ToPort: "clipscript"},
+		},
+	}
+	run, err := runner.startWorkflow(context.Background(), "project-1", workflow, RunInput{ProductName: "shoe"}, "cancel-callback-run")
+	if err != nil {
+		t.Fatalf("startWorkflow() error = %v", err)
+	}
+	job := nodeRun(run, "competition", "competition-1")
+	if err := runner.Cancel(context.Background(), run.ID); !errors.Is(err, ErrCancellationUnsupported) {
+		t.Fatalf("Cancel() error = %v, want ErrCancellationUnsupported", err)
+	}
+	images.jobs[job.JobID] = JobStatus{State: JobSucceeded, URI: "image://completed"}
+	if err := runner.ProcessCallback(context.Background(), CallbackMessage{Provider: job.Provider, EventID: "done:" + job.JobID, JobID: job.JobID}); err != nil {
+		t.Fatalf("ProcessCallback() error = %v", err)
+	}
+
+	stored := mustGetRun(t, runner.store, run.ID)
+	if !stored.Canceled || stored.CancelRequested {
+		t.Fatalf("run after terminal callback = %#v, want completed cancellation", stored)
+	}
+	if node := nodeRun(stored, "competition", "competition-1"); node.State != Succeeded {
+		t.Fatalf("completed remote node state = %s, want succeeded", node.State)
+	}
+}
+
+func TestPollingSettlesJobsWhileCancellationIsPending(t *testing.T) {
+	images := newFakeImages()
+	runner, err := NewRunner(NewStore(t.TempDir()+"/workflow.json"), Clients{
+		Planner: testPlanner{}, Image: imageWithoutCancel{client: images}, TTS: newFakeTTS(),
+		Video: newFakeVideos(), Audit: allowAudit{}, Shield: allowShield{},
+	})
+	if err != nil {
+		t.Fatalf("NewRunner() error = %v", err)
+	}
+	workflow := Workflow{
+		Nodes: []WorkflowNode{
+			{ID: "requirement", Kind: RequirementNode},
+			{ID: "clipscript", Kind: ClipScriptNode},
+			{ID: "competition", Kind: CompetitionReferenceNode},
+		},
+		Edges: []WorkflowEdge{
+			{FromNodeID: "requirement", FromPort: "requirement", ToNodeID: "clipscript", ToPort: "requirement"},
+			{FromNodeID: "clipscript", FromPort: "clipscript", ToNodeID: "competition", ToPort: "clipscript"},
+		},
+	}
+	run, err := runner.startWorkflow(context.Background(), "project-1", workflow, RunInput{ProductName: "shoe"}, "cancel-poll-run")
+	if err != nil {
+		t.Fatalf("startWorkflow() error = %v", err)
+	}
+	job := nodeRun(run, "competition", "competition-1")
+	if err := runner.Cancel(context.Background(), run.ID); !errors.Is(err, ErrCancellationUnsupported) {
+		t.Fatalf("Cancel() error = %v, want ErrCancellationUnsupported", err)
+	}
+	images.jobs[job.JobID] = JobStatus{State: JobSucceeded, URI: "image://completed"}
+	if err := runner.Poll(context.Background(), run.ID); err != nil {
+		t.Fatalf("Poll() error = %v", err)
+	}
+
+	stored := mustGetRun(t, runner.store, run.ID)
+	if !stored.Canceled || stored.CancelRequested {
+		t.Fatalf("run after terminal poll = %#v, want completed cancellation", stored)
+	}
+	if node := nodeRun(stored, "competition", "competition-1"); node.State != Succeeded {
+		t.Fatalf("completed remote node state = %s, want succeeded", node.State)
+	}
+}
+
+func TestCallbackClaimFailureIsObservable(t *testing.T) {
+	runner, err := NewRunner(&Store{backend: failingStateBackend{err: errors.New("store unavailable")}}, Clients{
+		Planner: testPlanner{}, Image: newFakeImages(), TTS: newFakeTTS(),
+		Video: newFakeVideos(), Audit: allowAudit{}, Shield: allowShield{},
+	})
+	if err != nil {
+		t.Fatalf("NewRunner() error = %v", err)
+	}
+	var callback RunEvent
+	runner.SetMonitor(MonitorFunc(func(_ context.Context, event RunEvent) {
+		if event.Action == MonitorCallback {
+			callback = event
+		}
+	}))
+	err = runner.ProcessCallback(context.Background(), CallbackMessage{Provider: "video", EventID: "done:job-1", JobID: "job-1"})
+	if err == nil {
+		t.Fatal("ProcessCallback() error = nil")
+	}
+	if callback.Action != MonitorCallback || callback.Provider != "video" || !strings.Contains(callback.Message, "claim failed") {
+		t.Fatalf("callback event = %#v, want failed claim observation", callback)
 	}
 }
 
@@ -626,6 +776,152 @@ func TestCancelCompensatesJobSubmittedDuringCancellation(t *testing.T) {
 	}
 	if len(images.jobs) != 0 {
 		t.Fatalf("remote jobs after cancel = %#v, want none", images.jobs)
+	}
+}
+
+func TestLateSubmissionCancelFailureReportsRemoteJobAsWaiting(t *testing.T) {
+	images := newFakeImages()
+	blockingImages := &cancelFailingBlockingImageClient{blockingImageClient: &blockingImageClient{
+		fakeImages: images,
+		started:    make(chan struct{}),
+		release:    make(chan struct{}),
+	}}
+	runner, err := NewRunner(NewStore(t.TempDir()+"/workflow.json"), Clients{
+		Planner: testPlanner{}, Image: blockingImages, TTS: newFakeTTS(),
+		Video: newFakeVideos(), Audit: allowAudit{}, Shield: allowShield{},
+	})
+	if err != nil {
+		t.Fatalf("NewRunner() error = %v", err)
+	}
+	var cancelFailure RunEvent
+	runner.SetMonitor(MonitorFunc(func(_ context.Context, event RunEvent) {
+		if event.Action == MonitorCancelFailed && event.NodeID != "" {
+			cancelFailure = event
+		}
+	}))
+
+	done := make(chan error, 1)
+	go func() {
+		_, runErr := runner.startWorkflow(context.Background(), "project-1", VideoWorkflow(), RunInput{ProductName: "shoe"}, "cancel-submit-failure")
+		done <- runErr
+	}()
+	<-blockingImages.started
+	if err := runner.Cancel(context.Background(), "cancel-submit-failure"); err != nil {
+		t.Fatalf("Cancel() error = %v", err)
+	}
+	close(blockingImages.release)
+	if err := <-done; err != nil {
+		t.Fatalf("startWorkflow() error = %v", err)
+	}
+	if cancelFailure.State != Waiting || cancelFailure.Provider == "" {
+		t.Fatalf("cancel failure event = %#v, want waiting remote job", cancelFailure)
+	}
+	stored := mustGetRun(t, runner.store, "cancel-submit-failure")
+	remoteNode := nodeRun(stored, "competition", "competition-1")
+	if !stored.CancelRequested || stored.Canceled || remoteNode.State != Waiting || remoteNode.JobID == "" {
+		t.Fatalf("run after failed late cancel = %#v, node = %#v", stored, remoteNode)
+	}
+	images.jobs[remoteNode.JobID] = JobStatus{State: JobSucceeded, URI: "image://completed"}
+	if err := runner.Poll(context.Background(), stored.ID); err != nil {
+		t.Fatalf("Poll() error = %v", err)
+	}
+	stored = mustGetRun(t, runner.store, stored.ID)
+	if !stored.Canceled || stored.CancelRequested {
+		t.Fatalf("run after late job terminal state = %#v, want canceled", stored)
+	}
+}
+
+func TestRestoreRetriesFailedCancellationFinalization(t *testing.T) {
+	images := newFakeImages()
+	backend := &cancelFinalizeFailBackend{data: emptyStoreData()}
+	store := &Store{backend: backend}
+	runner, err := NewRunner(store, Clients{
+		Planner: testPlanner{}, Image: imageWithoutCancel{client: images}, TTS: newFakeTTS(),
+		Video: newFakeVideos(), Audit: allowAudit{}, Shield: allowShield{},
+	})
+	if err != nil {
+		t.Fatalf("NewRunner() error = %v", err)
+	}
+	run, err := runner.startWorkflow(context.Background(), "project-1", Workflow{
+		Nodes: []WorkflowNode{
+			{ID: "requirement", Kind: RequirementNode},
+			{ID: "clipscript", Kind: ClipScriptNode},
+			{ID: "competition", Kind: CompetitionReferenceNode},
+		},
+		Edges: []WorkflowEdge{
+			{FromNodeID: "requirement", FromPort: "requirement", ToNodeID: "clipscript", ToPort: "requirement"},
+			{FromNodeID: "clipscript", FromPort: "clipscript", ToNodeID: "competition", ToPort: "clipscript"},
+		},
+	}, RunInput{ProductName: "shoe"}, "cancel-finalize-retry")
+	if err != nil {
+		t.Fatalf("startWorkflow() error = %v", err)
+	}
+	job := nodeRun(run, "competition", "competition-1")
+	if err := runner.Cancel(context.Background(), run.ID); !errors.Is(err, ErrCancellationUnsupported) {
+		t.Fatalf("Cancel() error = %v, want ErrCancellationUnsupported", err)
+	}
+	cancelFailuresBeforePoll := runner.Metrics.Snapshot()[MonitorCancelFailed]
+	images.jobs[job.JobID] = JobStatus{State: JobSucceeded, URI: "image://completed"}
+	if err := runner.Poll(context.Background(), run.ID); err == nil {
+		t.Fatal("Poll() error = nil, want cancellation finalization store failure")
+	}
+	stored := mustGetRun(t, store, run.ID)
+	if !stored.CancelRequested || stored.Canceled || nodeRun(stored, "competition", "competition-1").State != Succeeded {
+		t.Fatalf("run after failed cancellation finalization = %#v", stored)
+	}
+	if got := runner.Metrics.Snapshot()[MonitorCancelFailed]; got != cancelFailuresBeforePoll+1 {
+		t.Fatalf("cancel failure events = %d, want %d", got, cancelFailuresBeforePoll+1)
+	}
+	if err := runner.Restore(context.Background(), run.ID); err != nil {
+		t.Fatalf("Restore() error = %v", err)
+	}
+	stored = mustGetRun(t, store, run.ID)
+	if !stored.Canceled || stored.CancelRequested {
+		t.Fatalf("run after Restore() = %#v, want canceled", stored)
+	}
+}
+
+func TestSubmissionCannotStartAfterCancellationRequest(t *testing.T) {
+	store := NewStore(t.TempDir() + "/workflow.json")
+	command := Command{RunID: "cancel-before-submit", NodeRun: NodeRun{
+		NodeID: "competition", Kind: CompetitionReferenceNode, InstanceKey: "competition-1",
+		State: Running, ClaimToken: "claim-1",
+	}}
+	if err := store.update(func(data *storeData) error {
+		data.Runs[command.RunID] = Run{ID: command.RunID, CancelRequested: true, NodeRuns: []NodeRun{command.NodeRun}}
+		return nil
+	}); err != nil {
+		t.Fatalf("seed run: %v", err)
+	}
+
+	if err := store.markSubmitStarted(command); !errors.Is(err, errRunCancelRequested) {
+		t.Fatalf("markSubmitStarted() error = %v, want errRunCancelRequested", err)
+	}
+	stored := mustGetRun(t, store, command.RunID)
+	if stored.NodeRuns[0].SubmitStarted {
+		t.Fatal("submission started after cancellation request")
+	}
+}
+
+func TestCompleteCancelKeepsNewSubmissionTracked(t *testing.T) {
+	store := NewStore(t.TempDir() + "/workflow.json")
+	node := NodeRun{
+		NodeID: "competition", Kind: CompetitionReferenceNode, InstanceKey: "competition-1",
+		State: Running, SubmitStarted: true, ClaimToken: "claim-1",
+	}
+	if err := store.update(func(data *storeData) error {
+		data.Runs["cancel-during-submit"] = Run{ID: "cancel-during-submit", CancelRequested: true, NodeRuns: []NodeRun{node}}
+		return nil
+	}); err != nil {
+		t.Fatalf("seed run: %v", err)
+	}
+
+	if err := store.completeCancelIfIdle("cancel-during-submit", nil); err != nil {
+		t.Fatalf("completeCancelIfIdle() error = %v", err)
+	}
+	stored := mustGetRun(t, store, "cancel-during-submit")
+	if stored.Canceled || !stored.CancelRequested || !stored.NodeRuns[0].SubmitStarted {
+		t.Fatalf("run = %#v, want tracked in-flight submission", stored)
 	}
 }
 
@@ -663,6 +959,54 @@ func TestLongRunningSubmissionRenewsNodeClaim(t *testing.T) {
 	close(blockingImages.release)
 	if err := <-done; err != nil {
 		t.Fatalf("startWorkflow() error = %v", err)
+	}
+}
+
+func TestClaimHeartbeatFailureCancelsNodeExecution(t *testing.T) {
+	metrics := NewMetrics()
+	runner := &Runner{
+		store:          NewStore(t.TempDir() + "/workflow.json"),
+		monitor:        metrics,
+		Metrics:        metrics,
+		claimHeartbeat: time.Millisecond,
+	}
+	command := Command{RunID: "missing-run", NodeRun: NodeRun{
+		NodeID: "requirement", Kind: RequirementNode, ClaimToken: "stale-claim",
+	}}
+
+	executionCanceled := make(chan struct{})
+	_, err := runner.withClaimHeartbeat(context.Background(), command, func(ctx context.Context, _ Command) (Result, error) {
+		<-ctx.Done()
+		close(executionCanceled)
+		return Result{}, context.Cause(ctx)
+	})
+	if !errors.Is(err, ErrClaimHeartbeat) {
+		t.Fatalf("withClaimHeartbeat() error = %v, want ErrClaimHeartbeat", err)
+	}
+	select {
+	case <-executionCanceled:
+	default:
+		t.Fatal("node execution was not canceled after losing its claim")
+	}
+	if got := metrics.Snapshot()[MonitorLeaseRenewalFailed]; got != 1 {
+		t.Fatalf("lease renewal failure events = %d, want 1", got)
+	}
+}
+
+func TestStartRunDoesNotTreatStorageFailureAsMissingProject(t *testing.T) {
+	storageErr := errors.New("mongo unavailable")
+	store := &Store{backend: failingStateBackend{err: storageErr}}
+	runner, err := NewRunner(store, Clients{
+		Planner: testPlanner{}, Image: newFakeImages(), TTS: newFakeTTS(),
+		Video: newFakeVideos(), Audit: allowAudit{}, Shield: allowShield{},
+	})
+	if err != nil {
+		t.Fatalf("NewRunner() error = %v", err)
+	}
+
+	_, err = runner.StartRun(context.Background(), "project-1", RunInput{ProductName: "shoe"})
+	if !errors.Is(err, storageErr) {
+		t.Fatalf("StartRun() error = %v, want storage error", err)
 	}
 }
 
@@ -1033,10 +1377,19 @@ type blockingImageClient struct {
 	fakeImages *fakeImages
 	started    chan struct{}
 	release    chan struct{}
+	startOnce  sync.Once
+}
+
+type cancelFailingBlockingImageClient struct {
+	*blockingImageClient
+}
+
+func (*cancelFailingBlockingImageClient) CancelImage(context.Context, string) error {
+	return errors.New("remote cancel failed")
 }
 
 func (images *blockingImageClient) SubmitImage(ctx context.Context, request ImageRequest) (SubmittedJob, error) {
-	close(images.started)
+	images.startOnce.Do(func() { close(images.started) })
 	<-images.release
 	return images.fakeImages.SubmitImage(ctx, request)
 }
@@ -1259,6 +1612,23 @@ type flakyStateBackend struct {
 	failAt map[int]bool
 }
 
+type cancelFinalizeFailBackend struct {
+	data   storeData
+	failed bool
+}
+
+type failingStateBackend struct {
+	err error
+}
+
+func (backend failingStateBackend) Load() (storeData, error) {
+	return storeData{}, backend.err
+}
+
+func (backend failingStateBackend) Save(storeData) error {
+	return backend.err
+}
+
 type claimConflictBackend struct {
 	data       storeData
 	conflicted bool
@@ -1304,6 +1674,31 @@ func (backend *flakyStateBackend) Save(data storeData) error {
 	backend.saves++
 	if backend.failAt[backend.saves] {
 		return fmt.Errorf("temporary store failure")
+	}
+	backend.data = data
+	return nil
+}
+
+func (backend *cancelFinalizeFailBackend) Load() (storeData, error) {
+	payload, err := json.Marshal(backend.data)
+	if err != nil {
+		return storeData{}, err
+	}
+	data := storeData{}
+	if err := json.Unmarshal(payload, &data); err != nil {
+		return storeData{}, err
+	}
+	return normalizeStoreData(data), nil
+}
+
+func (backend *cancelFinalizeFailBackend) Save(data storeData) error {
+	if !backend.failed {
+		for _, run := range data.Runs {
+			if run.Canceled {
+				backend.failed = true
+				return fmt.Errorf("temporary cancel finalization failure")
+			}
+		}
 	}
 	backend.data = data
 	return nil

@@ -11,6 +11,8 @@ import (
 
 var ErrCallbackNotReady = errors.New("callback job is not ready")
 var ErrJobPending = errors.New("remote job is still pending")
+var ErrClaimHeartbeat = errors.New("node claim heartbeat failed")
+var errRunCancelRequested = errors.New("run cancellation is requested")
 
 // Runner advances the persisted graph. It never resubmits an uncertain job.
 type Runner struct {
@@ -51,7 +53,10 @@ func (runner *Runner) SetMonitor(monitor Monitor) {
 // StartRun persists the static workflow before executing any model or remote call.
 func (runner *Runner) StartRun(ctx context.Context, projectID string, input RunInput) (run Run, err error) {
 	project, err := runner.store.GetProject(ctx, projectID)
-	if err != nil || len(project.WorkflowVersions) == 0 {
+	if err != nil && !errors.Is(err, ErrProjectNotFound) {
+		return run, err
+	}
+	if errors.Is(err, ErrProjectNotFound) || len(project.WorkflowVersions) == 0 {
 		version, saveErr := runner.SaveWorkflow(ctx, projectID, VideoWorkflow())
 		if saveErr != nil {
 			return run, saveErr
@@ -349,11 +354,16 @@ func (runner *Runner) Advance(ctx context.Context, runID string) error {
 			return err
 		}
 		if !claimed {
-			return nil
+			_, err = runner.finishCancellation(ctx, runID)
+			return err
 		}
 
 		if command.NodeRun.InstanceKey != "" {
 			if err := runner.store.markSubmitStarted(command); err != nil {
+				if errors.Is(err, errRunCancelRequested) {
+					_, finishErr := runner.finishCancellation(ctx, runID)
+					return finishErr
+				}
 				return err
 			}
 		}
@@ -361,13 +371,22 @@ func (runner *Runner) Advance(ctx context.Context, runID string) error {
 		startedAt := time.Now()
 		result, err := runner.withClaimHeartbeat(ctx, command, runner.handler.Start)
 		if err != nil {
+			if errors.Is(err, ErrClaimHeartbeat) {
+				if requeueErr := runner.store.requeue(command); requeueErr != nil {
+					return errors.Join(err, requeueErr, runner.store.releaseClaim(command))
+				}
+				return err
+			}
 			result = failedResult(command, err)
 		}
-		runner.cancelLateSubmission(ctx, command, result)
+		result = runner.cancelLateSubmission(ctx, command, result)
 		if err := runner.store.apply(command, result); err != nil {
 			return err
 		}
-		runner.record(ctx, RunEvent{Action: monitorAction(result.State), RunID: command.RunID, NodeID: command.NodeRun.NodeID, Kind: command.NodeRun.Kind, State: result.State, Message: result.Message, DurationMS: time.Since(startedAt).Milliseconds()})
+		if result.SubmissionUnknown {
+			runner.record(ctx, RunEvent{Action: MonitorSubmissionUnknown, RunID: command.RunID, NodeID: command.NodeRun.NodeID, Kind: command.NodeRun.Kind, State: result.State, Provider: result.Provider, Message: result.Message})
+		}
+		runner.record(ctx, RunEvent{Action: monitorAction(result.State), RunID: command.RunID, NodeID: command.NodeRun.NodeID, Kind: command.NodeRun.Kind, State: result.State, Provider: result.Provider, Message: result.Message, DurationMS: time.Since(startedAt).Milliseconds()})
 	}
 }
 
@@ -433,26 +452,43 @@ func (runner *Runner) Cancel(ctx context.Context, runID string) error {
 		return err
 	}
 	if err := runner.handler.Cancel(ctx, run); err != nil {
+		runner.record(ctx, RunEvent{Action: MonitorCancelFailed, RunID: runID, Message: err.Error()})
 		log.Printf("cancel remote video jobs for run %s: %v", runID, err)
+		return err
 	}
-	return runner.store.completeCancel(runID)
+	canceledJobs := make(map[string]string)
+	for _, node := range run.NodeRuns {
+		if !node.State.terminal() && node.JobID != "" {
+			canceledJobs[nodeRunKey(node)] = node.JobID
+		}
+	}
+	return runner.store.completeCancelIfIdle(runID, canceledJobs)
 }
 
-func (runner *Runner) cancelLateSubmission(ctx context.Context, command Command, result Result) {
+func (runner *Runner) cancelLateSubmission(ctx context.Context, command Command, result Result) Result {
 	if result.JobID == "" || (result.State != Waiting && result.State != Running) {
-		return
+		return result
 	}
 	run, err := runner.store.Get(ctx, command.RunID)
 	if err != nil || (!run.CancelRequested && !run.Canceled) {
-		return
+		return result
 	}
 	node := command.NodeRun
 	node.State = Waiting
 	node.Provider = result.Provider
 	node.JobID = result.JobID
 	if err := runner.handler.Cancel(ctx, Run{NodeRuns: []NodeRun{node}}); err != nil {
+		runner.record(ctx, RunEvent{Action: MonitorCancelFailed, RunID: command.RunID, NodeID: node.NodeID, Kind: node.Kind, State: Waiting, Provider: node.Provider, Message: err.Error()})
 		log.Printf("cancel late submission %s/%s for run %s: %v", node.NodeID, node.InstanceKey, command.RunID, err)
+		return result
 	}
+	result.State = Canceled
+	result.Message = "run canceled"
+	for index := range result.Artifacts {
+		result.Artifacts[index].Status = string(Canceled)
+		result.Artifacts[index].Message = result.Message
+	}
+	return result
 }
 
 // OnCallback refreshes an existing job and records deduplication only after the Run advances.
@@ -465,11 +501,20 @@ func (runner *Runner) ProcessCallback(ctx context.Context, message CallbackMessa
 	if message.Provider == "" || message.EventID == "" || (message.JobID == "" && message.SubmitKey == "") {
 		return fmt.Errorf("callback provider, event id and job id or submit key are required")
 	}
-	runner.record(ctx, RunEvent{Action: MonitorCallback, Message: message.Provider + ":" + firstNonEmpty(message.JobID, message.SubmitKey)})
 	command, claimed, needsRefresh, duplicate, err := runner.store.claimCallback(message)
 	if err != nil {
+		runner.record(ctx, RunEvent{
+			Action: MonitorCallback, Provider: message.Provider,
+			Message: message.Provider + ":" + firstNonEmpty(message.JobID, message.SubmitKey) + " claim failed: " + err.Error(),
+		})
 		return err
 	}
+	event := RunEvent{Action: MonitorCallback, Message: message.Provider + ":" + firstNonEmpty(message.JobID, message.SubmitKey)}
+	if claimed {
+		event.RunID, event.NodeID, event.Kind = command.RunID, command.NodeRun.NodeID, command.NodeRun.Kind
+		event.State, event.Provider = command.NodeRun.State, command.NodeRun.Provider
+	}
+	runner.record(ctx, event)
 	if duplicate {
 		return nil
 	}
@@ -488,10 +533,38 @@ func (runner *Runner) ProcessCallback(ctx context.Context, message CallbackMessa
 			return ErrJobPending
 		}
 	}
+	canceling, err := runner.finishCancellation(ctx, command.RunID)
+	if err != nil {
+		return err
+	}
+	if canceling {
+		return runner.store.completeCallback(message)
+	}
 	if err := runner.Advance(ctx, command.RunID); err != nil {
 		return err
 	}
 	return runner.store.completeCallback(message)
+}
+
+func (runner *Runner) finishCancellation(ctx context.Context, runID string) (bool, error) {
+	run, err := runner.store.Get(ctx, runID)
+	if err != nil {
+		runner.record(ctx, RunEvent{Action: MonitorCancelFailed, RunID: runID, Message: err.Error()})
+		return false, err
+	}
+	if !run.CancelRequested {
+		return false, err
+	}
+	for _, node := range run.NodeRuns {
+		if !node.State.terminal() && (node.JobID != "" || node.SubmitStarted) {
+			return true, nil
+		}
+	}
+	if err := runner.store.completeCancel(runID); err != nil {
+		runner.record(ctx, RunEvent{Action: MonitorCancelFailed, RunID: runID, Message: err.Error()})
+		return true, err
+	}
+	return true, nil
 }
 
 func isPollingMessage(message CallbackMessage) bool {
@@ -503,19 +576,21 @@ func (runner *Runner) refresh(ctx context.Context, command Command) (NodeState, 
 	result, err := runner.withClaimHeartbeat(ctx, command, runner.handler.Refresh)
 	if err != nil {
 		if requeueErr := runner.store.requeue(command); requeueErr != nil {
-			return Waiting, errors.Join(requeueErr, runner.store.releaseClaim(command))
+			err = errors.Join(err, requeueErr, runner.store.releaseClaim(command))
 		}
-		runner.record(ctx, RunEvent{Action: MonitorNodeFailed, RunID: command.RunID, NodeID: command.NodeRun.NodeID, Kind: command.NodeRun.Kind, State: Waiting, Message: err.Error()})
+		runner.record(ctx, RunEvent{Action: MonitorReconcileFailed, RunID: command.RunID, NodeID: command.NodeRun.NodeID, Kind: command.NodeRun.Kind, State: Waiting, Provider: command.NodeRun.Provider, Message: err.Error(), DurationMS: time.Since(startedAt).Milliseconds()})
 		return Waiting, err
 	}
 	if err := runner.store.apply(command, result); err != nil {
 		if requeueErr := runner.store.requeue(command); requeueErr != nil {
-			return Waiting, errors.Join(err, requeueErr, runner.store.releaseClaim(command))
+			err = errors.Join(err, requeueErr, runner.store.releaseClaim(command))
 		}
+		runner.record(ctx, RunEvent{Action: MonitorReconcileFailed, RunID: command.RunID, NodeID: command.NodeRun.NodeID, Kind: command.NodeRun.Kind, State: Waiting, Provider: command.NodeRun.Provider, Message: err.Error(), DurationMS: time.Since(startedAt).Milliseconds()})
 		return Waiting, err
 	}
-	runner.record(ctx, RunEvent{Action: monitorAction(result.State), RunID: command.RunID, NodeID: command.NodeRun.NodeID, Kind: command.NodeRun.Kind, State: result.State, Message: result.Message, DurationMS: time.Since(startedAt).Milliseconds()})
-	return result.State, nil
+	runner.record(ctx, RunEvent{Action: monitorAction(result.State), RunID: command.RunID, NodeID: command.NodeRun.NodeID, Kind: command.NodeRun.Kind, State: result.State, Provider: result.Provider, Message: result.Message, DurationMS: time.Since(startedAt).Milliseconds()})
+	_, err = runner.finishCancellation(ctx, command.RunID)
+	return result.State, err
 }
 
 func (runner *Runner) withClaimHeartbeat(
@@ -526,8 +601,11 @@ func (runner *Runner) withClaimHeartbeat(
 	if runner.claimHeartbeat <= 0 || command.NodeRun.ClaimToken == "" {
 		return execute(ctx, command)
 	}
+	executeCtx, cancel := context.WithCancelCause(ctx)
+	defer cancel(nil)
 	done := make(chan struct{})
 	stopped := make(chan struct{})
+	heartbeatErr := make(chan error, 1)
 	go func() {
 		defer close(stopped)
 		ticker := time.NewTicker(runner.claimHeartbeat)
@@ -541,13 +619,22 @@ func (runner *Runner) withClaimHeartbeat(
 			case <-ticker.C:
 				if err := runner.store.renewClaim(command); err != nil {
 					runner.record(ctx, RunEvent{Action: MonitorLeaseRenewalFailed, RunID: command.RunID, NodeID: command.NodeRun.NodeID, Kind: command.NodeRun.Kind, Message: err.Error()})
+					claimErr := fmt.Errorf("%w: %v", ErrClaimHeartbeat, err)
+					heartbeatErr <- claimErr
+					cancel(claimErr)
+					return
 				}
 			}
 		}
 	}()
-	result, err := execute(ctx, command)
+	result, err := execute(executeCtx, command)
 	close(done)
 	<-stopped
+	select {
+	case claimErr := <-heartbeatErr:
+		return Result{}, claimErr
+	default:
+	}
 	return result, err
 }
 
@@ -562,10 +649,14 @@ func (runner *Runner) record(ctx context.Context, event RunEvent) {
 }
 
 func monitorAction(state NodeState) string {
-	if state == Failed {
+	switch state {
+	case Failed:
 		return MonitorNodeFailed
+	case Succeeded:
+		return MonitorNodeCompleted
+	default:
+		return MonitorNodeWaiting
 	}
-	return MonitorNodeCompleted
 }
 
 func failedResult(command Command, err error) Result {

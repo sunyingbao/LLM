@@ -53,3 +53,33 @@ func TestParseDrScriptE2EOutput(t *testing.T) {
 		t.Fatalf("second scene = %#v", result.Scenes[1])
 	}
 }
+
+func TestParseNestedClipScriptOutput(t *testing.T) {
+	content := `<answer>
+1. 创意方案如下
+{"方案总览":{"创意标题":"轻盈通勤"}}
+2. 分镜脚本如下{
+  "scenes":[{
+    "scene":"场景一：通勤出发",
+    "shots":[
+      {"shot":"鞋底回弹特写","duration":"3s","dialogue":"轻盈舒适"},
+      {"shot":"女性穿鞋走过街角","duration":"2.5秒","dialogue":"通勤也能走得从容"}
+    ],
+    "background_music":"轻快节奏"
+  }]
+}
+</answer>`
+	result, err := parseClipScript(content)
+	if err != nil {
+		t.Fatalf("parseClipScript() error = %v", err)
+	}
+	if len(result.Scenes) != 2 {
+		t.Fatalf("scenes = %#v", result.Scenes)
+	}
+	if result.Scenes[0].SemanticID != "semantic-1" || result.Scenes[0].Visual != "鞋底回弹特写" || result.Scenes[0].Voiceover != "轻盈舒适" || result.Scenes[0].DurationMS != 3000 {
+		t.Fatalf("first scene = %#v", result.Scenes[0])
+	}
+	if result.Scenes[1].DurationMS != 2500 {
+		t.Fatalf("second scene = %#v", result.Scenes[1])
+	}
+}

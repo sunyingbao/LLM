@@ -35,7 +35,13 @@ func (handler nodeHandler) Cancel(ctx context.Context, run Run) error {
 				err = ErrCancellationUnsupported
 			}
 		case PreviewNode, FinalVideoNode:
-			if canceler, ok := handler.clients.Video.(VideoCanceler); ok {
+			if combined, ok := handler.clients.Video.(combinedVideoClient); ok {
+				if node.Kind == PreviewNode {
+					err = combined.cancelPreview(ctx, node.JobID)
+				} else {
+					err = combined.cancelFinalVideo(ctx, node.JobID)
+				}
+			} else if canceler, ok := handler.clients.Video.(VideoCanceler); ok {
 				err = canceler.CancelVideo(ctx, node.JobID)
 			} else {
 				err = ErrCancellationUnsupported
@@ -901,7 +907,9 @@ func unknownSubmission(node NodeRun, plan ResourcePlan, provider string, submitE
 	if findErr != nil {
 		message = fmt.Sprintf("%s submit outcome is unknown; submit=%v; reconcile=%v", provider, submitErr, findErr)
 	}
-	return waitingResourceWithMessage(node, plan, provider, "", message)
+	result := waitingResourceWithMessage(node, plan, provider, "", message)
+	result.SubmissionUnknown = true
+	return result
 }
 
 func failedResource(node NodeRun, plan ResourcePlan, cause error) Result {

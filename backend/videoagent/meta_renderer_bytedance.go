@@ -24,8 +24,10 @@ func NewBytedanceVideoRenderer(bizID int) (VideoRenderer, error) {
 }
 
 func (renderer bytedanceVideoRenderer) StartRender(ctx context.Context, plan RenderPlan) (string, error) {
+	upscaleWidth, upscaleHeight := finalVideoUpscaleSize(plan.Width, plan.Height)
 	request := &meta_v2.RenderVideoBySchemaV2Request{
 		TargetInfo: &meta_v2.TargetInfo{Width: int32(plan.Width), Height: int32(plan.Height)},
+		Upscale:    &meta_v2.UpscaleInfo{TargetInfo: &meta_v2.TargetInfo{Width: int32(upscaleWidth), Height: int32(upscaleHeight)}},
 		MainTrack:  &meta_v2.Track{ZIndex: 0, Elements: make([]*meta_v2.Element, 0, len(plan.Scenes))},
 		AuthInfo:   &meta_common.AuthInfo{BizId: meta_common.BizId(renderer.bizID)},
 	}
@@ -89,7 +91,11 @@ func (bytedanceVideoRenderer) GetRender(ctx context.Context, taskID string) (Job
 		if response.GetVid() == "" {
 			return JobStatus{}, fmt.Errorf("meta render succeeded without vid")
 		}
-		return JobStatus{State: JobSucceeded, URI: "vid://" + response.GetVid(), URL: response.GetVideoInfo().GetPlayUrl()}, nil
+		videoInfo := response.GetVideoInfo()
+		if videoInfo == nil || videoInfo.GetPlayUrl() == "" {
+			return JobStatus{}, fmt.Errorf("meta render succeeded without play url")
+		}
+		return JobStatus{State: JobSucceeded, URI: "vid://" + response.GetVid(), URL: videoInfo.GetPlayUrl()}, nil
 	case meta_server.RenderStatus_RenderFailed:
 		return JobStatus{State: JobFailed, Message: "meta render failed"}, nil
 	default:

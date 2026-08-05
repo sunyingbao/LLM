@@ -46,4 +46,25 @@ func TestJobPollerPublishesOnlyWaitingRemoteJobs(t *testing.T) {
 	}
 }
 
+func TestJobPollerContinuesPendingCancellation(t *testing.T) {
+	store := NewStore(t.TempDir() + "/workflow.json")
+	run := Run{ID: "run-canceling", CancelRequested: true, NodeRuns: []NodeRun{{
+		NodeID: "preview", InstanceKey: "scene-1", State: Waiting, Provider: "seedance", JobID: "job-1",
+	}}}
+	if err := store.Create(context.Background(), run); err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	publisher := &recordingMessagePublisher{}
+	poller, err := NewJobPoller(store, publisher, time.Second)
+	if err != nil {
+		t.Fatalf("NewJobPoller() error = %v", err)
+	}
+	if err := poller.publishWaiting(context.Background()); err != nil {
+		t.Fatalf("publishWaiting() error = %v", err)
+	}
+	if len(publisher.messages) != 1 || publisher.messages[0].JobID != "job-1" {
+		t.Fatalf("messages = %#v, want cancel-pending job", publisher.messages)
+	}
+}
+
 var _ MessagePublisher = (*recordingMessagePublisher)(nil)

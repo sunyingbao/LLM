@@ -57,6 +57,8 @@ func TestRemoteVideoAgentEndToEnd(t *testing.T) {
 		mongoURI,
 		"video_agent_e2e_"+suffix,
 		"workflow_state",
+		"aic.aic_agent.main_agent",
+		nil,
 	)
 	if err != nil {
 		t.Fatalf("create remote application: %v", err)

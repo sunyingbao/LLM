@@ -251,10 +251,12 @@ type NodeRun struct {
 5. 人物参考图的 fallback 先保存 `FallbackSubmitted=true`，再在下一次推进时提交，因此最多提交一次。
 6. Webhook/NATS consumer 只做鉴权、持久化和调度；不能在回调线程调用模型或再次提交任务。
 7. 人工重试为失败实例递增 `Attempt`，生成新的 `submit_key:attempt-N`；旧 Submission 继续保留用于审计和对账，不跨 Mongo 集合删除旧凭证。
-8. 服务启动逐个恢复 Run；单个损坏或暂时不可恢复的 Run 记录 `run_id` 和错误后继续，不能阻止 MQ Consumer、Poller 和其他 Run 启动。
-9. `pending/waiting` 节点在执行或刷新前持久化 `ClaimToken/ClaimedAt`。其他实例只能在租约释放或过期后重新领取；`apply/requeue` 必须校验原领取 token，拒绝迟到实例覆盖新结果。
+8. 服务启动逐个恢复 Run；单个损坏或暂时不可恢复的 Run 记录 `run_id` 和错误后继续，并进入后台恢复集合按轮询周期重试，成功后移出集合。恢复只领取持久化节点并对账，不能绕过 `SubmitKey` 重提任务，也不能阻止 MQ Consumer、Poller 和其他 Run 启动。
+9. `pending/waiting` 节点在执行或刷新前持久化 `ClaimToken/ClaimedAt`，长时间提交和查询期间按租约的三分之一周期续租。其他实例只能在租约释放或过期后重新领取；`apply/requeue` 必须校验原领取 token，拒绝迟到实例覆盖新结果。续租失败会取消当前节点调用：未提交的同步节点回到 `pending`，已开始提交的异步节点进入 `waiting` 并只允许按 `job_id/submit_key` 对账，旧实例不能继续写入结果。Mongo Store 的单次 Load/Save 最长一分钟，避免心跳永久阻塞。
 10. 远端已返回 `job_id` 而独立 Submission 收据暂时写失败时，Runner 仍把该 `job_id` 写回 NodeRun，不能把它降级成可重试的普通失败；如果 Run 同时保存失败，恢复路径只能对账或标记 `submission_unknown`，禁止盲目重提。
 11. Provider 返回 nil error 时必须同时返回 `job_id` 或同步终态；两者都为空属于无效受理回执，节点记录 `submission_unknown=true` 并失败，不进入空 `job_id` 轮询，也不自动重提。
+12. Project 初始化、默认工作流升级、画布保存和 Operation 确认都通过同一个 CAS 更新入口读取最新版本，不能把启动时读到的旧 Project 快照整体覆盖回 Mongo。
+13. 取消先持久化 `cancel_requested` 并停止 DAG 推进，再取消所有已知远端 Job；任一 Provider 不支持取消或返回失败时，Run 保持 `cancel_requested` 并暴露错误。此时 Poller 和 MQ Callback 仍允许刷新已提交 Job，但不会启动任何后继节点；所有远端 Job 都进入终态后，未提交节点收敛为 `canceled`，Run 完成取消。远端取消全部成功时可以直接完成取消。
 
 ## 7. Client 契约与生产替换
 
@@ -371,7 +373,7 @@ GET  /metrics
 
 本地实现使用 `LocalClients` 执行确定性能力任务，任务终态通过 NATS JetStream 发布和恢复，不直接调用 Runner。JetStream 使用文件存储、durable consumer、显式 ACK、消费心跳、失败 NAK 重投和消息去重；Runner 的回调收据提供第二层幂等保护。真实 callback 连续失败 20 次后进入同一 Stream 的 `.dead` Subject；后台查询和 submit-key 对账消息不进入 DLQ，而是在任务终态前持续重试。浏览器只调用 `GET /runs/{run_id}` 读取 Mongo，不能刷新远端任务或推进 DAG。`CanvasAgent` 在配置了 OpenAI-compatible Chat Model 时执行 Eino ReAct；未配置模型时保留本地可运行的最小操作解析器，保证本地链路可验收但不替代生产模型。
 
-`Runner` 通过 `Monitor` 发送 `node_started`、`node_completed`、`node_failed` 和 `callback` 事件；Monitor 只负责观测，不参与节点决策。默认内置进程内计数器，并由 `GET /metrics` 返回当前进程累计值。生产环境可以通过 `SetMonitor` 接入日志、指标或 Trace 系统，同时保留内置计数器用于健康检查和本地验收。
+`Runner` 通过 `Monitor` 发送 `node_started`、`node_waiting`、`node_completed`、`node_failed` 和 `callback` 事件；`running/waiting` 不再被误计为完成。Monitor 只负责观测，不参与节点决策。默认内置进程内计数器，并由 `GET /metrics` 返回当前进程累计值。生产环境可以通过 `SetMonitor` 接入日志、指标或 Trace 系统，同时保留内置计数器用于健康检查和本地验收。
 
 远端启动方式：
 
@@ -513,7 +515,7 @@ GOTOOLCHAIN=auto go run ./cmd/videoagent \
 }
 ```
 
-`finalvideo.biz_id=0` 表示尚未配置，生产启动会直接失败。Mega 当前使用的 `BizId_Aic_Mega=118` 只用于核对原链路行为，新的 Agent 服务必须申请并填写自己的 Meta BizId，不能复用 Mega 身份。Fornax 的 `app_id` 同样必须是已登记的正数，并与 AK/SK 属于同一应用。
+`finalvideo.biz_id=0` 表示尚未配置，生产启动会直接失败。Mega 当前使用的 `BizId_Aic_Mega=118` 只用于核对原链路行为，新的 Agent 服务必须申请并填写自己的 Meta BizId，不能复用 Mega 身份。Fornax SDK 允许只配置 AK/SK；`app_id` 是可选身份字段，填写时必须与 AK/SK 属于同一应用。
 
 NATS 默认连接 `nats://127.0.0.1:4222`，Stream 为 `VIDEO_AGENT_CALLBACKS`，Subject 为 `video_agent.callbacks`，DLQ Subject 为 `video_agent.callbacks.dead`，durable consumer 为 `video_agent_runner`。连接、Stream、主 Subject 和 consumer 可分别通过 `-nats-url`、`-nats-stream`、`-nats-subject` 和 `-nats-consumer` 覆盖。
 
@@ -554,7 +556,7 @@ POST /callbacks/{provider}
 4. `finalvideo` 通过 `VideoClient` 提交和查询正式成片；重启后只有 `submit_key` 也必须由该 Client 找回任务。
 5. 重复 callback 不重复创建 Artifact；重启后 pending Job 可恢复且 `submit_key` 不重复提交。
 6. 单个资源失败不会阻塞预览；预览或 `finalvideo` 失败在对应节点可见。
-7. 取消 Run 后未完成节点进入 `canceled`，后续 callback 不再推进该 Run；取消后的 Run 不允许 retry。
+7. 取消中的 Run 不再启动后继节点，但仍消费 callback 和轮询结果直到远端 Job 收敛；完成取消后未完成节点进入 `canceled`，且 Run 不允许 retry。
 8. Canvas 修改产生新 WorkflowVersion，旧 Run 仍按快照执行；Agent 不可绕过画布确认直接改写已运行版本。
 
 ```bash
@@ -565,7 +567,11 @@ make videoagent-build
 
 本地回滚时先停止 `cmd/videoagent`，保留 MongoDB 和 JetStream 数据，再切回上一二进制。远端发布必须以 Client 配置区分 Local 与真实能力；关闭真实 Client 后，不再提交新 Job，已持久化的 Run 仍可以由轮询或回调收敛。
 
-当前验收证据：默认构建和 `fornax bytedance` 生产标签构建均已通过；本地 Mongo-backed HTTP Handler 已验证从需求分析走到 `finalvideo`，并验证 Operation 确认、Artifact 来源线、TTS 试听复用和回调幂等。本地 JetStream 已验证失败重投、发布去重、客户端重启恢复，以及 Application 通过 MQ 完成整条工作流。仓库不包含 Mega/Gen 工作流 SDK 依赖。上线前仍必须使用真实凭证验证 Fornax Prompt、Model Gateway、ModelHub/ImageX、Matx、Seedance、Meta 和生产 NATS 的 PPE E2E。
+项目固定使用 Go 1.25：普通和生产标签命令都应显式设置 `GOTOOLCHAIN=go1.25.0`。当前 `dynamicgo` 版本与 Go 1.26 的 `encoding/json` 内部符号不兼容，不能使用自动选择到的 Go 1.26 执行生产标签构建。
+
+当前验收证据：默认构建、race 和 `fornax bytedance` 生产标签构建均已通过；本地 Canvas 已通过 Agent Operation 确认，从需求分析运行到 `finalvideo`，并在节点和产物区展示文本、图片、音频、视频占位结果及完整 Artifact 来源。本地 MongoDB 已验证整链路、跨实例租约和并发 WorkflowVersion 更新；JetStream 已验证失败重投、发布去重、客户端重启恢复、轮询恢复、死信，以及 Application 通过 MQ 完成整条工作流。Runner 会记录节点耗时、未知提交、对账失败、恢复失败、取消失败和租约续期失败。仓库不包含 Mega/Gen 工作流 SDK 依赖。上线前仍必须使用真实凭证验证 Fornax Prompt、Model Gateway、ModelHub/ImageX、Matx、Seedance、Meta 和生产 NATS 的 PPE E2E。
+
+2026-08-05 使用现有 Supervisor MaaS 配置发起了真实自然语言 Agent 请求，请求已经到达模型网关，但 Endpoint 返回 `400`（关闭或暂时不可用，request id `0217859049703708a2cc6176b4dc89676d1081d755bfbd1d6f668`）。因此真实 ReAct 和完整远端 E2E 仍未通过，不能用本地确定性 Client 的成功结果替代该验收。
 
 真实能力验收使用同一条 Agent、Operation、Mongo、JetStream 和 DAG 路径，不允许直接调用各 Client 绕过编排。配置以下环境变量后执行 `make videoagent-remote-e2e`：
 

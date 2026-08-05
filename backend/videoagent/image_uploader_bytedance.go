@@ -36,7 +36,7 @@ func (uploader *bytedanceImageUploader) UploadImage(ctx context.Context, data []
 	if err != nil {
 		return "", err
 	}
-	if len(response.Results) == 0 || len(response.ImageInfos) == 0 || response.Results[0].UriStatus != imagex.UploadSuccessCode {
+	if response == nil || len(response.Results) == 0 || len(response.ImageInfos) == 0 || response.Results[0].UriStatus != imagex.UploadSuccessCode {
 		return "", fmt.Errorf("imagex upload failed")
 	}
 	return response.ImageInfos[0].ImageUri, nil

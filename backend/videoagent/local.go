@@ -457,6 +457,7 @@ type Application struct {
 	consumerDone      chan error
 	pollInterval      time.Duration
 	pollerDone        chan error
+	recoveryDone      chan error
 	close             func() error
 }
 
@@ -553,6 +554,13 @@ func (application *Application) Close() error {
 			closeErr = errors.Join(closeErr, pollerErr)
 		}
 	}
+	if application.recoveryDone != nil {
+		recoveryErr := <-application.recoveryDone
+		application.recoveryDone = nil
+		if recoveryErr != nil && !errors.Is(recoveryErr, context.Canceled) {
+			closeErr = errors.Join(closeErr, recoveryErr)
+		}
+	}
 	if application.close != nil {
 		closeErr = errors.Join(closeErr, application.close())
 	}
@@ -570,11 +578,18 @@ func EnsureProject(ctx context.Context, store *Store, projectID string) error {
 	if store == nil || projectID == "" {
 		return fmt.Errorf("store and project id are required")
 	}
-	project, err := store.GetProject(ctx, projectID)
-	if err == nil {
-		current, currentErr := currentWorkflow(project)
-		if currentErr != nil {
-			return currentErr
+	_, err := store.updateProject(projectID, true, func(project *Project) error {
+		if len(project.WorkflowVersions) == 0 {
+			workflow := VideoWorkflow()
+			version := WorkflowVersion{ID: newID("workflow"), ProjectID: projectID, Revision: 1, Workflow: cloneWorkflow(workflow)}
+			project.WorkflowVersions = []WorkflowVersion{version}
+			project.CurrentWorkflowVersion = version.ID
+			return nil
+		}
+
+		current, err := currentWorkflow(*project)
+		if err != nil {
+			return err
 		}
 		workflow, changed := upgradeDefaultWorkflow(current.Workflow)
 		if !changed {
@@ -591,11 +606,9 @@ func EnsureProject(ctx context.Context, store *Store, projectID string) error {
 		}
 		project.WorkflowVersions = append(project.WorkflowVersions, version)
 		project.CurrentWorkflowVersion = version.ID
-		return store.SaveProject(ctx, project)
-	}
-	workflow := VideoWorkflow()
-	version := WorkflowVersion{ID: newID("workflow"), ProjectID: projectID, Revision: 1, Workflow: cloneWorkflow(workflow)}
-	return store.SaveProject(ctx, Project{ID: projectID, Name: projectID, CurrentWorkflowVersion: version.ID, WorkflowVersions: []WorkflowVersion{version}})
+		return nil
+	})
+	return err
 }
 
 func upgradeDefaultWorkflow(workflow Workflow) (Workflow, bool) {
@@ -648,31 +661,72 @@ func (application *Application) Start(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	failedRuns := make([]string, 0)
 	for _, run := range runs {
 		if err := application.Runner.Restore(ctx, run.ID); err != nil {
+			application.Runner.record(ctx, RunEvent{Action: MonitorRestoreFailed, RunID: run.ID, Message: err.Error()})
 			log.Printf("restore video run %s: %v", run.ID, err)
+			failedRuns = append(failedRuns, run.ID)
 		}
 	}
-	if application.callbackConsumer != nil {
-		var poller *JobPoller
-		if application.pollInterval > 0 {
-			poller, err = NewJobPoller(application.Store, application.callbackPublisher, application.pollInterval)
-			if err != nil {
-				return err
-			}
+	var poller *JobPoller
+	if application.callbackConsumer != nil && application.pollInterval > 0 {
+		poller, err = NewJobPoller(application.Store, application.callbackPublisher, application.pollInterval)
+		if err != nil {
+			return err
 		}
-
-		consumerCtx, cancel := context.WithCancel(ctx)
+	}
+	var workerCtx context.Context
+	if application.callbackConsumer != nil || len(failedRuns) > 0 {
+		var cancel context.CancelFunc
+		workerCtx, cancel = context.WithCancel(ctx)
 		application.cancelConsumer = cancel
+	}
+	if len(failedRuns) > 0 {
+		interval := application.pollInterval
+		if interval <= 0 {
+			interval = time.Minute
+		}
+		application.recoveryDone = make(chan error, 1)
+		go func() {
+			application.recoveryDone <- application.retryRestore(workerCtx, failedRuns, interval)
+		}()
+	}
+	if application.callbackConsumer != nil {
 		application.consumerDone = make(chan error, 1)
 		go func() {
-			application.consumerDone <- ConsumeCallbacks(consumerCtx, application.callbackConsumer, CallbackProcessor{Runner: application.Runner})
+			application.consumerDone <- ConsumeCallbacks(workerCtx, application.callbackConsumer, CallbackProcessor{Runner: application.Runner})
 		}()
 		if poller != nil {
 			application.pollerDone = make(chan error, 1)
 			go func() {
-				application.pollerDone <- poller.Run(consumerCtx)
+				application.pollerDone <- poller.Run(workerCtx)
 			}()
+		}
+	}
+	return nil
+}
+
+func (application *Application) retryRestore(ctx context.Context, runIDs []string, interval time.Duration) error {
+	pending := make(map[string]struct{}, len(runIDs))
+	for _, runID := range runIDs {
+		pending[runID] = struct{}{}
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for len(pending) > 0 {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+		}
+		for runID := range pending {
+			if err := application.Runner.Restore(ctx, runID); err != nil {
+				application.Runner.record(ctx, RunEvent{Action: MonitorRestoreFailed, RunID: runID, Message: err.Error()})
+				log.Printf("retry restore video run %s: %v", runID, err)
+				continue
+			}
+			delete(pending, runID)
 		}
 	}
 	return nil

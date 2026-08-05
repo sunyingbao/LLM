@@ -44,7 +44,7 @@ func (poller *JobPoller) publishWaiting(ctx context.Context) error {
 		return err
 	}
 	for _, run := range runs {
-		if run.Canceled || run.CancelRequested {
+		if run.Canceled {
 			continue
 		}
 		for _, node := range run.NodeRuns {

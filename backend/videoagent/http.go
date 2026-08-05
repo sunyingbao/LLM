@@ -29,7 +29,11 @@ func newHTTPHandler(application *Application) http.Handler {
 	}
 	mux := http.NewServeMux()
 	staticFiles, _ := fs.Sub(canvasFiles, "web")
-	mux.Handle("GET /", http.FileServer(http.FS(staticFiles)))
+	staticHandler := http.FileServer(http.FS(staticFiles))
+	mux.Handle("GET /", http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Cache-Control", "no-store")
+		staticHandler.ServeHTTP(writer, request)
+	}))
 	mux.HandleFunc("GET /healthz", func(writer http.ResponseWriter, _ *http.Request) {
 		writeJSON(writer, http.StatusOK, map[string]string{"status": "ok"})
 	})

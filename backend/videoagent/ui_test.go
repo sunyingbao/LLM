@@ -24,8 +24,26 @@ func TestHTTPServesCanvas(t *testing.T) {
 	if !strings.Contains(response.Body.String(), "广告视频工作台") || !strings.Contains(response.Body.String(), "product-images") {
 		t.Fatalf("GET / does not contain Canvas page")
 	}
-	if !strings.Contains(response.Body.String(), "artifact-edges") {
-		t.Fatalf("GET / does not contain artifact relationship layer")
+	if response.Header().Get("Cache-Control") != "no-store" {
+		t.Fatalf("GET / Cache-Control = %q, want no-store", response.Header().Get("Cache-Control"))
+	}
+	if !strings.Contains(response.Body.String(), `/styles.css?v=`) || !strings.Contains(response.Body.String(), `/app.js?v=`) {
+		t.Fatalf("GET / does not version static assets")
+	}
+	if strings.Contains(response.Body.String(), "artifact-edges") {
+		t.Fatalf("GET / contains a duplicate artifact relationship layer")
+	}
+	styleRequest := httptest.NewRequest(http.MethodGet, "/styles.css", nil)
+	styleResponse := httptest.NewRecorder()
+	NewHTTPHandler(application).ServeHTTP(styleResponse, styleRequest)
+	if styleResponse.Code != http.StatusOK || strings.Contains(styleResponse.Body.String(), "dashed") {
+		t.Fatalf("GET /styles.css contains a residual dashed border")
+	}
+	if !strings.Contains(styleResponse.Body.String(), "background: #1d212a") {
+		t.Fatalf("GET /styles.css allows canvas edges to bleed through workflow nodes")
+	}
+	if styleResponse.Header().Get("Cache-Control") != "no-store" {
+		t.Fatalf("GET /styles.css Cache-Control = %q, want no-store", styleResponse.Header().Get("Cache-Control"))
 	}
 	scriptRequest := httptest.NewRequest(http.MethodGet, "/app.js", nil)
 	scriptResponse := httptest.NewRecorder()
@@ -49,6 +67,15 @@ func TestHTTPServesCanvas(t *testing.T) {
 	}
 	if !strings.Contains(scriptResponse.Body.String(), `artifact.kind === "requirement"`) || !strings.Contains(scriptResponse.Body.String(), `artifact.kind === "clipscript"`) {
 		t.Fatalf("GET /app.js does not render requirement and clipscript text artifacts")
+	}
+	if strings.Contains(scriptResponse.Body.String(), `className = "artifact-node"`) || strings.Contains(response.Body.String(), `id="artifact-nodes"`) {
+		t.Fatalf("Canvas renders artifacts as duplicate workflow nodes")
+	}
+	if !strings.Contains(scriptResponse.Body.String(), "function artifactLineagePairs()") || !strings.Contains(scriptResponse.Body.String(), `classList.toggle("lineage"`) {
+		t.Fatalf("GET /app.js does not highlight artifact lineage on workflow edges")
+	}
+	if strings.Contains(scriptResponse.Body.String(), "Math.max(30, (x2 - x1) / 2)") || !strings.Contains(scriptResponse.Body.String(), "Math.min(80, Math.abs(x2 - x1) / 2)") {
+		t.Fatalf("GET /app.js allows short edges to bend past their endpoints")
 	}
 	if !strings.Contains(scriptResponse.Body.String(), `confirmed ? "继续" : "确认"`) || !strings.Contains(scriptResponse.Body.String(), `"待继续操作"`) {
 		t.Fatalf("GET /app.js does not allow a confirmed but incomplete operation to resume")

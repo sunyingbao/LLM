@@ -23,11 +23,11 @@ func TestExampleConfigsDecode(t *testing.T) {
 }
 
 func TestRemoteApplicationRequiresModelAndPromptConfig(t *testing.T) {
-	_, err := newRemoteApplication(context.Background(), t.TempDir(), "unused", "", "unused", "", "", "")
+	_, err := newRemoteApplication(context.Background(), t.TempDir(), "unused", "", "unused", "", "", "", "main", nil)
 	if err == nil || !strings.Contains(err.Error(), "model config is required") {
 		t.Fatalf("newRemoteApplication() error = %v, want missing model config", err)
 	}
-	_, err = newRemoteApplication(context.Background(), t.TempDir(), "unused", "unused", "", "", "", "")
+	_, err = newRemoteApplication(context.Background(), t.TempDir(), "unused", "unused", "", "", "", "", "main", nil)
 	if err == nil || !strings.Contains(err.Error(), "prompt config is required") {
 		t.Fatalf("newRemoteApplication() error = %v, want missing prompt config", err)
 	}

@@ -31,6 +31,8 @@ func run() error {
 	remoteConfigPath := flag.String("remote-config", "", "JSON config for direct image/TTS/video clients")
 	modelConfigPath := flag.String("model-config", "", "JSON config for the optional ReAct chat model")
 	promptConfigPath := flag.String("prompt-config", "", "JSON config for managed workflow prompts")
+	credentialsConfigPath := flag.String("credentials-config", "", "untracked JSON credentials for Fornax and MaaS models")
+	chatModelKey := flag.String("chat-model-key", "aic.aic_agent.main_agent", "prompt key selecting the ReAct chat model credentials")
 	mongoURI := flag.String("mongo-uri", "mongodb://127.0.0.1:27017", "MongoDB URI; empty disables MongoDB state")
 	mongoDatabase := flag.String("mongo-database", "video_agent", "MongoDB database name")
 	mongoCollection := flag.String("mongo-collection", "workflow_state", "MongoDB state collection name")
@@ -41,6 +43,14 @@ func run() error {
 	flag.Parse()
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	var credentials *videoagent.CredentialsConfig
+	if *credentialsConfigPath != "" {
+		loaded, err := readJSON[videoagent.CredentialsConfig](*credentialsConfigPath)
+		if err != nil {
+			return err
+		}
+		credentials = &loaded
+	}
 
 	messageBus, err := videoagent.NewNATSMessageBus(ctx, videoagent.NATSConfig{
 		URL:      *natsURL,
@@ -54,7 +64,7 @@ func run() error {
 	defer messageBus.Close()
 
 	if *remoteConfigPath != "" {
-		application, err := newRemoteApplication(ctx, *dataDir, *remoteConfigPath, *modelConfigPath, *promptConfigPath, *mongoURI, *mongoDatabase, *mongoCollection)
+		application, err := newRemoteApplication(ctx, *dataDir, *remoteConfigPath, *modelConfigPath, *promptConfigPath, *mongoURI, *mongoDatabase, *mongoCollection, *chatModelKey, credentials)
 		if err != nil {
 			return err
 		}
@@ -76,8 +86,8 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	if *modelConfigPath != "" {
-		chatModel, err := loadChatModel(*modelConfigPath)
+	if *modelConfigPath != "" || credentials != nil {
+		chatModel, err := loadChatModel(*modelConfigPath, *chatModelKey, credentials)
 		if err != nil {
 			return err
 		}
@@ -85,8 +95,17 @@ func run() error {
 			return err
 		}
 	}
+	if credentials != nil {
+		planner, err := loadCredentialPlanner(ctx, *credentials)
+		if err != nil {
+			return err
+		}
+		if err := application.UsePlanner(planner); err != nil {
+			return err
+		}
+	}
 	if *promptConfigPath != "" {
-		planner, err := loadPromptPlanner(*promptConfigPath)
+		planner, err := loadPromptPlanner(*promptConfigPath, credentials)
 		if err != nil {
 			return err
 		}
@@ -128,7 +147,14 @@ func serve(ctx context.Context, address string, handler http.Handler) error {
 	}
 }
 
-func loadChatModel(path string) (model.BaseChatModel, error) {
+func loadChatModel(path, promptKey string, credentials *videoagent.CredentialsConfig) (model.BaseChatModel, error) {
+	if credentials != nil {
+		config, err := credentials.ChatModelConfig(promptKey)
+		if err != nil {
+			return nil, err
+		}
+		return videoagent.NewChatModel(context.Background(), config)
+	}
 	config, err := readJSON[videoagent.ChatModelConfig](path)
 	if err != nil {
 		return nil, err
@@ -136,10 +162,41 @@ func loadChatModel(path string) (model.BaseChatModel, error) {
 	return videoagent.NewChatModel(context.Background(), config)
 }
 
-func loadPromptPlanner(path string) (videoagent.Planner, error) {
-	config, err := readJSON[videoagent.PromptRuntimeConfig](path)
+func loadCredentialPlanner(ctx context.Context, credentials videoagent.CredentialsConfig) (videoagent.Planner, error) {
+	requirementModel, err := loadCredentialModel(ctx, credentials, "aic.aic_tool.user_req_analysis")
 	if err != nil {
 		return nil, err
+	}
+	clipScriptModel, err := loadCredentialModel(ctx, credentials, "jichuang.creative.dr_script_e2e")
+	if err != nil {
+		return nil, err
+	}
+	resourceModel, err := loadCredentialModel(ctx, credentials, "aic.aic_agent.main_agent")
+	if err != nil {
+		return nil, err
+	}
+	return videoagent.NewStageModelPlanner(requirementModel, clipScriptModel, resourceModel)
+}
+
+func loadCredentialModel(ctx context.Context, credentials videoagent.CredentialsConfig, promptKey string) (model.BaseChatModel, error) {
+	config, err := credentials.ChatModelConfig(promptKey)
+	if err != nil {
+		return nil, err
+	}
+	return videoagent.NewChatModel(ctx, config)
+}
+
+func loadPromptPlanner(path string, credentials *videoagent.CredentialsConfig) (videoagent.Planner, error) {
+	config := videoagent.PromptRuntimeConfig{Planner: videoagent.DefaultPromptPlannerConfig()}
+	if path != "" {
+		loaded, err := readJSON[videoagent.PromptRuntimeConfig](path)
+		if err != nil {
+			return nil, err
+		}
+		config = loaded
+	}
+	if credentials != nil {
+		config.Fornax = credentials.Fornax
 	}
 	executor, err := videoagent.NewFornaxPromptExecutor(config.Fornax)
 	if err != nil {
@@ -148,11 +205,11 @@ func loadPromptPlanner(path string) (videoagent.Planner, error) {
 	return videoagent.NewPromptPlanner(executor, config.Planner)
 }
 
-func newRemoteApplication(ctx context.Context, dataDir, remoteConfigPath, modelConfigPath, promptConfigPath, mongoURI, mongoDatabase, mongoCollection string) (application *videoagent.Application, err error) {
-	if modelConfigPath == "" {
+func newRemoteApplication(ctx context.Context, dataDir, remoteConfigPath, modelConfigPath, promptConfigPath, mongoURI, mongoDatabase, mongoCollection, chatModelKey string, credentials *videoagent.CredentialsConfig) (application *videoagent.Application, err error) {
+	if modelConfigPath == "" && credentials == nil {
 		return nil, errors.New("model config is required in remote mode")
 	}
-	if promptConfigPath == "" {
+	if promptConfigPath == "" && credentials == nil {
 		return nil, errors.New("prompt config is required in remote mode")
 	}
 	remoteConfig, err := readJSON[videoagent.RemoteConfig](remoteConfigPath)
@@ -186,13 +243,25 @@ func newRemoteApplication(ctx context.Context, dataDir, remoteConfigPath, modelC
 	if err != nil {
 		return nil, err
 	}
-	chatModel, err := loadChatModel(modelConfigPath)
+	chatModel, err := loadChatModel(modelConfigPath, chatModelKey, credentials)
 	if err != nil {
 		return nil, err
 	}
-	clients.Planner, err = loadPromptPlanner(promptConfigPath)
+	clients.Planner, err = videoagent.NewModelPlanner(chatModel)
 	if err != nil {
 		return nil, err
+	}
+	if credentials != nil {
+		clients.Planner, err = loadCredentialPlanner(ctx, *credentials)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if promptConfigPath != "" {
+		clients.Planner, err = loadPromptPlanner(promptConfigPath, credentials)
+		if err != nil {
+			return nil, err
+		}
 	}
 	agent, err := videoagent.NewCanvasAgent(chatModel, store)
 	if err != nil {
@@ -205,6 +274,10 @@ func newRemoteApplication(ctx context.Context, dataDir, remoteConfigPath, modelC
 	if err != nil {
 		return nil, err
 	}
+	application.Runner.SetMonitor(videoagent.MonitorFunc(func(_ context.Context, event videoagent.RunEvent) {
+		log.Printf("video_agent action=%s run_id=%s node_id=%s kind=%s state=%s provider=%s duration_ms=%d message=%q",
+			event.Action, event.RunID, event.NodeID, event.Kind, event.State, event.Provider, event.DurationMS, event.Message)
+	}))
 	var closeResources func() error
 	if mongoClient != nil {
 		closeResources = func() error { return mongoClient.Disconnect(context.Background()) }

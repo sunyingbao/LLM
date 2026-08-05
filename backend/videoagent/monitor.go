@@ -8,10 +8,15 @@ import (
 
 const (
 	MonitorNodeStarted        = "node_started"
+	MonitorNodeWaiting        = "node_waiting"
 	MonitorNodeCompleted      = "node_completed"
 	MonitorNodeFailed         = "node_failed"
 	MonitorCallback           = "callback"
 	MonitorLeaseRenewalFailed = "lease_renewal_failed"
+	MonitorSubmissionUnknown  = "submission_unknown"
+	MonitorReconcileFailed    = "reconcile_failed"
+	MonitorRestoreFailed      = "restore_failed"
+	MonitorCancelFailed       = "cancel_failed"
 )
 
 // RunEvent is the small observation contract shared by local and production monitors.
@@ -21,6 +26,7 @@ type RunEvent struct {
 	NodeID     string    `json:"node_id,omitempty"`
 	Kind       NodeKind  `json:"kind,omitempty"`
 	State      NodeState `json:"state,omitempty"`
+	Provider   string    `json:"provider,omitempty"`
 	Message    string    `json:"message,omitempty"`
 	DurationMS int64     `json:"duration_ms,omitempty"`
 	At         time.Time `json:"at"`

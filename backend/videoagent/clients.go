@@ -313,10 +313,14 @@ type VideoCanceler interface {
 	CancelVideo(context.Context, string) error
 }
 
-func (client combinedVideoClient) CancelVideo(ctx context.Context, jobID string) error {
+func (client combinedVideoClient) cancelPreview(ctx context.Context, jobID string) error {
 	if canceler, ok := client.PreviewClient.(VideoCanceler); ok {
 		return canceler.CancelVideo(ctx, jobID)
 	}
+	return ErrCancellationUnsupported
+}
+
+func (client combinedVideoClient) cancelFinalVideo(ctx context.Context, jobID string) error {
 	if canceler, ok := client.FinalVideoClient.(VideoCanceler); ok {
 		return canceler.CancelVideo(ctx, jobID)
 	}
