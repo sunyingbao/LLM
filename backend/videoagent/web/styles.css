@@ -40,13 +40,13 @@ button.secondary { background: transparent; }
 .palette-node:active { cursor: grabbing; border-color: var(--accent); }
 .tool-button.active { border-color: var(--accent); color: var(--accent); }
 .toolbar-help, .muted { color: var(--muted); font-size: 12px; }
-.canvas { position: relative; flex: 1; min-height: 680px; overflow: auto; background-color: #12151b; background-image: linear-gradient(#1b2029 1px, transparent 1px), linear-gradient(90deg, #1b2029 1px, transparent 1px); background-size: 24px 24px; }
-.edges { position: absolute; inset: 0; width: 1400px; height: 820px; }
+.canvas { position: relative; flex: 1; min-height: 920px; overflow: auto; background-color: #12151b; background-image: linear-gradient(#1b2029 1px, transparent 1px), linear-gradient(90deg, #1b2029 1px, transparent 1px); background-size: 24px 24px; }
+.edges { position: absolute; inset: 0; width: 1400px; height: 1060px; }
 .edges { z-index: 1; }
 .edges path { fill: none; stroke: #63718a; stroke-width: 2; pointer-events: stroke; cursor: pointer; }
 .edges path.active { stroke: var(--accent); stroke-width: 3; }
 .edges path.lineage { stroke: #86a5c8; opacity: .95; }
-.nodes { position: absolute; inset: 0; width: 1400px; min-height: 820px; }
+.nodes { position: absolute; inset: 0; width: 1400px; min-height: 1060px; }
 .nodes { z-index: 3; }
 .node { position: absolute; width: 220px; padding: 12px; border: 1px solid var(--border); border-radius: 8px; background: #1d212a; box-shadow: 0 10px 24px rgba(0, 0, 0, .22); user-select: none; }
 .node:hover, .node.selected { border-color: var(--accent); }

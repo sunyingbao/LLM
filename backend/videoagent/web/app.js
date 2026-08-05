@@ -16,13 +16,13 @@ const state = {
 };
 
 const defaultNodes = [
-  ["requirement", "requirement", 70, 110],
-  ["clipscript", "clipscript", 300, 110],
-  ["competition", "competition_reference_image", 535, 35],
-  ["tts", "prompt_tts", 535, 175],
-  ["character_reference", "character_reference_image", 535, 315],
-  ["preview", "preview", 790, 150],
-  ["finalvideo", "finalvideo", 1035, 150],
+  ["requirement", "requirement", 70, 170],
+  ["clipscript", "clipscript", 315, 170],
+  ["competition", "competition_reference_image", 570, 50],
+  ["tts", "prompt_tts", 570, 340],
+  ["character_reference", "character_reference_image", 570, 630],
+  ["preview", "preview", 835, 340],
+  ["finalvideo", "finalvideo", 1080, 340],
 ].map(([id, kind, x, y]) => ({ id, kind, x, y }));
 
 const defaultEdges = [
