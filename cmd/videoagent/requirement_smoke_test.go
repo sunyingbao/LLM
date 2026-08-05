@@ -44,7 +44,15 @@ func TestRequirementModelSmoke(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	input := videoagent.RunInput{ProductName: "软底厚底休闲鞋", Brief: "请分析商品核心卖点、目标人群和适用场景"}
+	productName := os.Getenv("VIDEO_AGENT_SMOKE_PRODUCT_NAME")
+	if productName == "" {
+		productName = "软底厚底休闲鞋"
+	}
+	brief := os.Getenv("VIDEO_AGENT_SMOKE_BRIEF")
+	if brief == "" {
+		brief = "请分析商品核心卖点、目标人群和适用场景"
+	}
+	input := videoagent.RunInput{ProductName: productName, Brief: brief}
 	requirement, err := planner.AnalyzeRequirement(ctx, input)
 	if err != nil {
 		t.Fatal(err)

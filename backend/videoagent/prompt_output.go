@@ -3,6 +3,7 @@ package videoagent
 import (
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"strconv"
 	"strings"
 )
@@ -11,6 +12,9 @@ const (
 	creativePlanTitle = "1. 创意方案如下"
 	clipScriptTitle   = "2. 分镜脚本如下"
 )
+
+var markdownSceneRange = regexp.MustCompile(`[（(【]\s*(\d+(?:\.\d+)?)\s*[-~至]\s*(\d+(?:\.\d+)?)\s*秒[^）)】]*[）)】]`)
+var markdownDurationRange = regexp.MustCompile(`(\d+(?:\.\d+)?)\s*[-~至]\s*(\d+(?:\.\d+)?)\s*秒`)
 
 func parseRequirement(content string, input RunInput) (Requirement, error) {
 	content = extractTaggedContent(content, "format_json")
@@ -35,6 +39,9 @@ func parseClipScript(content string) (ClipScript, error) {
 	if json.Unmarshal([]byte(extractJSON(content)), &direct) == nil && len(direct.Scenes) > 0 {
 		normalizeScenes(direct.Scenes)
 		return direct, nil
+	}
+	if markdown, ok := parseMarkdownClipScript(content); ok {
+		return markdown, nil
 	}
 
 	creativePlan, err := jsonAfterTitle(content, creativePlanTitle)
@@ -120,6 +127,136 @@ func parseDurationMS(value string) int {
 		return 0
 	}
 	return int(parsed * 1000)
+}
+
+func parseMarkdownClipScript(content string) (ClipScript, bool) {
+	result := ClipScript{Title: "分镜脚本"}
+	current := Scene{}
+	visualOpen := false
+	appendScene := func() {
+		if current.ID == "" || (current.Visual == "" && current.Voiceover == "") {
+			return
+		}
+		result.Scenes = append(result.Scenes, current)
+	}
+
+	for _, line := range strings.Split(content, "\n") {
+		line = strings.TrimSpace(line)
+		if match := markdownSceneRange.FindStringSubmatch(line); len(match) == 3 {
+			appendScene()
+			start, _ := strconv.ParseFloat(match[1], 64)
+			end, _ := strconv.ParseFloat(match[2], 64)
+			sceneIndex := len(result.Scenes) + 1
+			current = Scene{
+				ID:         fmt.Sprintf("scene-%d", sceneIndex),
+				SemanticID: fmt.Sprintf("semantic-%d", sceneIndex),
+				DurationMS: int((end - start) * 1000),
+			}
+			visualOpen = false
+			continue
+		}
+		if current.ID == "" {
+			continue
+		}
+
+		if strings.Contains(line, "字幕") || strings.Contains(line, "旁白") {
+			current.Voiceover = appendSceneText(current.Voiceover, markdownFieldValue(line))
+			visualOpen = false
+			continue
+		}
+		if strings.Contains(line, "音效") || strings.Contains(line, "音乐") {
+			visualOpen = false
+			continue
+		}
+		if strings.Contains(line, "画面") {
+			value := markdownFieldValue(line)
+			if !markdownDirection(value) {
+				current.Visual = appendSceneText(current.Visual, value)
+			}
+			visualOpen = true
+			continue
+		}
+		if visualOpen && strings.HasPrefix(line, "*") {
+			current.Visual = appendSceneText(current.Visual, markdownBulletValue(line))
+		}
+	}
+	appendScene()
+	if len(result.Scenes) > 0 {
+		return result, true
+	}
+	return parseMarkdownTableClipScript(content)
+}
+
+func parseMarkdownTableClipScript(content string) (ClipScript, bool) {
+	result := ClipScript{Title: "分镜脚本"}
+	for _, line := range strings.Split(content, "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, "|") {
+			continue
+		}
+		cells := strings.Split(line, "|")
+		if len(cells) < 6 {
+			continue
+		}
+		duration := strings.TrimSpace(cells[2])
+		match := markdownDurationRange.FindStringSubmatch(duration)
+		if len(match) != 3 {
+			continue
+		}
+		start, _ := strconv.ParseFloat(match[1], 64)
+		end, _ := strconv.ParseFloat(match[2], 64)
+		sceneIndex := len(result.Scenes) + 1
+		result.Scenes = append(result.Scenes, Scene{
+			ID:         fmt.Sprintf("scene-%d", sceneIndex),
+			SemanticID: fmt.Sprintf("semantic-%d", sceneIndex),
+			DurationMS: int((end - start) * 1000),
+			Visual:     markdownTableText(cells[3]),
+			Voiceover:  markdownTableText(cells[4]),
+		})
+	}
+	return result, len(result.Scenes) > 0
+}
+
+func markdownFieldValue(line string) string {
+	line = markdownBulletValue(line)
+	_, value, found := strings.Cut(line, "：")
+	if found {
+		line = value
+	} else if _, value, found = strings.Cut(line, ":"); found {
+		line = value
+	}
+	line = strings.TrimSpace(strings.ReplaceAll(line, "**", ""))
+	line = strings.Trim(line, "\"“”")
+	return strings.TrimSpace(line)
+}
+
+func markdownBulletValue(line string) string {
+	line = strings.TrimSpace(strings.TrimLeft(line, "*- "))
+	line = strings.TrimSpace(strings.ReplaceAll(line, "**", ""))
+	return strings.Trim(line, "\"“”")
+}
+
+func markdownTableText(value string) string {
+	value = strings.ReplaceAll(value, "<br/>", "；")
+	value = strings.ReplaceAll(value, "<br>", "；")
+	value = strings.ReplaceAll(value, "**", "")
+	value = strings.ReplaceAll(value, "`", "")
+	return strings.TrimSpace(value)
+}
+
+func markdownDirection(value string) bool {
+	return strings.HasPrefix(value, "（") && strings.HasSuffix(value, "）") ||
+		strings.HasPrefix(value, "(") && strings.HasSuffix(value, ")")
+}
+
+func appendSceneText(current, next string) string {
+	if next == "" {
+		return current
+	}
+	if current == "" {
+		return next
+	}
+	return current + "；" + next
 }
 
 type drClipScript struct {

@@ -83,3 +83,49 @@ func TestParseNestedClipScriptOutput(t *testing.T) {
 		t.Fatalf("second scene = %#v", result.Scenes[1])
 	}
 }
+
+func TestParseMarkdownClipScriptOutput(t *testing.T) {
+	content := `**【0-3秒：开场】**
+* **画面：** 一位职场女性穿着高跟鞋，在地铁口揉着脚踝。
+* **字幕/旁白：** “通勤脚累？想增高又怕磨脚？”
+
+**(3-7秒) 舒适展示**
+* **画面：** （快速切换）
+  * 特写：手指按压鞋子软弹的鞋底。
+  * 女主角换上黑色休闲鞋，轻松行走。
+* **音效：** 轻快音乐。
+* **字幕/旁白：** “软底厚底，久走不累！”`
+	result, err := parseClipScript(content)
+	if err != nil {
+		t.Fatalf("parseClipScript() error = %v", err)
+	}
+	if len(result.Scenes) != 2 {
+		t.Fatalf("scenes = %#v", result.Scenes)
+	}
+	if result.Scenes[0].DurationMS != 3000 || result.Scenes[0].Voiceover != "通勤脚累？想增高又怕磨脚？" {
+		t.Fatalf("first scene = %#v", result.Scenes[0])
+	}
+	if result.Scenes[1].DurationMS != 4000 || result.Scenes[1].Visual != "特写：手指按压鞋子软弹的鞋底。；女主角换上黑色休闲鞋，轻松行走。" {
+		t.Fatalf("second scene = %#v", result.Scenes[1])
+	}
+}
+
+func TestParseMarkdownTableClipScriptOutput(t *testing.T) {
+	content := `| 镜头序号 | 时长 | 画面内容 | 配音/字幕 | 音乐 |
+| :-- | :-- | :-- | :-- | :-- |
+| 1 | 0-3秒 | **【场景】** 地铁站，模特轻松行走。 | **字幕：** 舒适增高！<br>**配音：** 通勤路上，轻松一点？ | 轻快音乐 |
+| 2 | 3-8秒 | **【特写】** 鞋底回弹。 | **配音：** 软底缓震，久走不累。 | 节奏加强 |`
+	result, err := parseClipScript(content)
+	if err != nil {
+		t.Fatalf("parseClipScript() error = %v", err)
+	}
+	if len(result.Scenes) != 2 {
+		t.Fatalf("scenes = %#v", result.Scenes)
+	}
+	if result.Scenes[0].DurationMS != 3000 || result.Scenes[0].Visual != "【场景】 地铁站，模特轻松行走。" || result.Scenes[0].Voiceover != "字幕： 舒适增高！；配音： 通勤路上，轻松一点？" {
+		t.Fatalf("first scene = %#v", result.Scenes[0])
+	}
+	if result.Scenes[1].DurationMS != 5000 {
+		t.Fatalf("second scene = %#v", result.Scenes[1])
+	}
+}
