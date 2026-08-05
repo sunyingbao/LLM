@@ -346,7 +346,13 @@ type LocalClients struct {
 }
 
 func (clients *LocalClients) AnalyzeRequirement(_ context.Context, input RunInput) (Requirement, error) {
-	return Requirement{Objective: input.Brief, Audience: "interested shoppers", Selling: []string{input.ProductName, "comfortable", "easy to style"}}, nil
+	markdown := fmt.Sprintf("# 需求分析\n\n商品：%s\n\n%s", input.ProductName, input.Brief)
+	return Requirement{
+		Objective: input.Brief,
+		Audience:  "interested shoppers",
+		Selling:   []string{input.ProductName, "comfortable", "easy to style"},
+		Markdown:  markdown,
+	}, nil
 }
 
 func (clients *LocalClients) CreateClipScript(_ context.Context, requirement Requirement, _ RunInput) (ClipScript, error) {

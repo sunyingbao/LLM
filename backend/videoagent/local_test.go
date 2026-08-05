@@ -7,6 +7,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -100,6 +101,13 @@ func TestLocalHTTPWorkflowCompletesFromRequirementToFinalVideo(t *testing.T) {
 	}
 	run := waitForFinalVideo(t, application, started.Run.ID)
 	requirement := artifactByKind(t, run, "requirement")
+	var requirementOutput Requirement
+	if err := json.Unmarshal(requirement.Data, &requirementOutput); err != nil {
+		t.Fatalf("decode requirement artifact: %v", err)
+	}
+	if !strings.Contains(requirementOutput.Markdown, "15 second product video") {
+		t.Fatalf("requirement markdown = %q, want model result", requirementOutput.Markdown)
+	}
 	clipScript := artifactByKind(t, run, "clipscript")
 	preview := artifactByKind(t, run, "preview_video")
 	final := artifactByKind(t, run, "finalvideo")
