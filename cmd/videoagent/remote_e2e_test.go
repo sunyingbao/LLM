@@ -20,8 +20,7 @@ func TestRemoteVideoAgentEndToEnd(t *testing.T) {
 	}
 
 	remoteConfig := requiredEnv(t, "VIDEO_AGENT_E2E_REMOTE_CONFIG")
-	modelConfig := requiredEnv(t, "VIDEO_AGENT_E2E_MODEL_CONFIG")
-	promptConfig := requiredEnv(t, "VIDEO_AGENT_E2E_PROMPT_CONFIG")
+	modelConfig, promptConfig, credentials := remoteE2EModelConfig(t)
 	mongoURI := requiredEnv(t, "VIDEO_AGENT_E2E_MONGO_URI")
 	natsURL := requiredEnv(t, "VIDEO_AGENT_E2E_NATS_URL")
 
@@ -57,8 +56,8 @@ func TestRemoteVideoAgentEndToEnd(t *testing.T) {
 		mongoURI,
 		"video_agent_e2e_"+suffix,
 		"workflow_state",
-		"aic.aic_agent.main_agent",
-		nil,
+		firstEnv("VIDEO_AGENT_E2E_CHAT_MODEL_KEY", defaultCanvasAgentModelKey),
+		credentials,
 	)
 	if err != nil {
 		t.Fatalf("create remote application: %v", err)
@@ -100,6 +99,19 @@ func TestRemoteVideoAgentEndToEnd(t *testing.T) {
 	run := waitForRemoteRun(t, ctx, application.Store, startedRun.ID)
 	validateRemoteArtifacts(t, run)
 	t.Logf("remote E2E succeeded: run_id=%s artifacts=%d", run.ID, artifactCount(run))
+}
+
+func remoteE2EModelConfig(t *testing.T) (modelConfig, promptConfig string, credentials *videoagent.CredentialsConfig) {
+	t.Helper()
+	credentialsPath := strings.TrimSpace(os.Getenv("VIDEO_AGENT_E2E_CREDENTIALS_CONFIG"))
+	if credentialsPath == "" {
+		return requiredEnv(t, "VIDEO_AGENT_E2E_MODEL_CONFIG"), requiredEnv(t, "VIDEO_AGENT_E2E_PROMPT_CONFIG"), nil
+	}
+	loaded, err := readJSON[videoagent.CredentialsConfig](credentialsPath)
+	if err != nil {
+		t.Fatalf("read VIDEO_AGENT_E2E_CREDENTIALS_CONFIG: %v", err)
+	}
+	return "", "", &loaded
 }
 
 func waitForRemoteRun(t *testing.T, ctx context.Context, store *videoagent.Store, runID string) videoagent.Run {
