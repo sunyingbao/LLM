@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -30,5 +31,16 @@ func TestRemoteApplicationRequiresModelAndPromptConfig(t *testing.T) {
 	_, err = newRemoteApplication(context.Background(), t.TempDir(), "unused", "unused", "", "", "", "", "main", nil)
 	if err == nil || !strings.Contains(err.Error(), "prompt config is required") {
 		t.Fatalf("newRemoteApplication() error = %v, want missing prompt config", err)
+	}
+}
+
+func TestRemoteApplicationRejectsIncompleteMediaConfig(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "remote.json")
+	if err := os.WriteFile(path, []byte(`{}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := newRemoteApplication(context.Background(), t.TempDir(), path, "model", "prompt", "", "", "", "main", nil)
+	if err == nil || !strings.Contains(err.Error(), "remote canvas config is incomplete") {
+		t.Fatalf("newRemoteApplication() error = %v, want incomplete remote config", err)
 	}
 }

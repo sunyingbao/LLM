@@ -141,6 +141,36 @@ func NewRemoteClients(config RemoteConfig, videoImportCache VideoImportCache) (C
 	return clients, nil
 }
 
+// ValidateCanvasRemoteConfig checks that a remote Canvas run can execute every built-in media node.
+func ValidateCanvasRemoteConfig(config RemoteConfig) error {
+	if err := validateRemoteConfig(config); err != nil {
+		return err
+	}
+	missing := make([]string, 0, 6)
+	if config.ImageGateway == nil && !hasEndpoints(config.Endpoints, "image_submit", "image_status", "image_find") {
+		missing = append(missing, "image")
+	}
+	if config.PromptTTS == nil && !hasEndpoints(config.Endpoints, "tts_submit", "tts_status", "tts_find") {
+		missing = append(missing, "tts")
+	}
+	if config.Seedance == nil && !hasEndpoints(config.Endpoints, "preview_submit", "preview_status", "preview_find") {
+		missing = append(missing, "preview")
+	}
+	if config.FinalVideo == nil && !hasEndpoints(config.Endpoints, "finalvideo_submit", "finalvideo_status", "finalvideo_find") {
+		missing = append(missing, "finalvideo")
+	}
+	if strings.TrimSpace(config.Endpoints["image_audit"]) == "" {
+		missing = append(missing, "image_audit")
+	}
+	if strings.TrimSpace(config.Endpoints["prompt_shield"]) == "" {
+		missing = append(missing, "prompt_shield")
+	}
+	if len(missing) > 0 {
+		return fmt.Errorf("remote canvas config is incomplete: missing %s", strings.Join(missing, ", "))
+	}
+	return nil
+}
+
 func validateRemoteConfig(config RemoteConfig) error {
 	payload, err := json.Marshal(config)
 	if err != nil {

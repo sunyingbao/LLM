@@ -125,6 +125,36 @@ func TestRemoteClientsRequireStorageBetweenDirectPreviewAndFinalVideo(t *testing
 	}
 }
 
+func TestValidateCanvasRemoteConfigReportsEveryMissingCapability(t *testing.T) {
+	err := ValidateCanvasRemoteConfig(RemoteConfig{})
+	if err == nil {
+		t.Fatal("ValidateCanvasRemoteConfig() error = nil")
+	}
+	for _, capability := range []string{"image", "tts", "preview", "finalvideo", "image_audit", "prompt_shield"} {
+		if !strings.Contains(err.Error(), capability) {
+			t.Fatalf("ValidateCanvasRemoteConfig() error = %q, missing %q", err, capability)
+		}
+	}
+}
+
+func TestValidateCanvasRemoteConfigAcceptsDirectMediaClients(t *testing.T) {
+	err := ValidateCanvasRemoteConfig(RemoteConfig{
+		CallbackSecret: "secret",
+		Seedance:       &SeedanceConfig{BaseURL: "http://seedance.test", APIKey: "key", Model: "model"},
+		PromptTTS:      &PromptTTSConfig{},
+		ImageGateway:   &ModelGatewayImageConfig{Model: "model"},
+		FinalVideo:     &MetaFinalVideoConfig{BizID: 1},
+		VideoStorage:   &VideoStorageConfig{TopAccountID: "account"},
+		Endpoints: map[string]string{
+			"image_audit":   "http://capability.test/audit",
+			"prompt_shield": "http://capability.test/shield",
+		},
+	})
+	if err != nil {
+		t.Fatalf("ValidateCanvasRemoteConfig() error = %v", err)
+	}
+}
+
 func TestConfirmedWorkflowOperationPublishesNewVersion(t *testing.T) {
 	application, err := NewLocalApplication(t.TempDir())
 	if err != nil {

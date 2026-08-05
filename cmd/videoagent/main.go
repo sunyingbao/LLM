@@ -214,6 +214,9 @@ func newRemoteApplication(ctx context.Context, dataDir, remoteConfigPath, modelC
 	if err != nil {
 		return nil, err
 	}
+	if err := videoagent.ValidateCanvasRemoteConfig(remoteConfig); err != nil {
+		return nil, err
+	}
 	store := videoagent.NewStore(dataDir + "/workflow.json")
 	var mongoClient *mongo.Client
 	defer func() {
