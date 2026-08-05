@@ -24,6 +24,9 @@ func TestHTTPServesCanvas(t *testing.T) {
 	if !strings.Contains(response.Body.String(), "广告视频工作台") || !strings.Contains(response.Body.String(), "product-images") {
 		t.Fatalf("GET / does not contain Canvas page")
 	}
+	if !strings.Contains(response.Body.String(), `id="runtime-mode"`) {
+		t.Fatalf("GET / does not expose the runtime mode")
+	}
 	if response.Header().Get("Cache-Control") != "no-store" {
 		t.Fatalf("GET / Cache-Control = %q, want no-store", response.Header().Get("Cache-Control"))
 	}
@@ -71,6 +74,9 @@ func TestHTTPServesCanvas(t *testing.T) {
 	if !strings.Contains(scriptResponse.Body.String(), `artifact.kind === "requirement"`) || !strings.Contains(scriptResponse.Body.String(), `artifact.kind === "clipscript"`) {
 		t.Fatalf("GET /app.js does not render requirement and clipscript text artifacts")
 	}
+	if !strings.Contains(scriptResponse.Body.String(), `async function loadRuntime()`) || !strings.Contains(scriptResponse.Body.String(), `fetchJSON("/runtime")`) {
+		t.Fatalf("GET /app.js does not load runtime capability status")
+	}
 	if !strings.Contains(scriptResponse.Body.String(), `label.textContent = "模型需求分析"`) || !strings.Contains(scriptResponse.Body.String(), `element.classList.add("has-requirement-result")`) {
 		t.Fatalf("GET /app.js does not expose the requirement model response inside the requirement node")
 	}
@@ -91,6 +97,27 @@ func TestHTTPServesCanvas(t *testing.T) {
 	}
 	if !strings.Contains(scriptResponse.Body.String(), `node.state === "failed" && !node.submission_unknown`) {
 		t.Fatalf("GET /app.js allows unsafe retry after an unknown provider submission")
+	}
+}
+
+func TestHTTPReturnsLocalRuntimeStatus(t *testing.T) {
+	application, err := NewLocalApplication(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewLocalApplication() error = %v", err)
+	}
+	defer application.Close()
+
+	response := httptest.NewRecorder()
+	NewHTTPHandler(application).ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/runtime", nil))
+	if response.Code != http.StatusOK {
+		t.Fatalf("GET /runtime status = %d, want %d", response.Code, http.StatusOK)
+	}
+	var status RuntimeStatus
+	if err := json.NewDecoder(response.Body).Decode(&status); err != nil {
+		t.Fatalf("decode runtime status: %v", err)
+	}
+	if status.Mode != "local" || !status.Image || !status.TTS || !status.Preview || !status.FinalVideo {
+		t.Fatalf("GET /runtime = %+v, want fully configured local runtime", status)
 	}
 }
 

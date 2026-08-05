@@ -23,6 +23,7 @@ button, select { cursor: pointer; }
 h2 { font-size: 15px; }
 .eyebrow { color: var(--accent); font-size: 10px; font-weight: 700; letter-spacing: .12em; }
 .topbar-actions, .toolbar-group, .input-actions, .section-heading { display: flex; align-items: center; gap: 10px; }
+.runtime-mode { color: var(--muted); font-size: 12px; }
 .status-pill { border: 1px solid var(--border); border-radius: 999px; color: var(--muted); padding: 5px 10px; }
 .status-pill.running { color: var(--warning); border-color: #765c2b; }
 .status-pill.success { color: var(--success); border-color: #276b4d; }

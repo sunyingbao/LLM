@@ -37,6 +37,9 @@ func newHTTPHandler(application *Application) http.Handler {
 	mux.HandleFunc("GET /healthz", func(writer http.ResponseWriter, _ *http.Request) {
 		writeJSON(writer, http.StatusOK, map[string]string{"status": "ok"})
 	})
+	mux.HandleFunc("GET /runtime", func(writer http.ResponseWriter, _ *http.Request) {
+		writeJSON(writer, http.StatusOK, application.RuntimeStatus())
+	})
 	mux.HandleFunc("GET /workflow/node-definitions", func(writer http.ResponseWriter, _ *http.Request) {
 		writeJSON(writer, http.StatusOK, defaultNodeCatalog())
 	})

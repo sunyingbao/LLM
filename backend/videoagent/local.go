@@ -452,10 +452,19 @@ func (clients *LocalClients) submit(provider string, kind NodeKind, submitKey st
 }
 
 // Application contains workflow dependencies shared by every deployment mode.
+type RuntimeStatus struct {
+	Mode       string `json:"mode"`
+	Image      bool   `json:"image"`
+	TTS        bool   `json:"tts"`
+	Preview    bool   `json:"preview"`
+	FinalVideo bool   `json:"finalvideo"`
+}
+
 type Application struct {
 	Runner            *Runner
 	Store             *Store
 	Agent             ChatAgent
+	runtime           RuntimeStatus
 	callbackVerifier  CallbackVerifier
 	callbackPublisher MessagePublisher
 	callbackConsumer  MessageConsumer
@@ -475,7 +484,25 @@ func NewApplication(store *Store, clients Clients, agent ChatAgent) (*Applicatio
 	if err != nil {
 		return nil, err
 	}
-	return &Application{Runner: runner, Store: store, Agent: agent}, nil
+	return &Application{
+		Runner: runner,
+		Store:  store,
+		Agent:  agent,
+		runtime: RuntimeStatus{
+			Mode:       "remote",
+			Image:      clients.Image != nil,
+			TTS:        clients.TTS != nil,
+			Preview:    clients.Video != nil,
+			FinalVideo: clients.Video != nil,
+		},
+	}, nil
+}
+
+func (application *Application) RuntimeStatus() RuntimeStatus {
+	if application == nil {
+		return RuntimeStatus{}
+	}
+	return application.runtime
 }
 
 // UseChatModel replaces local planning and Canvas intent parsing with one injected model.
@@ -761,6 +788,7 @@ func newLocalApplication(dataDir string, store *Store, jobs *LocalJobs, closeSto
 	if err != nil {
 		return nil, err
 	}
+	application.runtime.Mode = "local"
 	application.SetCallbackVerifier(AllowAllCallbackVerifier{})
 	application.SetClose(closeStore)
 	queue := NewLocalQueue(jobs, nil)

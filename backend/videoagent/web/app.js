@@ -46,6 +46,18 @@ const defaultEdges = [
 
 const $ = (id) => document.getElementById(id);
 
+async function loadRuntime() {
+  const runtime = $("runtime-mode");
+  try {
+    const status = await fetchJSON("/runtime");
+    const enabled = [status.image && "图像", status.tts && "TTS", status.preview && "预览", status.finalvideo && "成片"].filter(Boolean);
+    runtime.textContent = status.mode === "remote" ? "运行环境：远端直连" : "运行环境：本地模拟";
+    runtime.title = enabled.length ? `已装配：${enabled.join("、")}` : "未装配媒体能力";
+  } catch (_) {
+    runtime.textContent = "运行环境：未知";
+  }
+}
+
 async function loadDefinitions() {
   state.definitions = await fetchJSON("/workflow/node-definitions");
   const select = $("node-kind");
@@ -691,6 +703,7 @@ document.addEventListener("keydown", (event) => {
 (async function init() {
   try {
 		$("project-id").textContent = `project: ${state.projectID}`;
+		await loadRuntime();
 		await loadDefinitions();
 		await loadProjectWorkflow();
 		await restoreSession();
