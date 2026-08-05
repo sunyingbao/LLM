@@ -70,7 +70,7 @@ func TestLocalHTTPWorkflowCompletesFromRequirementToFinalVideo(t *testing.T) {
 	}
 
 	handler := NewHTTPHandler(application)
-	payload := []byte(`{"project_id":"demo","product_name":"soft sole shoe","brief":"15 second product video"}`)
+	payload := []byte(`{"project_id":"new-run-project","product_name":"soft sole shoe","brief":"15 second product video"}`)
 	request := httptest.NewRequest(http.MethodPost, "/runs", bytes.NewReader(payload))
 	request.Header.Set("Content-Type", "application/json")
 	response := httptest.NewRecorder()
@@ -94,6 +94,9 @@ func TestLocalHTTPWorkflowCompletesFromRequirementToFinalVideo(t *testing.T) {
 	}
 	if err := json.NewDecoder(confirm.Body).Decode(&started); err != nil {
 		t.Fatalf("decode confirm response: %v", err)
+	}
+	if started.Run.ProjectID != "new-run-project" {
+		t.Fatalf("run project = %q, want new-run-project", started.Run.ProjectID)
 	}
 	run := waitForFinalVideo(t, application, started.Run.ID)
 	requirement := artifactByKind(t, run, "requirement")

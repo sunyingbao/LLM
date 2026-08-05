@@ -92,6 +92,11 @@ func newHTTPHandler(application *Application) http.Handler {
 		writeJSON(writer, http.StatusOK, response)
 	})
 	mux.HandleFunc("POST /projects/{projectID}/operations", func(writer http.ResponseWriter, request *http.Request) {
+		projectID := request.PathValue("projectID")
+		if err := EnsureProject(request.Context(), application.Store, projectID); err != nil {
+			writeError(writer, http.StatusBadRequest, err)
+			return
+		}
 		operation := CanvasOperation{}
 		if err := json.NewDecoder(request.Body).Decode(&operation); err != nil {
 			writeError(writer, http.StatusBadRequest, err)
@@ -102,7 +107,7 @@ func newHTTPHandler(application *Application) http.Handler {
 			return
 		}
 		operation.ID = newID("operation")
-		operation.ProjectID = request.PathValue("projectID")
+		operation.ProjectID = projectID
 		operation.IdempotencyKey = request.Header.Get("Idempotency-Key")
 		operation.Status = OperationPending
 		operation.CreatedAt = now()
@@ -153,6 +158,10 @@ func newHTTPHandler(application *Application) http.Handler {
 			RunInput
 		}{}
 		if err := json.NewDecoder(request.Body).Decode(&input); err != nil {
+			writeError(writer, http.StatusBadRequest, err)
+			return
+		}
+		if err := EnsureProject(request.Context(), application.Store, input.ProjectID); err != nil {
 			writeError(writer, http.StatusBadRequest, err)
 			return
 		}

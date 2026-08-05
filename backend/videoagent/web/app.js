@@ -1,4 +1,9 @@
+const projectID = new URLSearchParams(window.location.search).get("project_id")?.trim() || "demo";
+const storageKey = (name) => `video-agent:${projectID}:${name}`;
+const projectURL = (suffix = "") => `/projects/${encodeURIComponent(projectID)}${suffix}`;
+
 const state = {
+  projectID,
   definitions: {},
   nodes: [],
   edges: [],
@@ -11,8 +16,8 @@ const state = {
   finalAnnouncedRunID: null,
   timer: null,
   nextNode: 1,
-  conversationID: localStorage.getItem("video-agent-conversation") || "",
-  runID: localStorage.getItem("video-agent-run") || "",
+  conversationID: localStorage.getItem(storageKey("conversation")) || "",
+  runID: localStorage.getItem(storageKey("run")) || "",
 };
 
 const defaultNodes = [
@@ -62,7 +67,14 @@ async function loadDefinitions() {
 }
 
 async function loadProjectWorkflow() {
-  const project = await fetchJSON("/projects/demo");
+  let project;
+  try {
+    project = await fetchJSON(projectURL());
+  } catch (error) {
+    if (!error.message.includes("project not found")) throw error;
+    resetWorkflow();
+    return;
+  }
   const version = project.workflow_versions?.find((item) => item.workflow_version_id === project.current_workflow_version)
     || project.workflow_versions?.[project.workflow_versions.length - 1];
   if (!version) {
@@ -101,13 +113,13 @@ async function restoreConversation() {
 }
 
 async function restoreSession() {
-	const session = await fetchJSON("/projects/demo/session");
+	const session = await fetchJSON(projectURL("/session"));
 	state.conversationID = session.conversation?.conversation_id || "";
 	state.runID = session.run_id || "";
-	if (state.conversationID) localStorage.setItem("video-agent-conversation", state.conversationID);
-	else localStorage.removeItem("video-agent-conversation");
-	if (state.runID) localStorage.setItem("video-agent-run", state.runID);
-	else localStorage.removeItem("video-agent-run");
+	if (state.conversationID) localStorage.setItem(storageKey("conversation"), state.conversationID);
+	else localStorage.removeItem(storageKey("conversation"));
+	if (state.runID) localStorage.setItem(storageKey("run"), state.runID);
+	else localStorage.removeItem(storageKey("run"));
 }
 
 async function restoreRun() {
@@ -117,7 +129,7 @@ async function restoreRun() {
     updateRun(state.run);
     if (!runFinished(state.run)) state.timer = setInterval(refreshRun, 500);
   } catch (_) {
-    localStorage.removeItem("video-agent-run");
+    localStorage.removeItem(storageKey("run"));
     state.runID = "";
   }
 }
@@ -303,11 +315,11 @@ function deleteSelection() {
 
 async function saveWorkflow() {
   try {
-    const operation = await fetchJSON("/projects/demo/operations", {
+    const operation = await fetchJSON(projectURL("/operations"), {
       method: "POST",
       headers: { "Idempotency-Key": operationKey("workflow") },
       body: JSON.stringify({
-        project_id: "demo",
+        project_id: state.projectID,
         type: "update_workflow",
         payload: workflowPayload(),
       }),
@@ -327,10 +339,10 @@ async function runWorkflow() {
     brief: $("brief").value,
   };
   try {
-    const operation = await fetchJSON("/projects/demo/operations", {
+    const operation = await fetchJSON(projectURL("/operations"), {
       method: "POST",
       headers: { "Idempotency-Key": operationKey("run") },
-      body: JSON.stringify({ type: "run", payload }),
+      body: JSON.stringify({ project_id: state.projectID, type: "run", payload }),
     });
     renderOperation(operation);
     setStatus("待确认", "running");
@@ -348,10 +360,10 @@ async function sendAgentMessage() {
     const response = await fetchJSON("/agent/chat", {
       method: "POST",
 		headers: { "Idempotency-Key": operationKey("chat") },
-      body: JSON.stringify({ project_id: "demo", conversation_id: state.conversationID, run_id: state.run?.run_id || "", text: message, product_name: $("product-name").value, product_image_urls: productImageURLs(), brief: $("brief").value }),
+      body: JSON.stringify({ project_id: state.projectID, conversation_id: state.conversationID, run_id: state.run?.run_id || "", text: message, product_name: $("product-name").value, product_image_urls: productImageURLs(), brief: $("brief").value }),
     });
     state.conversationID = response.conversation?.conversation_id || state.conversationID;
-    if (state.conversationID) localStorage.setItem("video-agent-conversation", state.conversationID);
+    if (state.conversationID) localStorage.setItem(storageKey("conversation"), state.conversationID);
     const messagePart = response.messages?.[response.messages.length - 1]?.parts?.find((part) => part.type === "text");
     addMessage(messagePart?.text || "Agent 已处理请求。", "assistant");
     if (response.operation) renderOperation(response.operation);
@@ -366,7 +378,7 @@ async function retryRun() {
     return;
   }
   try {
-    const operation = await fetchJSON("/projects/demo/operations", {
+    const operation = await fetchJSON(projectURL("/operations"), {
       method: "POST",
       headers: { "Idempotency-Key": operationKey(`retry:${state.run.run_id}`) },
       body: JSON.stringify({ type: "retry", run_id: state.run.run_id, payload: { run_id: state.run.run_id } }),
@@ -405,7 +417,7 @@ function renderOperation(operation) {
         if (state.timer) clearInterval(state.timer);
         state.run = result.run;
         state.runID = state.run.run_id;
-        localStorage.setItem("video-agent-run", state.runID);
+        localStorage.setItem(storageKey("run"), state.runID);
         state.finalAnnouncedRunID = null;
         updateRun(state.run);
         if (!runFinished(state.run)) state.timer = setInterval(refreshRun, 500);
@@ -478,7 +490,7 @@ async function cancelRun() {
     return;
   }
   try {
-    const operation = await fetchJSON("/projects/demo/operations", {
+    const operation = await fetchJSON(projectURL("/operations"), {
       method: "POST",
       headers: { "Idempotency-Key": operationKey(`cancel:${state.run.run_id}`) },
       body: JSON.stringify({ type: "cancel", run_id: state.run.run_id, payload: { run_id: state.run.run_id } }),
@@ -678,6 +690,7 @@ document.addEventListener("keydown", (event) => {
 
 (async function init() {
   try {
+		$("project-id").textContent = `project: ${state.projectID}`;
 		await loadDefinitions();
 		await loadProjectWorkflow();
 		await restoreSession();

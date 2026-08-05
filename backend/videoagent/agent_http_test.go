@@ -80,6 +80,34 @@ func TestAgentChatCreatesProjectBeforeRunOperation(t *testing.T) {
 	}
 }
 
+func TestProjectOperationCreatesProjectBeforeRunConfirmation(t *testing.T) {
+	application, err := NewLocalApplication(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewLocalApplication() error = %v", err)
+	}
+	defer application.Close()
+
+	handler := NewHTTPHandler(application)
+	request := httptest.NewRequest(http.MethodPost, "/projects/new-project/operations", bytes.NewBufferString(`{"type":"run","payload":{"product_name":"shoe"}}`))
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusCreated {
+		t.Fatalf("POST operation status = %d, want %d: %s", response.Code, http.StatusCreated, response.Body.String())
+	}
+
+	operation := CanvasOperation{}
+	if err := json.NewDecoder(response.Body).Decode(&operation); err != nil {
+		t.Fatalf("decode operation: %v", err)
+	}
+	_, run, err := application.Runner.ConfirmOperation(context.Background(), operation.ID)
+	if err != nil {
+		t.Fatalf("ConfirmOperation() error = %v", err)
+	}
+	if run == nil || run.ProjectID != "new-project" {
+		t.Fatalf("run = %#v, want new-project", run)
+	}
+}
+
 func TestAgentChatIsIdempotent(t *testing.T) {
 	application, err := NewLocalApplication(t.TempDir())
 	if err != nil {

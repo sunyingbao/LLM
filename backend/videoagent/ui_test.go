@@ -54,10 +54,13 @@ func TestHTTPServesCanvas(t *testing.T) {
 	if !strings.Contains(scriptResponse.Body.String(), `["tts", "voice_preview", "finalvideo", "resources"]`) {
 		t.Fatalf("GET /app.js default workflow does not connect narration to finalvideo")
 	}
-	if !strings.Contains(scriptResponse.Body.String(), `localStorage.setItem("video-agent-run"`) || !strings.Contains(scriptResponse.Body.String(), "restoreRun") || !strings.Contains(scriptResponse.Body.String(), "restoreConversation") || !strings.Contains(scriptResponse.Body.String(), "restoreSession") || !strings.Contains(scriptResponse.Body.String(), "/operations/${part.operation_id}") {
+	if !strings.Contains(scriptResponse.Body.String(), `const projectID = new URLSearchParams(window.location.search).get("project_id")`) || !strings.Contains(scriptResponse.Body.String(), "projectURL") || strings.Contains(scriptResponse.Body.String(), "/projects/demo") {
+		t.Fatalf("GET /app.js does not select the Canvas project from the URL")
+	}
+	if !strings.Contains(scriptResponse.Body.String(), `localStorage.setItem(storageKey("run")`) || !strings.Contains(scriptResponse.Body.String(), "restoreRun") || !strings.Contains(scriptResponse.Body.String(), "restoreConversation") || !strings.Contains(scriptResponse.Body.String(), "restoreSession") || !strings.Contains(scriptResponse.Body.String(), "/operations/${part.operation_id}") {
 		t.Fatalf("GET /app.js does not restore persisted run and conversation state")
 	}
-	if !strings.Contains(scriptResponse.Body.String(), `localStorage.removeItem("video-agent-conversation")`) || !strings.Contains(scriptResponse.Body.String(), `headers: { "Idempotency-Key": operationKey("chat") }`) {
+	if !strings.Contains(scriptResponse.Body.String(), `localStorage.removeItem(storageKey("conversation"))`) || !strings.Contains(scriptResponse.Body.String(), `headers: { "Idempotency-Key": operationKey("chat") }`) {
 		t.Fatalf("GET /app.js does not clear stale sessions or send idempotent chat requests")
 	}
 	for _, media := range []string{`"img"`, `"audio"`, `"video"`} {
