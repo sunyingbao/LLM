@@ -19,6 +19,8 @@ import (
 	"go.mongodb.org/mongo-driver/v2/mongo/readpref"
 )
 
+const defaultCanvasAgentModelKey = "aic.aic_tool.user_req_analysis"
+
 func main() {
 	if err := run(); err != nil {
 		log.Fatal(err)
@@ -32,7 +34,7 @@ func run() error {
 	modelConfigPath := flag.String("model-config", "", "JSON config for the optional ReAct chat model")
 	promptConfigPath := flag.String("prompt-config", "", "JSON config for managed workflow prompts")
 	credentialsConfigPath := flag.String("credentials-config", "", "untracked JSON credentials for Fornax and MaaS models")
-	chatModelKey := flag.String("chat-model-key", "aic.aic_agent.main_agent", "prompt key selecting the ReAct chat model credentials")
+	chatModelKey := flag.String("chat-model-key", defaultCanvasAgentModelKey, "prompt key selecting the ReAct chat model credentials")
 	mongoURI := flag.String("mongo-uri", "mongodb://127.0.0.1:27017", "MongoDB URI; empty disables MongoDB state")
 	mongoDatabase := flag.String("mongo-database", "video_agent", "MongoDB database name")
 	mongoCollection := flag.String("mongo-collection", "workflow_state", "MongoDB state collection name")
@@ -171,11 +173,7 @@ func loadCredentialPlanner(ctx context.Context, credentials videoagent.Credentia
 	if err != nil {
 		return nil, err
 	}
-	resourceModel, err := loadCredentialModel(ctx, credentials, "aic.aic_agent.main_agent")
-	if err != nil {
-		return nil, err
-	}
-	return videoagent.NewStageModelPlanner(requirementModel, clipScriptModel, resourceModel)
+	return videoagent.NewStageModelPlanner(requirementModel, clipScriptModel, requirementModel)
 }
 
 func loadCredentialModel(ctx context.Context, credentials videoagent.CredentialsConfig, promptKey string) (model.BaseChatModel, error) {

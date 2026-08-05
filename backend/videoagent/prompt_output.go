@@ -153,6 +153,10 @@ func parseMarkdownClipScript(content string) (ClipScript, bool) {
 				DurationMS: int((end - start) * 1000),
 			}
 			visualOpen = false
+			if rangeIndex := markdownSceneRange.FindStringIndex(line); rangeIndex != nil {
+				current.Visual = markdownInlineValue(line[rangeIndex[1]:])
+				visualOpen = current.Visual != ""
+			}
 			continue
 		}
 		if current.ID == "" {
@@ -168,7 +172,7 @@ func parseMarkdownClipScript(content string) (ClipScript, bool) {
 			visualOpen = false
 			continue
 		}
-		if strings.Contains(line, "画面") {
+		if strings.Contains(line, "画面") || strings.Contains(line, "镜头") {
 			value := markdownFieldValue(line)
 			if !markdownDirection(value) {
 				current.Visual = appendSceneText(current.Visual, value)
@@ -234,6 +238,14 @@ func markdownBulletValue(line string) string {
 	line = strings.TrimSpace(strings.TrimLeft(line, "*- "))
 	line = strings.TrimSpace(strings.ReplaceAll(line, "**", ""))
 	return strings.Trim(line, "\"“”")
+}
+
+func markdownInlineValue(line string) string {
+	line = strings.TrimSpace(strings.ReplaceAll(line, "**", ""))
+	if !strings.HasPrefix(line, "：") && !strings.HasPrefix(line, ":") {
+		return ""
+	}
+	return strings.TrimSpace(strings.Trim(line, "：: -"))
 }
 
 func markdownTableText(value string) string {

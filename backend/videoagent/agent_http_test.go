@@ -55,6 +55,31 @@ func TestAgentChatOperationCanStartRunAfterConfirmation(t *testing.T) {
 	}
 }
 
+func TestAgentChatCreatesProjectBeforeRunOperation(t *testing.T) {
+	application, err := NewLocalApplication(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewLocalApplication() error = %v", err)
+	}
+	defer application.Close()
+
+	reply, err := application.Agent.Chat(context.Background(), AgentChatInput{
+		ProjectID: "new-project", Text: "开始生成", RunInput: RunInput{ProductName: "shoe"},
+	})
+	if err != nil {
+		t.Fatalf("Agent.Chat() error = %v", err)
+	}
+	if reply.Operation == nil || reply.Operation.Type != OperationRun {
+		t.Fatalf("operation = %#v, want run", reply.Operation)
+	}
+	_, run, err := application.Runner.ConfirmOperation(context.Background(), reply.Operation.ID)
+	if err != nil {
+		t.Fatalf("ConfirmOperation() error = %v", err)
+	}
+	if run == nil || run.ProjectID != "new-project" {
+		t.Fatalf("run = %#v, want new-project", run)
+	}
+}
+
 func TestAgentChatIsIdempotent(t *testing.T) {
 	application, err := NewLocalApplication(t.TempDir())
 	if err != nil {
@@ -223,7 +248,7 @@ func TestModelAgentReturnsAfterFirstCanvasOperation(t *testing.T) {
 		t.Fatalf("NewCanvasAgent() error = %v", err)
 	}
 
-	reply, err := agent.Chat(context.Background(), AgentChatInput{ProjectID: "demo", Text: "开始生成广告"})
+	reply, err := agent.Chat(context.Background(), AgentChatInput{ProjectID: "demo", Text: "开始生成广告", RunInput: RunInput{ProductName: "shoe"}})
 	if err != nil {
 		t.Fatalf("Agent.Chat() error = %v", err)
 	}
@@ -232,6 +257,10 @@ func TestModelAgentReturnsAfterFirstCanvasOperation(t *testing.T) {
 	}
 	if reply.Operation == nil || reply.Operation.Type != OperationRun {
 		t.Fatalf("operation = %#v, want run", reply.Operation)
+	}
+	input, err := decode[RunInput](reply.Operation.Payload)
+	if err != nil || input.ProductName != "shoe" {
+		t.Fatalf("operation run input = %#v, %v", input, err)
 	}
 	if _, err := store.GetOperation(context.Background(), reply.Operation.ID); err != nil {
 		t.Fatalf("GetOperation() error = %v", err)
@@ -249,7 +278,7 @@ func (model *canvasOperationModel) Generate(context.Context, []*schema.Message, 
 		Type: "function",
 		Function: schema.FunctionCall{
 			Name:      "propose_canvas_operation",
-			Arguments: `{"type":"run","payload":{"product_name":"shoe"}}`,
+			Arguments: `{"type":"run"}`,
 		},
 	}}}, nil
 }

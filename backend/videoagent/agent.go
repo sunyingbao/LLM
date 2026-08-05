@@ -56,6 +56,9 @@ func (agent *CanvasAgent) Chat(ctx context.Context, input AgentChatInput) (reply
 	if input.ProjectID == "" || strings.TrimSpace(input.Text) == "" {
 		return reply, fmt.Errorf("project id and text are required")
 	}
+	if err = EnsureProject(ctx, agent.store, input.ProjectID); err != nil {
+		return reply, err
+	}
 	if cached, originalText, found, err := agent.store.FindAgentChatReply(ctx, input.ProjectID, input.IdempotencyKey); err != nil {
 		return reply, err
 	} else if found {
@@ -323,10 +326,18 @@ func (agent *CanvasAgent) tools(ctx context.Context, input AgentChatInput) ([]to
 		if !validOperationType(args.Type) {
 			return "", fmt.Errorf("unsupported canvas operation: %s", args.Type)
 		}
+		payload := args.Payload
+		if args.Type == OperationRun && len(payload) == 0 {
+			var err error
+			payload, err = json.Marshal(input.RunInput)
+			if err != nil {
+				return "", err
+			}
+		}
 		operation := CanvasOperation{
 			ID: newID("operation"), ProjectID: projectID, RunID: args.RunID,
 			IdempotencyKey: input.IdempotencyKey, SourceMessageID: idempotentChatID("message", input, "assistant"),
-			Type: args.Type, TargetNodeID: args.TargetNodeID, Payload: args.Payload,
+			Type: args.Type, TargetNodeID: args.TargetNodeID, Payload: payload,
 			Status: OperationPending, CreatedAt: time.Now().UTC(),
 		}
 		stored, _, err := agent.store.CreateOrGetOperation(ctx, operation)

@@ -33,6 +33,24 @@ func TestStageModelPlannerRoutesEachStageToItsModel(t *testing.T) {
 	}
 }
 
+func TestStageModelPlannerAcceptsNumericResourceIDs(t *testing.T) {
+	planner, err := NewStageModelPlanner(
+		&plannerResponseModel{content: "requirement"},
+		&plannerResponseModel{content: `{"scenes":[{"id":"scene-1","visual":"画面","voiceover":"旁白"}]}`},
+		&plannerResponseModel{content: `[{"id":1,"scene_id":1,"text":"旁白"}]`},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plans, err := planner.PlanTTS(context.Background(), ClipScript{Scenes: []Scene{{ID: "scene-1"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(plans) != 1 || plans[0].ID != "1" || plans[0].SceneID != "scene-1" {
+		t.Fatalf("plans = %#v", plans)
+	}
+}
+
 type plannerResponseModel struct {
 	content string
 	calls   int

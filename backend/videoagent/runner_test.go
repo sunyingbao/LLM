@@ -528,6 +528,26 @@ func TestCallbackWaitsForDurableJob(t *testing.T) {
 	}
 }
 
+func TestCallbackAcknowledgesDuplicateWhileJobIsClaimed(t *testing.T) {
+	runner, store, _, tts, _ := testRunner(t)
+	run, err := runner.StartRun(context.Background(), "project-1", RunInput{ProductName: "shoe"})
+	if err != nil {
+		t.Fatalf("StartRun() error = %v", err)
+	}
+
+	node := nodeRun(run, "tts", "speaker-1")
+	tts.jobs[node.JobID] = JobStatus{State: JobSucceeded, ExampleURI: "example://speaker-1"}
+	_, claimed, _, _, err := store.claimCallback(CallbackMessage{Provider: node.Provider, EventID: "event-first", JobID: node.JobID})
+	if err != nil || !claimed {
+		t.Fatalf("claimCallback() = (%v, %v), want claimed job", claimed, err)
+	}
+
+	err = runner.ProcessCallback(context.Background(), CallbackMessage{Provider: node.Provider, EventID: "event-duplicate", JobID: node.JobID})
+	if err != nil {
+		t.Fatalf("ProcessCallback() error = %v, want duplicate callback acknowledged", err)
+	}
+}
+
 func TestCallbackRequeuesWhenRefreshResultCannotBeSaved(t *testing.T) {
 	baseRunner, _, _, _, _ := testRunner(t)
 	backend := &flakyStateBackend{data: emptyStoreData()}

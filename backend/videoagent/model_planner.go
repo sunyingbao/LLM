@@ -1,9 +1,11 @@
 package videoagent
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/cloudwego/eino/components/model"
@@ -45,7 +47,10 @@ func (planner *ModelPlanner) AnalyzeRequirement(ctx context.Context, input RunIn
 
 // CreateClipScript creates the ordered scenes used by later resource nodes.
 func (planner *ModelPlanner) CreateClipScript(ctx context.Context, requirement Requirement, input RunInput) (ClipScript, error) {
-	content, err := planner.generateContent(ctx, planner.clipScriptModel, "根据需求生成创意方案和分镜脚本。回答必须依次包含“1. 创意方案如下”和“2. 分镜脚本如下”两个 JSON 区段。", struct {
+	content, err := planner.generateContent(ctx, planner.clipScriptModel, `根据需求生成广告分镜脚本。输入中的 requirement 是参考资料，不能再次输出需求分析。
+只返回一个 JSON 对象，不要 Markdown、解释或代码块：
+{"title":"创意标题","scenes":[{"id":"scene-1","semantic_id":"semantic-1","duration_ms":3000,"visual":"画面描述","voiceover":"口播文案"}]}
+至少生成三个 scenes；每个 scene 都必须包含 visual 和 voiceover。`, struct {
 		Requirement Requirement `json:"requirement"`
 		Input       RunInput    `json:"input"`
 	}{requirement, input})
@@ -57,40 +62,86 @@ func (planner *ModelPlanner) CreateClipScript(ctx context.Context, requirement R
 
 // PlanCompetition creates reference-image jobs from the clipscript.
 func (planner *ModelPlanner) PlanCompetition(ctx context.Context, script ClipScript, input RunInput) ([]ResourcePlan, error) {
-	var output []ResourcePlan
-	err := planner.generate(ctx, planner.resourceModel, "为分镜脚本规划竞品参考图任务，返回 JSON 数组；每项包含 id、scene_id、prompt、model、width、height，scene_id 必须来自输入分镜。不要输出 Markdown。", struct {
+	return planner.generatePlans(ctx, "为分镜脚本规划竞品参考图任务，返回 JSON 数组；每项包含 id、scene_id、prompt、model、width、height，scene_id 必须来自输入分镜。不要输出 Markdown。", struct {
 		Script ClipScript `json:"clipscript"`
 		Input  RunInput   `json:"input"`
-	}{script, input}, &output)
-	return output, err
+	}{script, input}, script)
 }
 
 // PlanTTS creates one or more voice jobs from scene narration.
 func (planner *ModelPlanner) PlanTTS(ctx context.Context, script ClipScript) ([]ResourcePlan, error) {
-	var output []ResourcePlan
-	err := planner.generate(ctx, planner.resourceModel, "为每个分镜规划配音任务，返回 JSON 数组；每项包含 id、scene_id、prompt、speaker、text、cpm，scene_id 必须来自输入分镜，prompt 描述音色和说话风格。不要输出 Markdown。", script, &output)
-	return output, err
+	return planner.generatePlans(ctx, "为每个分镜规划配音任务，返回 JSON 数组；每项包含 id、scene_id、prompt、speaker、text、cpm，scene_id 必须来自输入分镜，prompt 描述音色和说话风格。不要输出 Markdown。", script, script)
 }
 
 // PlanCharacterReferences creates character-reference image jobs.
 func (planner *ModelPlanner) PlanCharacterReferences(ctx context.Context, script ClipScript, input RunInput) ([]ResourcePlan, error) {
-	var output []ResourcePlan
-	err := planner.generate(ctx, planner.resourceModel, "为分镜脚本规划人物参考图任务，返回 JSON 数组；每项包含 id、scene_id、prompt、model、fallback_model、width、height，scene_id 必须来自输入分镜。不要输出 Markdown。", struct {
+	return planner.generatePlans(ctx, "为分镜脚本规划人物参考图任务，返回 JSON 数组；每项包含 id、scene_id、prompt、model、fallback_model、width、height，scene_id 必须来自输入分镜。不要输出 Markdown。", struct {
 		Script ClipScript `json:"clipscript"`
 		Input  RunInput   `json:"input"`
-	}{script, input}, &output)
-	return output, err
+	}{script, input}, script)
 }
 
-func (planner *ModelPlanner) generate(ctx context.Context, chatModel model.BaseChatModel, instruction string, input any, output any) error {
-	content, err := planner.generateContent(ctx, chatModel, instruction, input)
+func (planner *ModelPlanner) generatePlans(ctx context.Context, instruction string, input any, script ClipScript) ([]ResourcePlan, error) {
+	content, err := planner.generateContent(ctx, planner.resourceModel, instruction, input)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	if err := json.Unmarshal([]byte(extractJSON(content)), output); err != nil {
-		return fmt.Errorf("decode planner response: %w", err)
+	return decodeResourcePlans(content, script)
+}
+
+func decodeResourcePlans(content string, script ClipScript) ([]ResourcePlan, error) {
+	var rawPlans []map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(extractJSON(content)), &rawPlans); err != nil {
+		return nil, fmt.Errorf("decode planner response: %w", err)
 	}
-	return nil
+	plans := make([]ResourcePlan, 0, len(rawPlans))
+	for _, rawPlan := range rawPlans {
+		for _, key := range []string{"id", "scene_id"} {
+			value, err := resourcePlanString(rawPlan[key])
+			if err != nil {
+				return nil, fmt.Errorf("decode planner response %s: %w", key, err)
+			}
+			if value != "" {
+				rawPlan[key], _ = json.Marshal(value)
+			}
+		}
+		data, err := json.Marshal(rawPlan)
+		if err != nil {
+			return nil, err
+		}
+		plan := ResourcePlan{}
+		if err := json.Unmarshal(data, &plan); err != nil {
+			return nil, fmt.Errorf("decode planner response: %w", err)
+		}
+		plan.SceneID = resolveSceneID(plan.SceneID, script)
+		plans = append(plans, plan)
+	}
+	return plans, nil
+}
+
+func resourcePlanString(raw json.RawMessage) (string, error) {
+	if len(raw) == 0 || string(raw) == "null" {
+		return "", nil
+	}
+	value := ""
+	if err := json.Unmarshal(raw, &value); err == nil {
+		return value, nil
+	}
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+	number := json.Number("")
+	if err := decoder.Decode(&number); err != nil {
+		return "", err
+	}
+	return number.String(), nil
+}
+
+func resolveSceneID(sceneID string, script ClipScript) string {
+	index, err := strconv.Atoi(sceneID)
+	if err != nil || index < 1 || index > len(script.Scenes) {
+		return sceneID
+	}
+	return script.Scenes[index-1].ID
 }
 
 func (planner *ModelPlanner) generateContent(ctx context.Context, chatModel model.BaseChatModel, instruction string, input any) (string, error) {

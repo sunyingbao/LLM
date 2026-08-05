@@ -129,3 +129,24 @@ func TestParseMarkdownTableClipScriptOutput(t *testing.T) {
 		t.Fatalf("second scene = %#v", result.Scenes[1])
 	}
 }
+
+func TestParseMarkdownClipScriptKeepsInlineShotVisual(t *testing.T) {
+	content := `**镜头1 (0-3秒)：** 鞋底回弹特写，展示厚底缓震。
+* **字幕/旁白：** 软底厚底，久走不累。
+
+**镜头2 (3-6秒)**
+* **镜头：** 通勤女性轻松穿过街角。`
+	result, err := parseClipScript(content)
+	if err != nil {
+		t.Fatalf("parseClipScript() error = %v", err)
+	}
+	if len(result.Scenes) != 2 {
+		t.Fatalf("scenes = %#v", result.Scenes)
+	}
+	if result.Scenes[0].Visual != "鞋底回弹特写，展示厚底缓震。" || result.Scenes[0].Voiceover != "软底厚底，久走不累。" {
+		t.Fatalf("first scene = %#v", result.Scenes[0])
+	}
+	if result.Scenes[1].Visual != "通勤女性轻松穿过街角。" {
+		t.Fatalf("second scene = %#v", result.Scenes[1])
+	}
+}

@@ -36,11 +36,7 @@ func TestRequirementModelSmoke(t *testing.T) {
 		t.Fatal(err)
 	}
 	capture := &capturingModel{BaseChatModel: clipScriptModel}
-	resourceModel, err := loadCredentialModel(ctx, credentials, "aic.aic_agent.main_agent")
-	if err != nil {
-		t.Fatal(err)
-	}
-	planner, err := videoagent.NewStageModelPlanner(requirementModel, capture, resourceModel)
+	planner, err := videoagent.NewStageModelPlanner(requirementModel, capture, requirementModel)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -67,7 +63,14 @@ func TestRequirementModelSmoke(t *testing.T) {
 	if len(clipScript.Scenes) == 0 {
 		t.Fatal("clipscript model returned no scenes")
 	}
-	t.Logf("planning models succeeded: requirement_bytes=%d scenes=%d", len(requirement.Markdown), len(clipScript.Scenes))
+	voices, err := planner.PlanTTS(ctx, clipScript)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(voices) == 0 {
+		t.Fatal("resource planning model returned no TTS plans")
+	}
+	t.Logf("prompt planning succeeded: requirement_bytes=%d scenes=%d voices=%d", len(requirement.Markdown), len(clipScript.Scenes), len(voices))
 }
 
 type capturingModel struct {

@@ -597,6 +597,8 @@ func (store *Store) claimCallback(message CallbackMessage) (command Command, cla
 				refresh = node.State == Waiting || node.State == Running
 				if refresh {
 					if node.State == Running && !claimAvailable(*node, time.Now().UTC()) {
+						// 同一任务已由另一条 callback 处理，当前消息可以直接确认。
+						duplicate = true
 						return nil
 					}
 					node.State = Running
