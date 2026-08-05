@@ -156,6 +156,9 @@ function render() {
     nodeState.textContent = node.state || "待运行";
     element.append(head, kind, nodeState);
     if (node.artifactResults?.length) {
+      if (node.artifactResults.some((artifact) => artifact.kind === "requirement")) {
+        element.classList.add("has-requirement-result");
+      }
       const results = document.createElement("div");
       results.className = "node-results";
       results.addEventListener("pointerdown", (event) => event.stopPropagation());
@@ -526,6 +529,8 @@ function createArtifactContent(artifact, compact) {
   const data = artifact.data && typeof artifact.data === "object" ? artifact.data : {};
   let rendered = false;
   if (artifact.kind === "requirement") {
+    content.classList.add("requirement-result");
+    label.textContent = "模型需求分析";
     appendArtifactText(content, data.markdown || data.objective || "");
     if (data.audience) appendArtifactText(content, `受众：${data.audience}`);
     if (data.selling_points?.length) appendArtifactText(content, `卖点：${data.selling_points.join("、")}`);

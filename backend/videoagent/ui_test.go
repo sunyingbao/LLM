@@ -68,6 +68,12 @@ func TestHTTPServesCanvas(t *testing.T) {
 	if !strings.Contains(scriptResponse.Body.String(), `artifact.kind === "requirement"`) || !strings.Contains(scriptResponse.Body.String(), `artifact.kind === "clipscript"`) {
 		t.Fatalf("GET /app.js does not render requirement and clipscript text artifacts")
 	}
+	if !strings.Contains(scriptResponse.Body.String(), `label.textContent = "模型需求分析"`) || !strings.Contains(scriptResponse.Body.String(), `element.classList.add("has-requirement-result")`) {
+		t.Fatalf("GET /app.js does not expose the requirement model response inside the requirement node")
+	}
+	if !strings.Contains(styleResponse.Body.String(), `.node.has-requirement-result .node-results`) || !strings.Contains(styleResponse.Body.String(), `.artifact-content.compact.requirement-result .artifact-text`) {
+		t.Fatalf("GET /styles.css truncates the requirement model response inside the requirement node")
+	}
 	if strings.Contains(scriptResponse.Body.String(), `className = "artifact-node"`) || strings.Contains(response.Body.String(), `id="artifact-nodes"`) {
 		t.Fatalf("Canvas renders artifacts as duplicate workflow nodes")
 	}
