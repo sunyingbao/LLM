@@ -35,6 +35,9 @@ func NewChatModel(ctx context.Context, config ChatModelConfig) (model.BaseChatMo
 		if err := validateFornaxConfig(config.Fornax); err != nil {
 			return nil, err
 		}
+		if invalidCredential(config.APIKey) || invalidCredential(config.Model) || invalidCredential(config.BaseURL) {
+			return nil, fmt.Errorf("Fornax MaaS api_key, model and base_url are required and cannot be placeholders")
+		}
 		return newFornaxChatModel(ctx, config)
 	}
 	if provider != "" && provider != "openai" && provider != "maas" {
@@ -58,8 +61,8 @@ func NewChatModel(ctx context.Context, config ChatModelConfig) (model.BaseChatMo
 }
 
 func validateFornaxConfig(config *FornaxConfig) error {
-	if config == nil || invalidCredential(config.AK) || invalidCredential(config.SK) {
-		return fmt.Errorf("Fornax ak and sk are required and cannot be placeholders")
+	if config == nil || config.AppID <= 0 || invalidCredential(config.AK) || invalidCredential(config.SK) {
+		return fmt.Errorf("Fornax app_id, ak and sk are required and cannot be placeholders")
 	}
 	return nil
 }

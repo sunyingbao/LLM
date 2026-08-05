@@ -508,10 +508,12 @@ GOTOOLCHAIN=auto go run ./cmd/videoagent \
   "finalvideo": {
     "width": 720,
     "height": 1280,
-    "biz_id": 1
+    "biz_id": 0
   }
 }
 ```
+
+`finalvideo.biz_id=0` 表示尚未配置，生产启动会直接失败。Mega 当前使用的 `BizId_Aic_Mega=118` 只用于核对原链路行为，新的 Agent 服务必须申请并填写自己的 Meta BizId，不能复用 Mega 身份。Fornax 的 `app_id` 同样必须是已登记的正数，并与 AK/SK 属于同一应用。
 
 NATS 默认连接 `nats://127.0.0.1:4222`，Stream 为 `VIDEO_AGENT_CALLBACKS`，Subject 为 `video_agent.callbacks`，DLQ Subject 为 `video_agent.callbacks.dead`，durable consumer 为 `video_agent_runner`。连接、Stream、主 Subject 和 consumer 可分别通过 `-nats-url`、`-nats-stream`、`-nats-subject` 和 `-nats-consumer` 覆盖。
 
@@ -564,3 +566,19 @@ make videoagent-build
 本地回滚时先停止 `cmd/videoagent`，保留 MongoDB 和 JetStream 数据，再切回上一二进制。远端发布必须以 Client 配置区分 Local 与真实能力；关闭真实 Client 后，不再提交新 Job，已持久化的 Run 仍可以由轮询或回调收敛。
 
 当前验收证据：默认构建和 `fornax bytedance` 生产标签构建均已通过；本地 Mongo-backed HTTP Handler 已验证从需求分析走到 `finalvideo`，并验证 Operation 确认、Artifact 来源线、TTS 试听复用和回调幂等。本地 JetStream 已验证失败重投、发布去重、客户端重启恢复，以及 Application 通过 MQ 完成整条工作流。仓库不包含 Mega/Gen 工作流 SDK 依赖。上线前仍必须使用真实凭证验证 Fornax Prompt、Model Gateway、ModelHub/ImageX、Matx、Seedance、Meta 和生产 NATS 的 PPE E2E。
+
+真实能力验收使用同一条 Agent、Operation、Mongo、JetStream 和 DAG 路径，不允许直接调用各 Client 绕过编排。配置以下环境变量后执行 `make videoagent-remote-e2e`：
+
+```text
+VIDEO_AGENT_E2E_REMOTE_CONFIG=/absolute/path/remote.json
+VIDEO_AGENT_E2E_MODEL_CONFIG=/absolute/path/model.json
+VIDEO_AGENT_E2E_PROMPT_CONFIG=/absolute/path/prompt.json
+VIDEO_AGENT_E2E_MONGO_URI=mongodb://...
+VIDEO_AGENT_E2E_NATS_URL=nats://...
+VIDEO_AGENT_E2E_PRODUCT_NAME=软底厚底休闲鞋                  # 可选
+VIDEO_AGENT_E2E_PRODUCT_IMAGES=https://.../product.png      # 可选，多条用换行或逗号分隔
+VIDEO_AGENT_E2E_BRIEF=请结合商品卖点生成一条短视频广告       # 可选
+VIDEO_AGENT_E2E_TIMEOUT=45m                                 # 可选
+```
+
+该验收会要求真实 ReAct Agent 提交 `run` Operation，确认后等待全部节点成功，并检查需求分析、分镜、竞品图、TTS、人物参考图、预览和正式成片 Artifact。所有媒体结果必须提供前端可展示的 HTTP(S) URL；`finalvideo` 必须同时关联 `clipscript` 和 `preview_video` 来源。

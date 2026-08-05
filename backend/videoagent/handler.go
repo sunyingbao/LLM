@@ -67,7 +67,11 @@ func (handler nodeHandler) Start(ctx context.Context, command Command) (Result, 
 		}
 		return succeededArtifact(command.NodeRun, "requirement", requirement, nil)
 	case ClipScriptNode:
-		requirement, err := artifactData[Requirement](command.Inputs, "requirement")
+		requirementArtifact, err := findArtifact(command.Inputs, "requirement")
+		if err != nil {
+			return Result{}, err
+		}
+		requirement, err := decode[Requirement](requirementArtifact.Data)
 		if err != nil {
 			return Result{}, err
 		}
@@ -75,7 +79,7 @@ func (handler nodeHandler) Start(ctx context.Context, command Command) (Result, 
 		if err != nil {
 			return Result{}, err
 		}
-		return succeededArtifact(command.NodeRun, "clipscript", clipScript, nil)
+		return succeededArtifact(command.NodeRun, "clipscript", clipScript, []string{requirementArtifact.ID})
 	case CompetitionReferenceNode, PromptTTSNode, CharacterReferenceNode:
 		return handler.planResources(ctx, command, config)
 	case PreviewNode:

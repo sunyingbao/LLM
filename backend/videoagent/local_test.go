@@ -86,8 +86,13 @@ func TestLocalHTTPWorkflowCompletesFromRequirementToFinalVideo(t *testing.T) {
 		t.Fatalf("decode confirm response: %v", err)
 	}
 	run := waitForFinalVideo(t, application, started.Run.ID)
+	requirement := artifactByKind(t, run, "requirement")
+	clipScript := artifactByKind(t, run, "clipscript")
 	preview := artifactByKind(t, run, "preview_video")
 	final := artifactByKind(t, run, "finalvideo")
+	if !contains(clipScript.ParentIDs, requirement.ID) {
+		t.Fatalf("clipscript parents = %#v, want requirement %s", clipScript.ParentIDs, requirement.ID)
+	}
 	if !contains(preview.ParentIDs, "clipscript") || len(preview.ParentIDs) < 2 {
 		t.Fatalf("preview parents = %#v, want clipscript and generated resources", preview.ParentIDs)
 	}

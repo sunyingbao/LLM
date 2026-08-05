@@ -7,21 +7,23 @@ import (
 )
 
 const (
-	MonitorNodeStarted   = "node_started"
-	MonitorNodeCompleted = "node_completed"
-	MonitorNodeFailed    = "node_failed"
-	MonitorCallback      = "callback"
+	MonitorNodeStarted        = "node_started"
+	MonitorNodeCompleted      = "node_completed"
+	MonitorNodeFailed         = "node_failed"
+	MonitorCallback           = "callback"
+	MonitorLeaseRenewalFailed = "lease_renewal_failed"
 )
 
 // RunEvent is the small observation contract shared by local and production monitors.
 type RunEvent struct {
-	Action  string    `json:"action"`
-	RunID   string    `json:"run_id"`
-	NodeID  string    `json:"node_id,omitempty"`
-	Kind    NodeKind  `json:"kind,omitempty"`
-	State   NodeState `json:"state,omitempty"`
-	Message string    `json:"message,omitempty"`
-	At      time.Time `json:"at"`
+	Action     string    `json:"action"`
+	RunID      string    `json:"run_id"`
+	NodeID     string    `json:"node_id,omitempty"`
+	Kind       NodeKind  `json:"kind,omitempty"`
+	State      NodeState `json:"state,omitempty"`
+	Message    string    `json:"message,omitempty"`
+	DurationMS int64     `json:"duration_ms,omitempty"`
+	At         time.Time `json:"at"`
 }
 
 // Monitor receives execution events without participating in workflow decisions.

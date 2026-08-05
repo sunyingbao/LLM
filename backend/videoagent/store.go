@@ -90,6 +90,28 @@ func (store *Store) SaveProject(_ context.Context, project Project) error {
 	})
 }
 
+func (store *Store) updateProject(projectID string, create bool, change func(*Project) error) (project Project, err error) {
+	err = store.update(func(data *storeData) error {
+		current, exists := data.Projects[projectID]
+		if !exists {
+			if !create {
+				return fmt.Errorf("project not found: %s", projectID)
+			}
+			current = Project{ID: projectID, Name: projectID}
+		}
+		if err := change(&current); err != nil {
+			return err
+		}
+		if current.ID != projectID {
+			return fmt.Errorf("project id changed from %s to %s", projectID, current.ID)
+		}
+		data.Projects[projectID] = current
+		project = current
+		return nil
+	})
+	return
+}
+
 func (store *Store) GetProject(_ context.Context, projectID string) (Project, error) {
 	store.mu.Lock()
 	defer store.mu.Unlock()
@@ -464,6 +486,26 @@ func (store *Store) markSubmitStarted(command Command) error {
 			return err
 		}
 		run.NodeRuns[index].SubmitStarted = true
+		data.Runs[command.RunID] = run
+		return nil
+	})
+}
+
+func (store *Store) renewClaim(command Command) error {
+	return store.update(func(data *storeData) error {
+		run, exists := data.Runs[command.RunID]
+		if !exists {
+			return fmt.Errorf("run not found: %s", command.RunID)
+		}
+		index := findNodeRun(run, command.NodeRun)
+		if index < 0 || run.NodeRuns[index].State != Running {
+			return fmt.Errorf("node is not running: %s/%s", command.NodeRun.NodeID, command.NodeRun.InstanceKey)
+		}
+		if err := checkNodeClaim(run.NodeRuns[index], command); err != nil {
+			return err
+		}
+		now := time.Now().UTC()
+		run.NodeRuns[index].ClaimedAt = &now
 		data.Runs[command.RunID] = run
 		return nil
 	})

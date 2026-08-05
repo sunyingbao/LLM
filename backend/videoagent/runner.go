@@ -14,11 +14,12 @@ var ErrJobPending = errors.New("remote job is still pending")
 
 // Runner advances the persisted graph. It never resubmits an uncertain job.
 type Runner struct {
-	store   *Store
-	handler nodeHandler
-	catalog NodeCatalog
-	monitor Monitor
-	Metrics *Metrics
+	store          *Store
+	handler        nodeHandler
+	catalog        NodeCatalog
+	monitor        Monitor
+	claimHeartbeat time.Duration
+	Metrics        *Metrics
 }
 
 func NewRunner(store *Store, clients Clients) (*Runner, error) {
@@ -29,7 +30,10 @@ func NewRunner(store *Store, clients Clients) (*Runner, error) {
 		return nil, err
 	}
 	metrics := NewMetrics()
-	return &Runner{store: store, handler: nodeHandler{clients: clients, store: store}, catalog: defaultNodeCatalog(), monitor: metrics, Metrics: metrics}, nil
+	return &Runner{
+		store: store, handler: nodeHandler{clients: clients, store: store}, catalog: defaultNodeCatalog(),
+		monitor: metrics, claimHeartbeat: nodeClaimTTL / 3, Metrics: metrics,
+	}, nil
 }
 
 // SetMonitor replaces the optional execution observer while keeping built-in counters available.
@@ -69,14 +73,15 @@ func (runner *Runner) SaveWorkflow(ctx context.Context, projectID string, workfl
 	if err := runner.catalog.validateDraft(workflow); err != nil {
 		return WorkflowVersion{}, err
 	}
-	project, err := runner.store.GetProject(ctx, projectID)
+	versionID := newID("workflow")
+	var version WorkflowVersion
+	_, err := runner.store.updateProject(projectID, true, func(project *Project) error {
+		version = WorkflowVersion{ID: versionID, ProjectID: projectID, Revision: len(project.WorkflowVersions) + 1, Workflow: cloneWorkflow(workflow)}
+		project.WorkflowVersions = append(project.WorkflowVersions, version)
+		project.CurrentWorkflowVersion = version.ID
+		return nil
+	})
 	if err != nil {
-		project = Project{ID: projectID, Name: projectID}
-	}
-	version := WorkflowVersion{ID: newID("workflow"), ProjectID: projectID, Revision: len(project.WorkflowVersions) + 1, Workflow: cloneWorkflow(workflow)}
-	project.WorkflowVersions = append(project.WorkflowVersions, version)
-	project.CurrentWorkflowVersion = version.ID
-	if err := runner.store.SaveProject(ctx, project); err != nil {
 		return WorkflowVersion{}, err
 	}
 	return version, nil
@@ -198,31 +203,7 @@ func (runner *Runner) ConfirmOperation(ctx context.Context, operationID string) 
 		return runner.confirmRunOperation(ctx, operationID, operation)
 	}
 
-	project, err := runner.store.GetProject(ctx, operation.ProjectID)
-	if err != nil {
-		return CanvasOperation{}, nil, err
-	}
-	if len(project.WorkflowVersions) == 0 {
-		return CanvasOperation{}, nil, fmt.Errorf("project has no workflow: %s", operation.ProjectID)
-	}
-	latest, err := currentWorkflow(project)
-	if err != nil {
-		return CanvasOperation{}, nil, err
-	}
 	versionID := "workflow:operation:" + operationID
-	for _, version := range project.WorkflowVersions {
-		if version.ID == versionID {
-			operation, err = runner.store.markOperationApplied(ctx, operationID)
-			return operation, nil, err
-		}
-	}
-	updated, err := applyWorkflowOperation(latest.Workflow, operation)
-	if err != nil {
-		return operation, nil, err
-	}
-	if err := runner.catalog.validateDraft(updated); err != nil {
-		return operation, nil, err
-	}
 	if operation.Status == OperationPending {
 		operation, err = runner.store.claimOperation(ctx, operationID, "")
 		if err != nil {
@@ -232,10 +213,29 @@ func (runner *Runner) ConfirmOperation(ctx context.Context, operationID string) 
 			}
 		}
 	}
-	version := WorkflowVersion{ID: versionID, ProjectID: operation.ProjectID, Revision: len(project.WorkflowVersions) + 1, Workflow: cloneWorkflow(updated)}
-	project.WorkflowVersions = append(project.WorkflowVersions, version)
-	project.CurrentWorkflowVersion = version.ID
-	if err := runner.store.SaveProject(ctx, project); err != nil {
+	_, err = runner.store.updateProject(operation.ProjectID, false, func(project *Project) error {
+		for _, version := range project.WorkflowVersions {
+			if version.ID == versionID {
+				return nil
+			}
+		}
+		latest, err := currentWorkflow(*project)
+		if err != nil {
+			return err
+		}
+		updated, err := applyWorkflowOperation(latest.Workflow, operation)
+		if err != nil {
+			return err
+		}
+		if err := runner.catalog.validateDraft(updated); err != nil {
+			return err
+		}
+		version := WorkflowVersion{ID: versionID, ProjectID: operation.ProjectID, Revision: len(project.WorkflowVersions) + 1, Workflow: cloneWorkflow(updated)}
+		project.WorkflowVersions = append(project.WorkflowVersions, version)
+		project.CurrentWorkflowVersion = version.ID
+		return nil
+	})
+	if err != nil {
 		return operation, nil, err
 	}
 	if operation.Status != OperationApplied {
@@ -358,7 +358,8 @@ func (runner *Runner) Advance(ctx context.Context, runID string) error {
 			}
 		}
 		runner.record(ctx, RunEvent{Action: MonitorNodeStarted, RunID: command.RunID, NodeID: command.NodeRun.NodeID, Kind: command.NodeRun.Kind, State: Running})
-		result, err := runner.handler.Start(ctx, command)
+		startedAt := time.Now()
+		result, err := runner.withClaimHeartbeat(ctx, command, runner.handler.Start)
 		if err != nil {
 			result = failedResult(command, err)
 		}
@@ -366,7 +367,7 @@ func (runner *Runner) Advance(ctx context.Context, runID string) error {
 		if err := runner.store.apply(command, result); err != nil {
 			return err
 		}
-		runner.record(ctx, RunEvent{Action: monitorAction(result.State), RunID: command.RunID, NodeID: command.NodeRun.NodeID, Kind: command.NodeRun.Kind, State: result.State, Message: result.Message})
+		runner.record(ctx, RunEvent{Action: monitorAction(result.State), RunID: command.RunID, NodeID: command.NodeRun.NodeID, Kind: command.NodeRun.Kind, State: result.State, Message: result.Message, DurationMS: time.Since(startedAt).Milliseconds()})
 	}
 }
 
@@ -498,7 +499,8 @@ func isPollingMessage(message CallbackMessage) bool {
 }
 
 func (runner *Runner) refresh(ctx context.Context, command Command) (NodeState, error) {
-	result, err := runner.handler.Refresh(ctx, command)
+	startedAt := time.Now()
+	result, err := runner.withClaimHeartbeat(ctx, command, runner.handler.Refresh)
 	if err != nil {
 		if requeueErr := runner.store.requeue(command); requeueErr != nil {
 			return Waiting, errors.Join(requeueErr, runner.store.releaseClaim(command))
@@ -512,8 +514,41 @@ func (runner *Runner) refresh(ctx context.Context, command Command) (NodeState, 
 		}
 		return Waiting, err
 	}
-	runner.record(ctx, RunEvent{Action: monitorAction(result.State), RunID: command.RunID, NodeID: command.NodeRun.NodeID, Kind: command.NodeRun.Kind, State: result.State, Message: result.Message})
+	runner.record(ctx, RunEvent{Action: monitorAction(result.State), RunID: command.RunID, NodeID: command.NodeRun.NodeID, Kind: command.NodeRun.Kind, State: result.State, Message: result.Message, DurationMS: time.Since(startedAt).Milliseconds()})
 	return result.State, nil
+}
+
+func (runner *Runner) withClaimHeartbeat(
+	ctx context.Context,
+	command Command,
+	execute func(context.Context, Command) (Result, error),
+) (Result, error) {
+	if runner.claimHeartbeat <= 0 || command.NodeRun.ClaimToken == "" {
+		return execute(ctx, command)
+	}
+	done := make(chan struct{})
+	stopped := make(chan struct{})
+	go func() {
+		defer close(stopped)
+		ticker := time.NewTicker(runner.claimHeartbeat)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-done:
+				return
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				if err := runner.store.renewClaim(command); err != nil {
+					runner.record(ctx, RunEvent{Action: MonitorLeaseRenewalFailed, RunID: command.RunID, NodeID: command.NodeRun.NodeID, Kind: command.NodeRun.Kind, Message: err.Error()})
+				}
+			}
+		}
+	}()
+	result, err := execute(ctx, command)
+	close(done)
+	<-stopped
+	return result, err
 }
 
 func (runner *Runner) record(ctx context.Context, event RunEvent) {

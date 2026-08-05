@@ -53,7 +53,7 @@
   "finalvideo": {
     "width": 720,
     "height": 1280,
-    "biz_id": 1
+    "biz_id": 0
   },
   "image_media_url": {
     "psm": "replace-with-image-psm",

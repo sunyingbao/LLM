@@ -2,8 +2,10 @@ package videoagent
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 )
@@ -76,5 +78,65 @@ func TestMongoNodeClaimIsSharedAcrossInstances(t *testing.T) {
 	}
 	if _, claimed, claimErr := second.Store.claimSubmitted(run.ID); claimErr != nil || claimed {
 		t.Fatalf("second claimSubmitted() = (%t, %v), want active lease", claimed, claimErr)
+	}
+}
+
+func TestMongoConcurrentProjectUpdatesKeepBothVersions(t *testing.T) {
+	uri := os.Getenv("VIDEO_AGENT_MONGO_URI")
+	if uri == "" {
+		t.Skip("VIDEO_AGENT_MONGO_URI is not set")
+	}
+
+	ctx := context.Background()
+	database := "video_agent_project_test_" + newID("mongo")
+	first, err := NewMongoLocalApplication(t.TempDir(), uri, database, "workflow_state")
+	if err != nil {
+		t.Fatalf("NewMongoLocalApplication(first) error = %v", err)
+	}
+	defer first.Close()
+	second, err := NewMongoLocalApplication(t.TempDir(), uri, database, "workflow_state")
+	if err != nil {
+		t.Fatalf("NewMongoLocalApplication(second) error = %v", err)
+	}
+	defer second.Close()
+	if err := EnsureProject(ctx, first.Store, "demo"); err != nil {
+		t.Fatalf("EnsureProject() error = %v", err)
+	}
+
+	stores := []*Store{first.Store, second.Store}
+	var group sync.WaitGroup
+	errors := make(chan error, len(stores))
+	for index, store := range stores {
+		group.Add(1)
+		go func(index int, store *Store) {
+			defer group.Done()
+			_, updateErr := store.updateProject("demo", false, func(project *Project) error {
+				version := WorkflowVersion{
+					ID:        fmt.Sprintf("concurrent-%d", index),
+					ProjectID: "demo",
+					Revision:  len(project.WorkflowVersions) + 1,
+					Workflow:  cloneWorkflow(VideoWorkflow()),
+				}
+				project.WorkflowVersions = append(project.WorkflowVersions, version)
+				project.CurrentWorkflowVersion = version.ID
+				return nil
+			})
+			errors <- updateErr
+		}(index, store)
+	}
+	group.Wait()
+	close(errors)
+	for err := range errors {
+		if err != nil {
+			t.Fatalf("updateProject() error = %v", err)
+		}
+	}
+
+	project, err := first.Store.GetProject(ctx, "demo")
+	if err != nil {
+		t.Fatalf("GetProject() error = %v", err)
+	}
+	if len(project.WorkflowVersions) != 3 {
+		t.Fatalf("workflow versions = %d, want initial plus two concurrent versions", len(project.WorkflowVersions))
 	}
 }

@@ -629,6 +629,43 @@ func TestCancelCompensatesJobSubmittedDuringCancellation(t *testing.T) {
 	}
 }
 
+func TestLongRunningSubmissionRenewsNodeClaim(t *testing.T) {
+	images := newFakeImages()
+	blockingImages := &blockingImageClient{
+		fakeImages: images,
+		started:    make(chan struct{}),
+		release:    make(chan struct{}),
+	}
+	runner, err := NewRunner(NewStore(t.TempDir()+"/workflow.json"), Clients{
+		Planner: testPlanner{}, Image: blockingImages, TTS: newFakeTTS(),
+		Video: newFakeVideos(), Audit: allowAudit{}, Shield: allowShield{},
+	})
+	if err != nil {
+		t.Fatalf("NewRunner() error = %v", err)
+	}
+	runner.claimHeartbeat = 5 * time.Millisecond
+
+	done := make(chan error, 1)
+	go func() {
+		_, runErr := runner.startWorkflow(context.Background(), "project-1", VideoWorkflow(), RunInput{ProductName: "shoe"}, "lease-heartbeat")
+		done <- runErr
+	}()
+	<-blockingImages.started
+	first := nodeRun(mustGetRun(t, runner.store, "lease-heartbeat"), "competition", "competition-1")
+	if first.ClaimedAt == nil {
+		t.Fatal("claimed node has no timestamp")
+	}
+	time.Sleep(20 * time.Millisecond)
+	second := nodeRun(mustGetRun(t, runner.store, "lease-heartbeat"), "competition", "competition-1")
+	if second.ClaimedAt == nil || !second.ClaimedAt.After(*first.ClaimedAt) {
+		t.Fatalf("claim timestamp did not advance: first=%v second=%v", first.ClaimedAt, second.ClaimedAt)
+	}
+	close(blockingImages.release)
+	if err := <-done; err != nil {
+		t.Fatalf("startWorkflow() error = %v", err)
+	}
+}
+
 func TestConfirmOperationIsIdempotent(t *testing.T) {
 	application, err := NewLocalApplication(t.TempDir())
 	if err != nil {
