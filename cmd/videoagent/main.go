@@ -12,7 +12,7 @@ import (
 	"syscall"
 	"time"
 
-	"eino-cli/videoagent/backend/application"
+	videoagent "eino-cli/videoagent/backend/application"
 	"eino-cli/videoagent/backend/messaging"
 	"github.com/cloudwego/eino/components/model"
 	"go.mongodb.org/mongo-driver/v2/mongo"
@@ -64,7 +64,7 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	defer messageBus.Close()
+	defer logCloseError("NATS message bus", messageBus.Close)
 
 	if *remoteConfigPath != "" {
 		application, err := newRemoteApplication(ctx, *dataDir, *remoteConfigPath, *modelConfigPath, *promptConfigPath, *mongoURI, *mongoDatabase, *mongoCollection, *chatModelKey, credentials)
@@ -73,7 +73,7 @@ func run() error {
 		}
 		application.SetMessagePublisher(messageBus)
 		application.SetMessageConsumer(messageBus)
-		defer application.Close()
+		defer logCloseError("application", application.Close)
 		if err := application.Start(ctx); err != nil {
 			return err
 		}
@@ -122,6 +122,12 @@ func run() error {
 		return err
 	}
 	return serve(ctx, *address, videoagent.NewHTTPHandler(application))
+}
+
+func logCloseError(name string, close func() error) {
+	if err := close(); err != nil {
+		log.Printf("close %s: %v", name, err)
+	}
 }
 
 func serve(ctx context.Context, address string, handler http.Handler) error {
