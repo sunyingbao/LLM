@@ -13,8 +13,11 @@ import (
 	"time"
 
 	app "eino-cli/videoagent/backend/application"
+	"eino-cli/videoagent/backend/contract"
+	"eino-cli/videoagent/backend/media"
 	"eino-cli/videoagent/backend/messaging"
 	videomodel "eino-cli/videoagent/backend/model"
+	"eino-cli/videoagent/backend/planning"
 	"github.com/cloudwego/eino/components/model"
 	"go.mongodb.org/mongo-driver/v2/mongo"
 	"go.mongodb.org/mongo-driver/v2/mongo/options"
@@ -163,16 +166,16 @@ func loadChatModel(path, promptKey string, credentials *videomodel.CredentialsCo
 		if err != nil {
 			return nil, err
 		}
-		return app.NewChatModel(context.Background(), config)
+		return videomodel.NewChatModel(context.Background(), config)
 	}
-	config, err := readJSON[app.ChatModelConfig](path)
+	config, err := readJSON[videomodel.ChatModelConfig](path)
 	if err != nil {
 		return nil, err
 	}
-	return app.NewChatModel(context.Background(), config)
+	return videomodel.NewChatModel(context.Background(), config)
 }
 
-func loadCredentialPlanner(ctx context.Context, credentials videomodel.CredentialsConfig) (app.Planner, error) {
+func loadCredentialPlanner(ctx context.Context, credentials videomodel.CredentialsConfig) (contract.Planner, error) {
 	requirementModel, err := loadCredentialModel(ctx, credentials, "aic.aic_tool.user_req_analysis")
 	if err != nil {
 		return nil, err
@@ -181,7 +184,7 @@ func loadCredentialPlanner(ctx context.Context, credentials videomodel.Credentia
 	if err != nil {
 		return nil, err
 	}
-	return app.NewStageModelPlanner(requirementModel, clipScriptModel, requirementModel)
+	return planning.NewStageModelPlanner(requirementModel, clipScriptModel, requirementModel)
 }
 
 func loadCredentialModel(ctx context.Context, credentials videomodel.CredentialsConfig, promptKey string) (model.BaseChatModel, error) {
@@ -189,13 +192,13 @@ func loadCredentialModel(ctx context.Context, credentials videomodel.Credentials
 	if err != nil {
 		return nil, err
 	}
-	return app.NewChatModel(ctx, config)
+	return videomodel.NewChatModel(ctx, config)
 }
 
-func loadPromptPlanner(path string, credentials *videomodel.CredentialsConfig) (app.Planner, error) {
-	config := app.PromptRuntimeConfig{Planner: app.DefaultPromptPlannerConfig()}
+func loadPromptPlanner(path string, credentials *videomodel.CredentialsConfig) (contract.Planner, error) {
+	config := planning.PromptRuntimeConfig{Planner: planning.DefaultPromptPlannerConfig()}
 	if path != "" {
-		loaded, err := readJSON[app.PromptRuntimeConfig](path)
+		loaded, err := readJSON[planning.PromptRuntimeConfig](path)
 		if err != nil {
 			return nil, err
 		}
@@ -204,11 +207,11 @@ func loadPromptPlanner(path string, credentials *videomodel.CredentialsConfig) (
 	if credentials != nil {
 		config.Fornax = credentials.Fornax
 	}
-	executor, err := app.NewFornaxPromptExecutor(config.Fornax)
+	executor, err := videomodel.NewFornaxPromptExecutor(config.Fornax)
 	if err != nil {
 		return nil, err
 	}
-	return app.NewPromptPlanner(executor, config.Planner)
+	return planning.NewPromptPlanner(executor, config.Planner)
 }
 
 func newRemoteApplication(ctx context.Context, dataDir, remoteConfigPath, modelConfigPath, promptConfigPath, mongoURI, mongoDatabase, mongoCollection, chatModelKey string, credentials *videomodel.CredentialsConfig) (application *app.Application, err error) {
@@ -218,11 +221,11 @@ func newRemoteApplication(ctx context.Context, dataDir, remoteConfigPath, modelC
 	if promptConfigPath == "" && credentials == nil {
 		return nil, errors.New("prompt config is required in remote mode")
 	}
-	remoteConfig, err := readJSON[app.RemoteConfig](remoteConfigPath)
+	remoteConfig, err := readJSON[media.RemoteConfig](remoteConfigPath)
 	if err != nil {
 		return nil, err
 	}
-	if err := app.ValidateCanvasRemoteConfig(remoteConfig); err != nil {
+	if err := media.ValidateCanvasRemoteConfig(remoteConfig); err != nil {
 		return nil, err
 	}
 	store := app.NewStore(dataDir + "/workflow.json")
@@ -248,7 +251,7 @@ func newRemoteApplication(ctx context.Context, dataDir, remoteConfigPath, modelC
 			return nil, err
 		}
 	}
-	clients, err := app.NewRemoteClients(remoteConfig, store)
+	clients, err := media.NewRemoteClients(remoteConfig, store)
 	if err != nil {
 		return nil, err
 	}
@@ -256,7 +259,7 @@ func newRemoteApplication(ctx context.Context, dataDir, remoteConfigPath, modelC
 	if err != nil {
 		return nil, err
 	}
-	clients.Planner, err = app.NewModelPlanner(chatModel)
+	clients.Planner, err = planning.NewModelPlanner(chatModel)
 	if err != nil {
 		return nil, err
 	}
@@ -291,7 +294,7 @@ func newRemoteApplication(ctx context.Context, dataDir, remoteConfigPath, modelC
 	if mongoClient != nil {
 		closeResources = func() error { return mongoClient.Disconnect(context.Background()) }
 	}
-	application.SetCallbackVerifier(app.HMACCallbackVerifier{Secret: remoteConfig.CallbackSecret})
+	application.SetCallbackVerifier(messaging.HMACCallbackVerifier{Secret: remoteConfig.CallbackSecret})
 	application.SetJobPollInterval(2 * time.Second)
 	application.SetClose(closeResources)
 	return application, nil

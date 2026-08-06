@@ -10,6 +10,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"eino-cli/videoagent/backend/messaging"
 )
 
 func TestCallbackRequiresVerification(t *testing.T) {
@@ -34,11 +36,11 @@ func TestHMACCallbackVerifier(t *testing.T) {
 	digest := hmac.New(sha256.New, []byte(secret))
 	_, _ = digest.Write(body)
 	header := http.Header{"X-Callback-Signature": []string{hex.EncodeToString(digest.Sum(nil))}}
-	if err := (HMACCallbackVerifier{Secret: secret}).Verify(context.Background(), "image", body, header); err != nil {
+	if err := (messaging.HMACCallbackVerifier{Secret: secret}).Verify(context.Background(), "image", body, header); err != nil {
 		t.Fatalf("Verify() error = %v", err)
 	}
 	header.Set("X-Callback-Signature", "invalid")
-	if err := (HMACCallbackVerifier{Secret: secret}).Verify(context.Background(), "image", body, header); err == nil {
+	if err := (messaging.HMACCallbackVerifier{Secret: secret}).Verify(context.Background(), "image", body, header); err == nil {
 		t.Fatal("Verify() accepted an invalid signature")
 	}
 }
@@ -94,7 +96,7 @@ func TestCallbackAcceptsProviderTaskIDWithoutEventID(t *testing.T) {
 }
 
 func TestCallbackUsesTransportEventID(t *testing.T) {
-	message, err := parseCallbackMessageWithEventID("capability", []byte(`{"task_id":123}`), "event-from-transport")
+	message, err := messaging.ParseCallbackMessageWithEventID("capability", []byte(`{"task_id":123}`), "event-from-transport")
 	if err != nil {
 		t.Fatalf("parseCallbackMessageWithEventID() error = %v", err)
 	}
@@ -104,7 +106,7 @@ func TestCallbackUsesTransportEventID(t *testing.T) {
 }
 
 func TestCallbackPayloadProviderOverridesConsumerFallback(t *testing.T) {
-	message, err := parseCallbackMessageWithEventID("capability", []byte(`{"provider":"tts","event_id":"event-1","job_id":"job-1"}`), "")
+	message, err := messaging.ParseCallbackMessageWithEventID("capability", []byte(`{"provider":"tts","event_id":"event-1","job_id":"job-1"}`), "")
 	if err != nil {
 		t.Fatalf("parseCallbackMessageWithEventID() error = %v", err)
 	}
@@ -114,7 +116,7 @@ func TestCallbackPayloadProviderOverridesConsumerFallback(t *testing.T) {
 }
 
 func TestCallbackAcceptsSubmitKeyWithoutJobID(t *testing.T) {
-	message, err := parseCallbackMessageWithEventID("seedance", []byte(`{"event_id":"event-1","submit_key":"run:preview:scene-1"}`), "")
+	message, err := messaging.ParseCallbackMessageWithEventID("seedance", []byte(`{"event_id":"event-1","submit_key":"run:preview:scene-1"}`), "")
 	if err != nil {
 		t.Fatalf("parseCallbackMessageWithEventID() error = %v", err)
 	}

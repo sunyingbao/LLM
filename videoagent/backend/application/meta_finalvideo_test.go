@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"testing"
+
+	"eino-cli/videoagent/backend/media"
 )
 
 type recordingVideoRenderer struct {
@@ -21,7 +23,7 @@ func (*recordingVideoRenderer) GetRender(context.Context, string) (JobStatus, er
 
 func TestMetaFinalVideoClientBuildsOrderedRenderPlan(t *testing.T) {
 	renderer := &recordingVideoRenderer{}
-	client, err := NewMetaFinalVideoClient(MetaFinalVideoConfig{Width: 720, Height: 1280, BizID: 109}, renderer)
+	client, err := media.NewMetaFinalVideoClient(media.MetaFinalVideoConfig{Width: 720, Height: 1280, BizID: 109}, renderer)
 	if err != nil {
 		t.Fatalf("NewMetaFinalVideoClient() error = %v", err)
 	}
@@ -59,7 +61,7 @@ func TestMetaFinalVideoClientBuildsOrderedRenderPlan(t *testing.T) {
 }
 
 func TestMetaFinalVideoClientRejectsExternalPreviewURL(t *testing.T) {
-	client, err := NewMetaFinalVideoClient(MetaFinalVideoConfig{BizID: 109}, &recordingVideoRenderer{})
+	client, err := media.NewMetaFinalVideoClient(media.MetaFinalVideoConfig{BizID: 109}, &recordingVideoRenderer{})
 	if err != nil {
 		t.Fatalf("NewMetaFinalVideoClient() error = %v", err)
 	}
@@ -75,7 +77,7 @@ func TestMetaFinalVideoClientRejectsExternalPreviewURL(t *testing.T) {
 
 func TestMetaFinalVideoClientUsesMergedPreviewOnce(t *testing.T) {
 	renderer := &recordingVideoRenderer{}
-	client, err := NewMetaFinalVideoClient(MetaFinalVideoConfig{BizID: 109}, renderer)
+	client, err := media.NewMetaFinalVideoClient(media.MetaFinalVideoConfig{BizID: 109}, renderer)
 	if err != nil {
 		t.Fatalf("NewMetaFinalVideoClient() error = %v", err)
 	}
@@ -146,7 +148,7 @@ func TestPlanFinalVideoCreatesOneRenderJobPerCut(t *testing.T) {
 
 func TestMetaFinalVideoClientUsesCutOrderAndSupplementCandidates(t *testing.T) {
 	renderer := &recordingVideoRenderer{}
-	client, err := NewMetaFinalVideoClient(MetaFinalVideoConfig{BizID: 109}, renderer)
+	client, err := media.NewMetaFinalVideoClient(media.MetaFinalVideoConfig{BizID: 109}, renderer)
 	if err != nil {
 		t.Fatalf("NewMetaFinalVideoClient() error = %v", err)
 	}

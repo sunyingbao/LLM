@@ -10,7 +10,8 @@ import (
 	"testing"
 	"time"
 
-	app "eino-cli/videoagent/backend/application"
+	"eino-cli/videoagent/backend/contract"
+	"eino-cli/videoagent/backend/media"
 )
 
 func TestDirectMediaProvidersSmoke(t *testing.T) {
@@ -22,17 +23,17 @@ func TestDirectMediaProvidersSmoke(t *testing.T) {
 		if config.VideoStorage == nil {
 			t.Fatal("video storage config is missing")
 		}
-		if _, err := app.NewBytedanceVideoUploader(*config.VideoStorage); err != nil {
+		if _, err := media.NewBytedanceVideoUploader(*config.VideoStorage); err != nil {
 			t.Fatalf("initialize video storage: %v", err)
 		}
 	})
 
 	t.Run("competition_image", func(t *testing.T) {
-		imageClient, err := app.NewArkImageClient(*config.ImageArk)
+		imageClient, err := media.NewArkImageClient(*config.ImageArk)
 		if err != nil {
 			t.Fatal(err)
 		}
-		image, err := imageClient.SubmitImage(ctx, app.ImageRequest{
+		image, err := imageClient.SubmitImage(ctx, contract.ImageRequest{
 			Prompt:    "一双黑色复古德训女鞋，白色背景，商品棚拍，竖版",
 			SubmitKey: "direct-media-smoke:image",
 		})
@@ -46,15 +47,15 @@ func TestDirectMediaProvidersSmoke(t *testing.T) {
 	})
 
 	t.Run("prompt_tts", func(t *testing.T) {
-		matx, err := app.NewBytedanceMatxClient()
+		matx, err := media.NewBytedanceMatxClient()
 		if err != nil {
 			t.Fatal(err)
 		}
-		ttsClient, err := app.NewPromptTTSClient(*config.PromptTTS, matx)
+		ttsClient, err := media.NewPromptTTSClient(*config.PromptTTS, matx)
 		if err != nil {
 			t.Fatal(err)
 		}
-		tts, err := ttsClient.SubmitTTS(ctx, app.TTSRequest{
+		tts, err := ttsClient.SubmitTTS(ctx, contract.TTSRequest{
 			Prompt:      "年轻女声，清晰自然，适合商品广告旁白",
 			Text:        "这双复古德训鞋，轻盈百搭，舒适显高。",
 			WithExample: true,
@@ -69,13 +70,13 @@ func TestDirectMediaProvidersSmoke(t *testing.T) {
 	})
 
 	t.Run("seedance_preview", func(t *testing.T) {
-		previewClient, err := app.NewSeedanceClient(*config.Seedance, nil)
+		previewClient, err := media.NewSeedanceClient(*config.Seedance, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
-		preview, err := previewClient.SubmitPreview(ctx, app.VideoRequest{
+		preview, err := previewClient.SubmitPreview(ctx, contract.VideoRequest{
 			Prompt:      "展示一双复古德训女鞋从鞋盒中取出，镜头缓慢推进，商品广告风格",
-			Strategy:    app.PreviewStrategyT2V,
+			Strategy:    contract.PreviewStrategyT2V,
 			AspectRatio: "9:16",
 			Duration:    5,
 			SubmitKey:   "direct-media-smoke:preview",
@@ -98,11 +99,11 @@ func TestDirectFinalVideoSmoke(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	defer cancel()
-	renderer, err := app.NewBytedanceVideoRenderer(config.FinalVideo.BizID)
+	renderer, err := media.NewBytedanceVideoRenderer(config.FinalVideo.BizID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	client, err := app.NewMetaFinalVideoClient(*config.FinalVideo, renderer)
+	client, err := media.NewMetaFinalVideoClient(*config.FinalVideo, renderer)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -114,12 +115,12 @@ func TestDirectFinalVideoSmoke(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	finalVideo, err := client.SubmitFinalVideo(ctx, app.VideoRequest{
-		ClipScript: &app.ClipScript{Scenes: []app.Scene{{
+	finalVideo, err := client.SubmitFinalVideo(ctx, contract.VideoRequest{
+		ClipScript: &contract.ClipScript{Scenes: []contract.Scene{{
 			ID: "1", Visual: "展示复古德训女鞋", Voiceover: "轻盈百搭", DurationMS: 5000,
 		}}},
-		Inputs: []app.Artifact{{
-			ID: "preview:1", Kind: "preview_video", Status: string(app.Succeeded), Data: previewData,
+		Inputs: []contract.Artifact{{
+			ID: "preview:1", Kind: "preview_video", Status: string(contract.Succeeded), Data: previewData,
 		}},
 		SubmitKey: "direct-media-smoke:finalvideo",
 	})
@@ -134,7 +135,7 @@ func TestDirectFinalVideoSmoke(t *testing.T) {
 	t.Log("direct meta finalvideo provider succeeded")
 }
 
-func directMediaConfig(t *testing.T) app.RemoteConfig {
+func directMediaConfig(t *testing.T) media.RemoteConfig {
 	t.Helper()
 	if os.Getenv("VIDEO_AGENT_DIRECT_MEDIA_SMOKE") != "1" {
 		t.Skip("set VIDEO_AGENT_DIRECT_MEDIA_SMOKE=1 to call direct media providers")
@@ -143,7 +144,7 @@ func directMediaConfig(t *testing.T) app.RemoteConfig {
 	if configPath == "" {
 		t.Fatal("VIDEO_AGENT_MEDIA_CONFIG is required")
 	}
-	config, err := readJSON[app.RemoteConfig](configPath)
+	config, err := readJSON[media.RemoteConfig](configPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -153,13 +154,13 @@ func directMediaConfig(t *testing.T) app.RemoteConfig {
 	return config
 }
 
-func waitForMediaJob(t *testing.T, ctx context.Context, name string, job app.SubmittedJob, get func(context.Context, string) (app.JobStatus, error)) app.JobStatus {
+func waitForMediaJob(t *testing.T, ctx context.Context, name string, job contract.SubmittedJob, get func(context.Context, string) (contract.JobStatus, error)) contract.JobStatus {
 	t.Helper()
 	if job.Status != nil {
-		if job.Status.State == app.JobSucceeded {
+		if job.Status.State == contract.JobSucceeded {
 			return *job.Status
 		}
-		if job.Status.State == app.JobFailed {
+		if job.Status.State == contract.JobFailed {
 			t.Fatalf("%s task failed: %s", name, job.Status.Message)
 		}
 	}
@@ -175,9 +176,9 @@ func waitForMediaJob(t *testing.T, ctx context.Context, name string, job app.Sub
 			t.Fatalf("get %s status: %v", name, err)
 		}
 		switch status.State {
-		case app.JobSucceeded:
+		case contract.JobSucceeded:
 			return status
-		case app.JobFailed:
+		case contract.JobFailed:
 			t.Fatalf("%s task failed: %s", name, status.Message)
 		}
 		select {

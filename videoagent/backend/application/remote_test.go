@@ -8,6 +8,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"eino-cli/videoagent/backend/media"
 )
 
 func TestNewRunnerReportsEveryMissingClient(t *testing.T) {
@@ -23,7 +25,7 @@ func TestNewRunnerReportsEveryMissingClient(t *testing.T) {
 }
 
 func TestRemoteClientsDoNotRequireGenericGateway(t *testing.T) {
-	clients, err := NewRemoteClients(RemoteConfig{}, nil)
+	clients, err := media.NewRemoteClients(media.RemoteConfig{}, nil)
 	if err != nil {
 		t.Fatalf("NewRemoteClients() error = %v", err)
 	}
@@ -33,17 +35,17 @@ func TestRemoteClientsDoNotRequireGenericGateway(t *testing.T) {
 }
 
 func TestRemoteClientsRejectPlaceholderConfiguration(t *testing.T) {
-	_, err := NewRemoteClients(RemoteConfig{Endpoints: map[string]string{"prompt_shield": "https://capability.example.com/shield"}}, nil)
+	_, err := media.NewRemoteClients(media.RemoteConfig{Endpoints: map[string]string{"prompt_shield": "https://capability.example.com/shield"}}, nil)
 	if err == nil {
 		t.Fatal("NewRemoteClients() error = nil")
 	}
 }
 
 func TestRemoteClientsRequireStorageBetweenDirectPreviewAndFinalVideo(t *testing.T) {
-	_, err := NewRemoteClients(RemoteConfig{
+	_, err := media.NewRemoteClients(media.RemoteConfig{
 		BaseURL:    "http://video-agent.test",
-		Seedance:   &SeedanceConfig{BaseURL: "http://seedance.test", APIKey: "key", Model: "model"},
-		FinalVideo: &MetaFinalVideoConfig{BizID: 1},
+		Seedance:   &media.SeedanceConfig{BaseURL: "http://seedance.test", APIKey: "key", Model: "model"},
+		FinalVideo: &media.MetaFinalVideoConfig{BizID: 1},
 	}, nil)
 	if err == nil {
 		t.Fatal("NewRemoteClients() error = nil")
@@ -51,7 +53,7 @@ func TestRemoteClientsRequireStorageBetweenDirectPreviewAndFinalVideo(t *testing
 }
 
 func TestValidateCanvasRemoteConfigReportsEveryMissingCapability(t *testing.T) {
-	err := ValidateCanvasRemoteConfig(RemoteConfig{})
+	err := media.ValidateCanvasRemoteConfig(media.RemoteConfig{})
 	if err == nil {
 		t.Fatal("ValidateCanvasRemoteConfig() error = nil")
 	}
@@ -63,13 +65,13 @@ func TestValidateCanvasRemoteConfigReportsEveryMissingCapability(t *testing.T) {
 }
 
 func TestValidateCanvasRemoteConfigAcceptsDirectMediaClients(t *testing.T) {
-	err := ValidateCanvasRemoteConfig(RemoteConfig{
+	err := media.ValidateCanvasRemoteConfig(media.RemoteConfig{
 		CallbackSecret: "secret",
-		Seedance:       &SeedanceConfig{BaseURL: "http://seedance.test", APIKey: "key", Model: "model"},
-		PromptTTS:      &PromptTTSConfig{},
-		ImageArk:       &ArkImageConfig{BaseURL: "http://ark.test", APIKey: "key", Model: "model"},
-		FinalVideo:     &MetaFinalVideoConfig{BizID: 1},
-		VideoStorage:   &VideoStorageConfig{TopAccountID: "account"},
+		Seedance:       &media.SeedanceConfig{BaseURL: "http://seedance.test", APIKey: "key", Model: "model"},
+		PromptTTS:      &media.PromptTTSConfig{},
+		ImageArk:       &media.ArkImageConfig{BaseURL: "http://ark.test", APIKey: "key", Model: "model"},
+		FinalVideo:     &media.MetaFinalVideoConfig{BizID: 1},
+		VideoStorage:   &media.VideoStorageConfig{TopAccountID: "account"},
 		Endpoints: map[string]string{
 			"image_audit":   "http://capability.test/audit",
 			"prompt_shield": "http://capability.test/shield",

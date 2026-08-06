@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"time"
 
+	"eino-cli/videoagent/backend/messaging"
 	canvasweb "eino-cli/videoagent/web"
 )
 
@@ -218,7 +219,7 @@ func newHTTPHandler(application *Application) http.Handler {
 			writeError(writer, http.StatusServiceUnavailable, fmt.Errorf("callback publisher is not configured"))
 			return
 		}
-		message, err := parseCallbackMessageWithEventID(request.PathValue("provider"), body, request.Header.Get("X-Event-ID"))
+		message, err := messaging.ParseCallbackMessageWithEventID(request.PathValue("provider"), body, request.Header.Get("X-Event-ID"))
 		if err != nil {
 			writeError(writer, http.StatusBadRequest, err)
 			return

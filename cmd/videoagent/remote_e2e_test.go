@@ -12,6 +12,8 @@ import (
 	"time"
 
 	app "eino-cli/videoagent/backend/application"
+	"eino-cli/videoagent/backend/messaging"
+	videomodel "eino-cli/videoagent/backend/model"
 )
 
 func TestRemoteVideoAgentEndToEnd(t *testing.T) {
@@ -36,7 +38,7 @@ func TestRemoteVideoAgentEndToEnd(t *testing.T) {
 	defer cancel()
 
 	suffix := fmt.Sprintf("%d", time.Now().UTC().UnixNano())
-	bus, err := app.NewNATSMessageBus(ctx, app.NATSConfig{
+	bus, err := messaging.NewNATSMessageBus(ctx, messaging.NATSConfig{
 		URL:      natsURL,
 		Stream:   "VIDEO_AGENT_E2E_" + suffix,
 		Subject:  "video_agent.e2e." + suffix,
@@ -101,13 +103,13 @@ func TestRemoteVideoAgentEndToEnd(t *testing.T) {
 	t.Logf("remote E2E succeeded: run_id=%s artifacts=%d", run.ID, artifactCount(run))
 }
 
-func remoteE2EModelConfig(t *testing.T) (modelConfig, promptConfig string, credentials *app.CredentialsConfig) {
+func remoteE2EModelConfig(t *testing.T) (modelConfig, promptConfig string, credentials *videomodel.CredentialsConfig) {
 	t.Helper()
 	credentialsPath := strings.TrimSpace(os.Getenv("VIDEO_AGENT_E2E_CREDENTIALS_CONFIG"))
 	if credentialsPath == "" {
 		return requiredEnv(t, "VIDEO_AGENT_E2E_MODEL_CONFIG"), requiredEnv(t, "VIDEO_AGENT_E2E_PROMPT_CONFIG"), nil
 	}
-	loaded, err := readJSON[app.CredentialsConfig](credentialsPath)
+	loaded, err := readJSON[videomodel.CredentialsConfig](credentialsPath)
 	if err != nil {
 		t.Fatalf("read VIDEO_AGENT_E2E_CREDENTIALS_CONFIG: %v", err)
 	}

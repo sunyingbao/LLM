@@ -8,6 +8,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"eino-cli/videoagent/backend/messaging"
 )
 
 func TestNATSMessageBusRetriesAndDeduplicatesCallbacks(t *testing.T) {
@@ -15,13 +17,13 @@ func TestNATSMessageBusRetriesAndDeduplicatesCallbacks(t *testing.T) {
 		t.Skip("set VIDEO_AGENT_NATS_TEST=1 to run the local JetStream integration test")
 	}
 	name := newID("TEST")
-	config := NATSConfig{
-		URL:      DefaultNATSURL,
+	config := messaging.NATSConfig{
+		URL:      messaging.DefaultNATSURL,
 		Stream:   name,
 		Subject:  "video_agent.test." + name,
 		Consumer: "consumer_" + name,
 	}
-	bus, err := NewNATSMessageBus(context.Background(), config)
+	bus, err := messaging.NewNATSMessageBus(context.Background(), config)
 	if err != nil {
 		t.Fatalf("NewNATSMessageBus() error = %v", err)
 	}
@@ -73,13 +75,13 @@ func TestNATSMessageSurvivesClientRestart(t *testing.T) {
 		t.Skip("set VIDEO_AGENT_NATS_TEST=1 to run the local JetStream integration test")
 	}
 	name := newID("TEST")
-	config := NATSConfig{
-		URL:      DefaultNATSURL,
+	config := messaging.NATSConfig{
+		URL:      messaging.DefaultNATSURL,
 		Stream:   name,
 		Subject:  "video_agent.test." + name,
 		Consumer: "consumer_" + name,
 	}
-	publisher, err := NewNATSMessageBus(context.Background(), config)
+	publisher, err := messaging.NewNATSMessageBus(context.Background(), config)
 	if err != nil {
 		t.Fatalf("NewNATSMessageBus(publisher) error = %v", err)
 	}
@@ -91,7 +93,7 @@ func TestNATSMessageSurvivesClientRestart(t *testing.T) {
 		t.Fatalf("publisher Close() error = %v", err)
 	}
 
-	consumer, err := NewNATSMessageBus(context.Background(), config)
+	consumer, err := messaging.NewNATSMessageBus(context.Background(), config)
 	if err != nil {
 		t.Fatalf("NewNATSMessageBus(consumer) error = %v", err)
 	}
@@ -139,13 +141,13 @@ func TestNATSApplicationCompletesWorkflow(t *testing.T) {
 		t.Skip("set VIDEO_AGENT_NATS_TEST=1 to run the local JetStream integration test")
 	}
 	name := newID("TEST")
-	config := NATSConfig{
-		URL:      DefaultNATSURL,
+	config := messaging.NATSConfig{
+		URL:      messaging.DefaultNATSURL,
 		Stream:   name,
 		Subject:  "video_agent.test." + name,
 		Consumer: "consumer_" + name,
 	}
-	bus, err := NewNATSMessageBus(context.Background(), config)
+	bus, err := messaging.NewNATSMessageBus(context.Background(), config)
 	if err != nil {
 		t.Fatalf("NewNATSMessageBus() error = %v", err)
 	}
@@ -176,13 +178,13 @@ func TestNATSPollerCompletesProvidersWithoutCallbacks(t *testing.T) {
 		t.Skip("set VIDEO_AGENT_NATS_TEST=1 to run the local JetStream integration test")
 	}
 	name := newID("TEST")
-	config := NATSConfig{
-		URL:      DefaultNATSURL,
+	config := messaging.NATSConfig{
+		URL:      messaging.DefaultNATSURL,
 		Stream:   name,
 		Subject:  "video_agent.test." + name,
 		Consumer: "consumer_" + name,
 	}
-	bus, err := NewNATSMessageBus(context.Background(), config)
+	bus, err := messaging.NewNATSMessageBus(context.Background(), config)
 	if err != nil {
 		t.Fatalf("NewNATSMessageBus() error = %v", err)
 	}
@@ -241,14 +243,14 @@ func TestNATSMessageMovesToDeadLetter(t *testing.T) {
 		t.Skip("set VIDEO_AGENT_NATS_TEST=1 to run the local JetStream integration test")
 	}
 	name := newID("TEST")
-	config := NATSConfig{
-		URL:        DefaultNATSURL,
+	config := messaging.NATSConfig{
+		URL:        messaging.DefaultNATSURL,
 		Stream:     name,
 		Subject:    "video_agent.test." + name,
 		Consumer:   "consumer_" + name,
 		MaxRetries: 1,
 	}
-	bus, err := NewNATSMessageBus(context.Background(), config)
+	bus, err := messaging.NewNATSMessageBus(context.Background(), config)
 	if err != nil {
 		t.Fatalf("NewNATSMessageBus() error = %v", err)
 	}
@@ -299,14 +301,14 @@ func TestNATSApplicationResumesAfterRestart(t *testing.T) {
 		t.Skip("set VIDEO_AGENT_NATS_TEST=1 to run the local JetStream integration test")
 	}
 	name := newID("TEST")
-	config := NATSConfig{
-		URL:      DefaultNATSURL,
+	config := messaging.NATSConfig{
+		URL:      messaging.DefaultNATSURL,
 		Stream:   name,
 		Subject:  "video_agent.test." + name,
 		Consumer: "consumer_" + name,
 	}
 	dataDir := t.TempDir()
-	firstBus, err := NewNATSMessageBus(context.Background(), config)
+	firstBus, err := messaging.NewNATSMessageBus(context.Background(), config)
 	if err != nil {
 		t.Fatalf("NewNATSMessageBus(first) error = %v", err)
 	}
@@ -344,7 +346,7 @@ func TestNATSApplicationResumesAfterRestart(t *testing.T) {
 		t.Fatalf("first bus Close() error = %v", err)
 	}
 
-	secondBus, err := NewNATSMessageBus(context.Background(), config)
+	secondBus, err := messaging.NewNATSMessageBus(context.Background(), config)
 	if err != nil {
 		t.Fatalf("NewNATSMessageBus(second) error = %v", err)
 	}

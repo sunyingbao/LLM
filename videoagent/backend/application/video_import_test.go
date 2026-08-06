@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"eino-cli/videoagent/backend/media"
 )
 
 type recordingVideoUploader struct {
@@ -35,7 +37,7 @@ func TestHTTPVideoImporterReusesPersistedJobResult(t *testing.T) {
 
 	store := NewStore(t.TempDir() + "/workflow.json")
 	uploader := &recordingVideoUploader{}
-	first, err := NewHTTPVideoImporter(uploader, server.Client(), 1024, store)
+	first, err := media.NewHTTPVideoImporter(uploader, server.Client(), 1024, store)
 	if err != nil {
 		t.Fatalf("NewHTTPVideoImporter() error = %v", err)
 	}
@@ -44,7 +46,7 @@ func TestHTTPVideoImporterReusesPersistedJobResult(t *testing.T) {
 		t.Fatalf("first ImportVideo() error = %v", err)
 	}
 
-	second, err := NewHTTPVideoImporter(uploader, server.Client(), 1024, store)
+	second, err := media.NewHTTPVideoImporter(uploader, server.Client(), 1024, store)
 	if err != nil {
 		t.Fatalf("NewHTTPVideoImporter() error = %v", err)
 	}
@@ -73,7 +75,7 @@ func TestHTTPVideoImporterDownloadsUploadsAndPublishesVideo(t *testing.T) {
 	defer server.Close()
 
 	uploader := &recordingVideoUploader{}
-	importer, err := NewHTTPVideoImporter(uploader, server.Client(), 1024, nil)
+	importer, err := media.NewHTTPVideoImporter(uploader, server.Client(), 1024, nil)
 	if err != nil {
 		t.Fatalf("NewHTTPVideoImporter() error = %v", err)
 	}
