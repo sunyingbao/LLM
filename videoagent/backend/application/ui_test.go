@@ -21,11 +21,26 @@ func TestHTTPServesCanvas(t *testing.T) {
 	if response.Code != http.StatusOK {
 		t.Fatalf("GET / status = %d, want %d", response.Code, http.StatusOK)
 	}
-	if !strings.Contains(response.Body.String(), "广告视频工作台") || !strings.Contains(response.Body.String(), "product-images") {
+	if !strings.Contains(response.Body.String(), `id="project-name"`) || !strings.Contains(response.Body.String(), "product-images") {
 		t.Fatalf("GET / does not contain Canvas page")
 	}
 	if !strings.Contains(response.Body.String(), `id="runtime-mode"`) {
 		t.Fatalf("GET / does not expose the runtime mode")
+	}
+	for _, layoutClass := range []string{`class="left-rail"`, `class="assistant-header"`, `class="run-inspector"`} {
+		if !strings.Contains(response.Body.String(), layoutClass) {
+			t.Fatalf("GET / does not contain product canvas layout %s", layoutClass)
+		}
+	}
+	for _, removedControl := range []string{`data-tool="workbench"`, `data-tool="variables"`, `data-tool="settings"`, `class="run-chevron"`, `class="assistant-actions"`} {
+		if strings.Contains(response.Body.String(), removedControl) {
+			t.Fatalf("GET / still exposes unavailable control %s", removedControl)
+		}
+	}
+	for _, interactionID := range []string{`id="task-input"`, `id="run-primary-label"`, `id="artifacts-panel"`, `id="artifact-scope"`} {
+		if !strings.Contains(response.Body.String(), interactionID) {
+			t.Fatalf("GET / does not expose task-first interaction %s", interactionID)
+		}
 	}
 	if response.Header().Get("Cache-Control") != "no-store" {
 		t.Fatalf("GET / Cache-Control = %q, want no-store", response.Header().Get("Cache-Control"))
@@ -39,11 +54,20 @@ func TestHTTPServesCanvas(t *testing.T) {
 	styleRequest := httptest.NewRequest(http.MethodGet, "/styles.css", nil)
 	styleResponse := httptest.NewRecorder()
 	NewHTTPHandler(application).ServeHTTP(styleResponse, styleRequest)
-	if styleResponse.Code != http.StatusOK || strings.Contains(styleResponse.Body.String(), "dashed") {
-		t.Fatalf("GET /styles.css contains a residual dashed border")
+	if styleResponse.Code != http.StatusOK || !strings.Contains(styleResponse.Body.String(), ".legend-line.lineage") || !strings.Contains(styleResponse.Body.String(), "stroke-dasharray") {
+		t.Fatalf("GET /styles.css does not expose the artifact lineage legend")
 	}
-	if !strings.Contains(styleResponse.Body.String(), "background: #1d212a") {
-		t.Fatalf("GET /styles.css allows canvas edges to bleed through workflow nodes")
+	if !strings.Contains(styleResponse.Body.String(), "background: rgba(255, 255, 255, .98)") {
+		t.Fatalf("GET /styles.css does not keep workflow nodes opaque")
+	}
+	if !strings.Contains(styleResponse.Body.String(), ".app-shell { height: 100vh;") {
+		t.Fatalf("GET /styles.css does not keep the run inspector inside the viewport")
+	}
+	if !strings.Contains(styleResponse.Body.String(), ".edges path.dimmed") || !strings.Contains(styleResponse.Body.String(), ".canvas.connect-mode") {
+		t.Fatalf("GET /styles.css does not reduce edge and port noise outside editing")
+	}
+	if !strings.Contains(styleResponse.Body.String(), ".canvas-legend { position: absolute;") || strings.Contains(styleResponse.Body.String(), ".node.selected .node-port span") {
+		t.Fatalf("GET /styles.css allows canvas chrome to overlap run or node content")
 	}
 	if styleResponse.Header().Get("Cache-Control") != "no-store" {
 		t.Fatalf("GET /styles.css Cache-Control = %q, want no-store", styleResponse.Header().Get("Cache-Control"))
@@ -92,11 +116,25 @@ func TestHTTPServesCanvas(t *testing.T) {
 	if strings.Contains(scriptResponse.Body.String(), "Math.max(30, (x2 - x1) / 2)") || !strings.Contains(scriptResponse.Body.String(), "Math.min(80, Math.abs(x2 - x1) / 2)") {
 		t.Fatalf("GET /app.js allows short edges to bend past their endpoints")
 	}
-	if !strings.Contains(scriptResponse.Body.String(), `confirmed ? "继续" : "确认"`) || !strings.Contains(scriptResponse.Body.String(), `"待继续操作"`) {
+	if !strings.Contains(scriptResponse.Body.String(), `confirmOperation(operation, card, element)`) || !strings.Contains(scriptResponse.Body.String(), `"待继续操作"`) || !strings.Contains(scriptResponse.Body.String(), `"确认并运行"`) {
 		t.Fatalf("GET /app.js does not allow a confirmed but incomplete operation to resume")
+	}
+	if !strings.Contains(scriptResponse.Body.String(), "function renderPort(node, port, direction)") || !strings.Contains(scriptResponse.Body.String(), "function renderRunPanel(run)") {
+		t.Fatalf("GET /app.js does not expose port-based nodes and the run inspector")
+	}
+	if !strings.Contains(scriptResponse.Body.String(), "function findCompatibleInput(") || strings.Contains(scriptResponse.Body.String(), "state.definitions[node.kind]?.inputs?.[0]") {
+		t.Fatalf("GET /app.js does not select a compatible input when connecting nodes")
+	}
+	if !strings.Contains(scriptResponse.Body.String(), `internalArtifactKinds = new Set(["clipscript_annotation"])`) || !strings.Contains(scriptResponse.Body.String(), "node-result-count") {
+		t.Fatalf("GET /app.js does not hide internal artifacts or summarize multi-result nodes")
 	}
 	if !strings.Contains(scriptResponse.Body.String(), `node.state === "failed" && !node.submission_unknown`) {
 		t.Fatalf("GET /app.js allows unsafe retry after an unknown provider submission")
+	}
+	for _, behavior := range []string{"function setPrimaryAction(", "function setRunStatus(", "function showNodeArtifacts(", "function focusNode(", `setRunStatus(state.run)`, `element.textContent = "已返回修改"`, `item.textContent = nodeLabels[kind] || kind`, `card.scrollIntoView(`} {
+		if !strings.Contains(scriptResponse.Body.String(), behavior) {
+			t.Fatalf("GET /app.js does not implement task-first behavior %q", behavior)
+		}
 	}
 }
 

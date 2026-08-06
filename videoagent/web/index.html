@@ -4,75 +4,127 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Video Agent Canvas</title>
-  <link rel="stylesheet" href="/styles.css?v=20260805">
+  <link rel="stylesheet" href="/styles.css?v=20260806-3">
 </head>
 <body>
   <main class="app-shell">
     <header class="topbar">
-      <div>
-        <div class="eyebrow">VIDEO AGENT</div>
-        <h1>广告视频工作台</h1>
+      <div class="brand-lockup">
+        <div class="brand-mark" aria-hidden="true">▶</div>
+        <div class="project-title">
+          <div id="project-name" class="project-name">春季女鞋视频方案</div>
+          <span id="save-status" class="save-status">◉ 已保存</span>
+        </div>
       </div>
+
+      <div class="topbar-center">
+        <div class="history-actions" aria-label="历史操作">
+          <button id="undo-button" class="icon-button" title="撤销" disabled>↶</button>
+          <button id="redo-button" class="icon-button" title="重做" disabled>↷</button>
+        </div>
+        <div class="zoom-actions" aria-label="缩放画布">
+          <button id="zoom-out" class="icon-button" title="缩小">−</button>
+          <span id="zoom-value">100%</span>
+          <button id="zoom-in" class="icon-button" title="放大">＋</button>
+        </div>
+        <button id="fit-canvas" class="icon-button framed-icon" title="适应画布">⌗</button>
+        <button id="fullscreen-button" class="icon-button framed-icon" title="全屏">⛶</button>
+      </div>
+
       <div class="topbar-actions">
-		<span id="runtime-mode" class="runtime-mode">运行环境：加载中</span>
+        <span id="runtime-mode" class="runtime-mode">运行环境：加载中</span>
         <span id="run-status" class="status-pill">未运行</span>
-        <button id="run-button" class="primary">运行当前工作流</button>
-        <button id="retry-button" disabled>重试运行</button>
-        <button id="cancel-button" disabled>取消运行</button>
+        <button id="run-button" class="run-button"><span aria-hidden="true">▶</span><span id="run-primary-label">运行</span></button>
+        <button id="export-button" class="export-button" title="导出工作流">导出</button>
+        <button id="retry-button" class="quiet-button" disabled>重试</button>
+        <button id="cancel-button" class="quiet-button" disabled>取消</button>
       </div>
     </header>
 
     <section class="workspace">
+      <aside class="left-rail" aria-label="画布工具">
+        <button data-tool="select" class="rail-tool active"><span class="rail-icon">↖</span><span>选择</span></button>
+        <button data-tool="pan" class="rail-tool"><span class="rail-icon">✋</span><span>拖拽</span></button>
+        <button data-tool="palette" class="rail-tool"><span class="rail-icon">⌘</span><span>节点</span></button>
+        <button data-tool="connect" class="rail-tool"><span class="rail-icon">⌁</span><span>连线</span></button>
+      </aside>
+
       <section class="canvas-panel">
-        <div class="panel-toolbar">
-          <div class="toolbar-group">
-            <button data-tool="select" class="tool-button active">选择</button>
-            <button data-tool="connect" class="tool-button">连线</button>
+        <div class="canvas-toolbar">
+          <div id="node-palette" class="node-palette" aria-label="节点面板" hidden></div>
+          <div class="canvas-toolbar-actions">
             <select id="node-kind" aria-label="新增节点"></select>
-            <button id="add-node" class="tool-button">新增节点</button>
-            <button id="delete-node" class="tool-button">删除所选</button>
-            <button id="save-workflow" class="tool-button">保存画布</button>
+            <button id="add-node" class="canvas-action">新增节点</button>
+            <button id="delete-node" class="canvas-action">删除所选</button>
+            <button id="save-workflow" class="canvas-action">保存画布</button>
           </div>
-          <div class="toolbar-help">拖动节点调整布局，连线工具连接端口</div>
+          <div id="toolbar-help" class="toolbar-help">拖拽节点调整布局，使用连线工具连接端口</div>
         </div>
-        <div id="node-palette" class="node-palette" aria-label="节点面板"></div>
         <div id="canvas" class="canvas" aria-label="工作流画布">
-          <svg id="edges" class="edges" aria-hidden="true"></svg>
-          <div id="nodes" class="nodes"></div>
+          <div id="canvas-stage" class="canvas-stage">
+            <svg id="edges" class="edges" aria-hidden="true"></svg>
+            <div id="nodes" class="nodes"></div>
+          </div>
+        </div>
+        <div class="canvas-legend">
+          <span><i class="legend-line dependency"></i>依赖关系</span>
+          <span><i class="legend-line lineage"></i>产物来源</span>
         </div>
       </section>
 
       <aside class="side-panel">
-        <section class="input-card">
-          <div class="section-heading">
-            <div>
-              <div class="eyebrow">RUN INPUT</div>
-              <h2>创建视频任务</h2>
+        <div class="assistant-header">
+          <div>
+            <span class="assistant-kicker">AI WORKSPACE</span>
+            <h1>创作助手</h1>
+          </div>
+        </div>
+
+        <div class="assistant-body">
+          <details id="task-input" class="input-drawer" open>
+            <summary><span>任务输入</span><span class="summary-hint">商品、原料与需求</span></summary>
+            <div class="input-fields">
+              <label>商品名称<input id="product-name" value="软底厚底休闲鞋"></label>
+              <label>商品图片 URL（每行一条）<textarea id="product-images" placeholder="https://example.com/product.png"></textarea></label>
+              <label>需求描述<textarea id="brief">请结合商品卖点生成一条短视频广告</textarea></label>
+              <div class="input-actions"><button id="reset-workflow" class="secondary">恢复默认流程</button><span id="project-id" class="muted">project: demo</span></div>
             </div>
-          </div>
-          <label>商品名称<input id="product-name" value="软底厚底休闲鞋" /></label>
-          <label>商品图片 URL（每行一条）<textarea id="product-images" placeholder="https://example.com/product.png"></textarea></label>
-          <label>需求描述<textarea id="brief">请结合商品卖点生成一条短视频广告</textarea></label>
-          <div class="input-actions">
-            <button id="reset-workflow" class="secondary">恢复默认流程</button>
-            <span id="project-id" class="muted">project: demo</span>
-          </div>
-        </section>
+          </details>
 
-        <section class="conversation-card">
-          <div class="section-heading"><h2>Agent 对话</h2><span class="muted">运行观察</span></div>
-          <div id="messages" class="messages"></div>
-          <textarea id="agent-message" placeholder="例如：请生成一条商品广告"></textarea>
-          <button id="send-agent" class="secondary">发送给 Agent</button>
-        </section>
+          <section class="conversation-card">
+            <div class="section-heading"><h2>对话</h2><span class="muted">运行观察</span></div>
+            <div id="messages" class="messages" aria-live="polite"></div>
+            <section id="agent-action" class="agent-action" aria-live="polite" hidden></section>
+          </section>
+        </div>
 
-        <section class="artifact-card">
-          <div class="section-heading"><h2>产物</h2><span id="artifact-count" class="muted">0 个</span></div>
+        <div class="chat-composer">
+          <textarea id="agent-message" placeholder="告诉我你想生成或修改什么"></textarea>
+          <button id="send-agent" class="send-button"><span>发送给 Agent</span><span aria-hidden="true">↑</span></button>
+        </div>
+
+        <details id="artifacts-panel" class="artifacts-panel">
+          <summary><span>本次产物</span><span class="artifact-summary-meta"><span id="artifact-scope">全部</span><span id="artifact-count" class="muted">0 个</span></span></summary>
           <div id="artifacts" class="artifacts"></div>
-        </section>
+        </details>
       </aside>
     </section>
+
+    <section id="run-inspector" class="run-inspector" aria-live="polite" hidden>
+      <div class="run-summary">
+        <div><strong id="run-number">Run —</strong><span id="run-summary-status" class="status-pill">未运行</span></div>
+        <span id="run-start-time" class="muted"></span>
+      </div>
+      <div id="run-steps" class="run-steps"></div>
+      <div class="run-event-bar">
+        <span class="muted">最新事件</span>
+        <strong id="run-latest-event">—</strong>
+        <button id="view-logs" class="secondary">查看日志</button>
+        <button id="run-log-toggle" class="run-log-toggle" title="展开日志">⌃</button>
+      </div>
+      <pre id="run-log" class="run-log" hidden></pre>
+    </section>
   </main>
-  <script src="/app.js?v=20260805"></script>
+  <script src="/app.js?v=20260806-3"></script>
 </body>
 </html>
