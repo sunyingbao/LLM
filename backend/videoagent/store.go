@@ -132,11 +132,6 @@ func (store *Store) GetProject(_ context.Context, projectID string) (Project, er
 	return project, nil
 }
 
-func (store *Store) CreateOperation(ctx context.Context, operation CanvasOperation) error {
-	_, _, err := store.CreateOrGetOperation(ctx, operation)
-	return err
-}
-
 // CreateOrGetOperation makes operation creation idempotent when the caller supplies a key.
 func (store *Store) CreateOrGetOperation(_ context.Context, operation CanvasOperation) (existing CanvasOperation, reused bool, err error) {
 	err = store.update(func(data *storeData) error {
@@ -355,18 +350,6 @@ func (store *Store) GetOperation(_ context.Context, operationID string) (CanvasO
 	return operation, nil
 }
 
-func (store *Store) UpdateOperation(_ context.Context, operationID, status string) error {
-	return store.update(func(data *storeData) error {
-		operation, ok := data.Operations[operationID]
-		if !ok {
-			return fmt.Errorf("operation not found: %s", operationID)
-		}
-		operation.Status = status
-		data.Operations[operationID] = operation
-		return nil
-	})
-}
-
 func (store *Store) claimOperation(_ context.Context, operationID, runID string) (CanvasOperation, error) {
 	var operation CanvasOperation
 	err := store.update(func(data *storeData) error {
@@ -400,23 +383,6 @@ func (store *Store) applyOperation(_ context.Context, operationID, expected, sta
 		data.Operations[operationID] = operation
 		return nil
 	})
-}
-
-func (store *Store) markOperationApplied(_ context.Context, operationID string) (operation CanvasOperation, err error) {
-	err = store.update(func(data *storeData) error {
-		var exists bool
-		operation, exists = data.Operations[operationID]
-		if !exists {
-			return fmt.Errorf("operation not found: %s", operationID)
-		}
-		if operation.Status == OperationRejected {
-			return fmt.Errorf("operation is rejected")
-		}
-		operation.Status = OperationApplied
-		data.Operations[operationID] = operation
-		return nil
-	})
-	return
 }
 
 func (store *Store) Get(_ context.Context, runID string) (Run, error) {
@@ -794,14 +760,14 @@ func (store *Store) retry(runID string) error {
 				return fmt.Errorf("retry is unsafe because submission outcome is unknown: %s/%s", node.NodeID, node.InstanceKey)
 			}
 		}
-		controllersToResume := make(map[string]bool)
+		resumeNodes := make(map[string]bool)
 		for index := range run.NodeRuns {
 			node := &run.NodeRuns[index]
 			if node.State != Failed && node.State != Canceled {
 				continue
 			}
 			if node.InstanceKey != "" {
-				controllersToResume[node.NodeID] = true
+				resumeNodes[node.NodeID] = true
 			}
 			node.State = Pending
 			node.JobID = ""
@@ -821,7 +787,7 @@ func (store *Store) retry(runID string) error {
 		}
 		for index := range run.NodeRuns {
 			node := &run.NodeRuns[index]
-			if node.InstanceKey == "" && controllersToResume[node.NodeID] {
+			if node.InstanceKey == "" && resumeNodes[node.NodeID] {
 				node.State = Running
 				node.Message = ""
 			}

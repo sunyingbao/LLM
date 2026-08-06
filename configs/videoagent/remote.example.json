@@ -5,27 +5,16 @@
     "image_audit": "https://capability.example.com/v1/image/audit",
     "prompt_shield": "https://capability.example.com/v1/prompt/shield"
   },
-  "image_gateway": {
-    "model": "ad.genai.seedream_4_5",
-    "task_queue": "jichuang_agent",
+  "image_ark": {
+    "base_url": "https://ark-cn-beijing.bytedance.net/api/v3",
+    "api_key": "replace-with-image-ark-api-key",
+    "model": "replace-with-image-ark-endpoint",
     "width": 1440,
-    "height": 2560
+    "height": 2560,
+    "response_format": "url"
   },
   "clipmix": {
     "model": "replace-with-clipmix-planning-model"
-  },
-  "character_image": {
-    "gen_url": "https://modelhub.example.com/generate?key={{api_key}}",
-    "edit_url": "https://modelhub.example.com/edit?key={{api_key}}",
-    "api_keys": ["replace-with-modelhub-api-key"],
-    "model": "gemini-3-pro-image-preview",
-    "width": 1024,
-    "height": 1536,
-    "imagex": {
-      "access_key": "replace-with-imagex-ak",
-      "secret_key": "replace-with-imagex-sk",
-      "service_id": "replace-with-imagex-service-id"
-    }
   },
   "prompt_tts": {
     "cpm": 280,
@@ -48,6 +37,8 @@
   "video_storage": {
     "space": "jichuang",
     "top_account_id": "replace-with-top-account-id",
+    "video_access_key": "replace-with-video-upload-ak",
+    "video_secret_key": "replace-with-video-upload-sk",
     "max_bytes": 1073741824
   },
   "finalvideo": {

@@ -29,7 +29,7 @@ func (handler nodeHandler) Cancel(ctx context.Context, run Run) error {
 				err = ErrCancellationUnsupported
 			}
 		case CompetitionReferenceNode, CharacterReferenceNode:
-			if canceler, ok := handler.imageClient(node.Kind).(ImageCanceler); ok {
+			if canceler, ok := handler.clients.Image.(ImageCanceler); ok {
 				err = canceler.CancelImage(ctx, node.JobID)
 			} else {
 				err = ErrCancellationUnsupported
@@ -73,19 +73,19 @@ func (handler nodeHandler) Start(ctx context.Context, command Command) (Result, 
 		}
 		return succeededArtifact(command.NodeRun, "requirement", requirement, nil)
 	case ClipScriptNode:
-		requirementArtifact, err := findArtifact(command.Inputs, "requirement")
+		reqArt, err := findArtifact(command.Inputs, "requirement")
 		if err != nil {
 			return Result{}, err
 		}
-		requirement, err := decode[Requirement](requirementArtifact.Data)
+		requirement, err := decode[Requirement](reqArt.Data)
 		if err != nil {
 			return Result{}, err
 		}
-		clipScript, err := handler.clients.Planner.CreateClipScript(ctx, requirement, command.Input)
+		script, err := handler.clients.Planner.CreateClipScript(ctx, requirement, command.Input)
 		if err != nil {
 			return Result{}, err
 		}
-		return succeededArtifact(command.NodeRun, "clipscript", clipScript, []string{requirementArtifact.ID})
+		return succeededArtifact(command.NodeRun, "clipscript", script, []string{reqArt.ID})
 	case CompetitionReferenceNode, PromptTTSNode, CharacterReferenceNode:
 		return handler.planResources(ctx, command, config)
 	case PreviewNode:
@@ -109,18 +109,46 @@ func (handler nodeHandler) Refresh(ctx context.Context, command Command) (Result
 
 	switch command.NodeRun.Kind {
 	case PromptTTSNode:
-		return handler.refreshTTS(ctx, command, plan)
+		return handler.refreshJob(
+			ctx, command, plan, "tts", command.NodeRun.SubmitKey,
+			handler.clients.TTS.FindTTSBySubmitKey, handler.clients.TTS.GetTTS,
+			func(job SubmittedJob, status JobStatus) (Result, error) {
+				return handler.ttsResult(command, plan, job, status)
+			},
+		)
 	case CompetitionReferenceNode, CharacterReferenceNode:
-		return handler.refreshImage(ctx, command, plan)
+		key := command.NodeRun.SubmitKey
+		if command.NodeRun.FallbackSubmitted {
+			key += ":fallback"
+		}
+		return handler.refreshJob(
+			ctx, command, plan, "image", key,
+			handler.clients.Image.FindImageBySubmitKey, handler.clients.Image.GetImage,
+			func(job SubmittedJob, status JobStatus) (Result, error) {
+				return handler.imageResult(ctx, command, plan, job, status)
+			},
+		)
 	case PreviewNode, FinalVideoNode:
-		return handler.refreshVideo(ctx, command, plan)
+		statusFn := handler.clients.Video.GetPreview
+		lookup := handler.clients.Video.FindPreviewBySubmitKey
+		if command.NodeRun.Kind == FinalVideoNode {
+			statusFn = handler.clients.Video.GetFinalVideo
+			lookup = handler.clients.Video.FindFinalVideoBySubmitKey
+		}
+		return handler.refreshJob(
+			ctx, command, plan, "video", command.NodeRun.SubmitKey,
+			lookup, statusFn,
+			func(job SubmittedJob, status JobStatus) (Result, error) {
+				return handler.videoResult(command, plan, job, status)
+			},
+		)
 	default:
 		return Result{}, fmt.Errorf("unsupported async node kind: %s", command.NodeRun.Kind)
 	}
 }
 
 func (handler nodeHandler) planResources(ctx context.Context, command Command, config NodeConfig) (Result, error) {
-	clipScript, err := artifactData[ClipScript](command.Inputs, "clipscript")
+	scriptArt, script, err := loadClipScript(command.Inputs)
 	if err != nil {
 		return Result{}, err
 	}
@@ -128,20 +156,16 @@ func (handler nodeHandler) planResources(ctx context.Context, command Command, c
 	var plans []ResourcePlan
 	switch command.NodeRun.Kind {
 	case CompetitionReferenceNode:
-		plans, err = handler.clients.Planner.PlanCompetition(ctx, clipScript, command.Input)
+		plans, err = handler.clients.Planner.PlanCompetition(ctx, script, command.Input)
 	case PromptTTSNode:
-		plans, err = handler.clients.Planner.PlanTTS(ctx, clipScript)
+		plans, err = handler.clients.Planner.PlanTTS(ctx, script)
 	case CharacterReferenceNode:
-		plans, err = handler.clients.Planner.PlanCharacterReferences(ctx, clipScript, command.Input)
+		plans, err = handler.clients.Planner.PlanCharacterReferences(ctx, script, command.Input)
 	}
 	if err != nil {
 		return Result{}, err
 	}
 
-	clipScriptArtifact, err := findArtifact(command.Inputs, "clipscript")
-	if err != nil {
-		return Result{}, err
-	}
 	children := make([]NodeRun, 0, len(plans))
 	ids := make(map[string]struct{}, len(plans))
 	for index, plan := range plans {
@@ -149,12 +173,12 @@ func (handler nodeHandler) planResources(ctx context.Context, command Command, c
 		if plan.ID == "" {
 			plan.ID = fmt.Sprintf("item-%d", index+1)
 		}
-		if _, duplicated := ids[plan.ID]; duplicated {
+		if _, dup := ids[plan.ID]; dup {
 			return Result{}, fmt.Errorf("duplicate resource plan: %s", plan.ID)
 		}
 		ids[plan.ID] = struct{}{}
 		if plan.ParentArtifactID == "" {
-			plan.ParentArtifactID = clipScriptArtifact.ID
+			plan.ParentArtifactID = scriptArt.ID
 		}
 		output, err := encode(plan)
 		if err != nil {
@@ -176,63 +200,54 @@ func (handler nodeHandler) planResources(ctx context.Context, command Command, c
 	return Result{State: Running, Children: children}, nil
 }
 
-func planPreview(command Command, configs ...NodeConfig) (Result, error) {
-	config := firstNodeConfig(configs)
-	clipScriptArtifact, err := findArtifact(command.Inputs, "clipscript")
+func planPreview(command Command, config NodeConfig) (Result, error) {
+	scriptArt, script, err := loadClipScript(command.Inputs)
 	if err != nil {
 		return Result{}, err
 	}
-	clipScript, err := decode[ClipScript](clipScriptArtifact.Data)
-	if err != nil {
-		return Result{}, err
-	}
-	applyVoiceDurations(&clipScript, command.Inputs)
-	plans := make([]ResourcePlan, 0, len(clipScript.Scenes))
-	for index, scene := range clipScript.Scenes {
+	applyVoiceDurations(&script, command.Inputs)
+	plans := make([]ResourcePlan, 0, len(script.Scenes))
+	for index, scene := range script.Scenes {
 		if scene.ID == "" {
 			scene.ID = fmt.Sprintf("scene-%d", index+1)
 		}
 		plan := ResourcePlan{
-			ID: scene.ID, SceneID: scene.ID, ParentArtifactID: clipScriptArtifact.ID,
+			ID: scene.ID, SceneID: scene.ID, ParentArtifactID: scriptArt.ID,
 			ArtifactIDs: matchingArtifactIDs(command.Inputs, scene.ID),
 			Prompt:      scene.Visual, Duration: durationSeconds(scene.DurationMS),
 		}
 		applyNodeConfig(&plan, config)
 		plans = append(plans, plan)
 	}
-	return previewChildren(command, clipScriptArtifact, plans)
+	return previewChildren(command, scriptArt, plans)
 }
 
 func (handler nodeHandler) planPreview(ctx context.Context, command Command, config NodeConfig) (Result, error) {
 	if handler.clients.PreviewPlanner == nil {
 		return planPreview(command, config)
 	}
-	clipScriptArtifact, err := findArtifact(command.Inputs, "clipscript")
+	scriptArt, script, err := loadClipScript(command.Inputs)
 	if err != nil {
 		return Result{}, err
 	}
-	clipScript, err := decode[ClipScript](clipScriptArtifact.Data)
-	if err != nil {
-		return Result{}, err
-	}
-	applyVoiceDurations(&clipScript, command.Inputs)
-	plans, err := handler.clients.PreviewPlanner.PlanPreview(ctx, clipScript, command.Input, command.Inputs)
+	applyVoiceDurations(&script, command.Inputs)
+	plans, err := handler.clients.PreviewPlanner.PlanPreview(ctx, script, command.Input, command.Inputs)
 	if err != nil {
 		return Result{}, err
 	}
 	for index := range plans {
 		if plans[index].ParentArtifactID == "" {
-			plans[index].ParentArtifactID = clipScriptArtifact.ID
+			plans[index].ParentArtifactID = scriptArt.ID
 		}
 		if len(plans[index].ArtifactIDs) == 0 {
 			plans[index].ArtifactIDs = matchingArtifactIDs(command.Inputs, plans[index].SceneID)
 		}
 		applyNodeConfig(&plans[index], config)
 	}
-	return previewChildren(command, clipScriptArtifact, plans)
+	return previewChildren(command, scriptArt, plans)
 }
 
-func previewChildren(command Command, clipScriptArtifact Artifact, plans []ResourcePlan) (Result, error) {
+func previewChildren(command Command, scriptArt Artifact, plans []ResourcePlan) (Result, error) {
 	children := make([]NodeRun, 0, len(plans))
 	for index, plan := range plans {
 		if plan.ID == "" {
@@ -249,13 +264,12 @@ func previewChildren(command Command, clipScriptArtifact Artifact, plans []Resou
 		})
 	}
 	if len(children) == 0 {
-		return Result{}, fmt.Errorf("preview planner returned no candidates for %s", clipScriptArtifact.ID)
+		return Result{}, fmt.Errorf("preview planner returned no candidates for %s", scriptArt.ID)
 	}
 	return Result{State: Running, Children: children}, nil
 }
 
-func planFinalVideo(command Command, configs ...NodeConfig) (Result, error) {
-	config := firstNodeConfig(configs)
+func planFinalVideo(command Command, config NodeConfig) (Result, error) {
 	parent, err := findArtifact(command.Inputs, "clipscript")
 	if err != nil {
 		return Result{}, err
@@ -385,13 +399,6 @@ func decodeNodeConfig(raw json.RawMessage) (NodeConfig, error) {
 	return config, nil
 }
 
-func firstNodeConfig(configs []NodeConfig) NodeConfig {
-	if len(configs) == 0 {
-		return NodeConfig{}
-	}
-	return configs[0]
-}
-
 func configuredBrief(brief, instruction string) string {
 	if instruction == "" {
 		return brief
@@ -447,87 +454,45 @@ func (handler nodeHandler) submit(ctx context.Context, command Command) (Result,
 }
 
 func (handler nodeHandler) submitTTS(ctx context.Context, command Command, plan ResourcePlan) (Result, error) {
-	job, err := handler.clients.TTS.SubmitTTS(ctx, TTSRequest{
-		Prompt:      plan.Prompt,
-		Speaker:     plan.Speaker,
-		Text:        plan.Text,
-		CPM:         plan.CPM,
-		Async:       true,
-		WithExample: true,
-		SubmitKey:   command.NodeRun.SubmitKey,
-	})
-	if err == nil {
-		if job.Status != nil {
-			handler.rememberSubmission(ctx, command.NodeRun, command.NodeRun.SubmitKey, job)
-			return handler.ttsResult(command, plan, job, *job.Status)
-		}
-		if job.JobID == "" {
-			return unknownSubmissionFailure(command, plan, "tts", errors.New("tts submit returned an empty job id")), nil
-		}
-		handler.rememberSubmission(ctx, command.NodeRun, command.NodeRun.SubmitKey, job)
-		return waitingResource(command.NodeRun, plan, job.Provider, job.JobID), nil
-	}
-	job, found, findErr := handler.clients.TTS.FindTTSBySubmitKey(ctx, command.NodeRun.SubmitKey)
-	if errors.Is(findErr, ErrSubmitReconciliationUnsupported) {
-		return unknownSubmissionFailure(command, plan, "tts", err), nil
-	}
-	if found {
-		if job.Status != nil {
-			handler.rememberSubmission(ctx, command.NodeRun, command.NodeRun.SubmitKey, job)
-			return handler.ttsResult(command, plan, job, *job.Status)
-		}
-		if job.JobID == "" {
-			return unknownSubmissionFailure(command, plan, "tts", errors.New("tts reconciliation returned an empty job id")), nil
-		}
-		handler.rememberSubmission(ctx, command.NodeRun, command.NodeRun.SubmitKey, job)
-		return waitingResource(command.NodeRun, plan, job.Provider, job.JobID), nil
-	}
-	return unknownSubmission(command.NodeRun, plan, "tts", err, findErr), nil
+	return handler.submitJob(
+		ctx, command, plan, "tts", "tts", command.NodeRun.SubmitKey,
+		func() (SubmittedJob, error) {
+			return handler.clients.TTS.SubmitTTS(ctx, TTSRequest{
+				Prompt: plan.Prompt, Speaker: plan.Speaker, Text: plan.Text, CPM: plan.CPM,
+				Async: true, WithExample: true, SubmitKey: command.NodeRun.SubmitKey,
+			})
+		},
+		func(key string) (SubmittedJob, bool, error) {
+			return handler.clients.TTS.FindTTSBySubmitKey(ctx, key)
+		},
+		func(job SubmittedJob, status JobStatus) (Result, error) {
+			return handler.ttsResult(command, plan, job, status)
+		},
+	)
 }
 
 func (handler nodeHandler) submitImage(ctx context.Context, command Command, plan ResourcePlan) (Result, error) {
-	client := handler.imageClient(command.NodeRun.Kind)
 	submitKey := command.NodeRun.SubmitKey
 	model := plan.Model
 	if command.NodeRun.FallbackSubmitted {
 		submitKey += ":fallback"
 		model = plan.FallbackModel
 	}
-	job, err := client.SubmitImage(ctx, ImageRequest{
-		Prompt:    plan.Prompt,
-		ImageURLs: plan.ImageURLs,
-		Model:     model,
-		Width:     plan.Width,
-		Height:    plan.Height,
-		SubmitKey: submitKey,
-	})
-	if err == nil {
-		if job.Status != nil {
-			handler.rememberSubmission(ctx, command.NodeRun, submitKey, job)
-			return handler.imageResult(ctx, command, plan, job, *job.Status)
-		}
-		if job.JobID == "" {
-			return unknownSubmissionFailure(command, plan, "image", errors.New("image submit returned an empty job id")), nil
-		}
-		handler.rememberSubmission(ctx, command.NodeRun, submitKey, job)
-		return waitingResource(command.NodeRun, plan, job.Provider, job.JobID), nil
-	}
-	job, found, findErr := client.FindImageBySubmitKey(ctx, submitKey)
-	if errors.Is(findErr, ErrSubmitReconciliationUnsupported) {
-		return unknownSubmissionFailure(command, plan, "image", err), nil
-	}
-	if found {
-		if job.Status != nil {
-			handler.rememberSubmission(ctx, command.NodeRun, submitKey, job)
-			return handler.imageResult(ctx, command, plan, job, *job.Status)
-		}
-		if job.JobID == "" {
-			return unknownSubmissionFailure(command, plan, "image", errors.New("image reconciliation returned an empty job id")), nil
-		}
-		handler.rememberSubmission(ctx, command.NodeRun, submitKey, job)
-		return waitingResource(command.NodeRun, plan, job.Provider, job.JobID), nil
-	}
-	return unknownSubmission(command.NodeRun, plan, "image", err, findErr), nil
+	return handler.submitJob(
+		ctx, command, plan, "image", "image", submitKey,
+		func() (SubmittedJob, error) {
+			return handler.clients.Image.SubmitImage(ctx, ImageRequest{
+				Prompt: plan.Prompt, ImageURLs: plan.ImageURLs, Model: model,
+				Width: plan.Width, Height: plan.Height, SubmitKey: submitKey,
+			})
+		},
+		func(key string) (SubmittedJob, bool, error) {
+			return handler.clients.Image.FindImageBySubmitKey(ctx, key)
+		},
+		func(job SubmittedJob, status JobStatus) (Result, error) {
+			return handler.imageResult(ctx, command, plan, job, status)
+		},
+	)
 }
 
 func (handler nodeHandler) submitVideo(ctx context.Context, command Command, plan ResourcePlan) (Result, error) {
@@ -538,13 +503,13 @@ func (handler nodeHandler) submitVideo(ctx context.Context, command Command, pla
 		})
 	}
 	inputs := selectArtifacts(command.Inputs, plan.ArtifactIDs)
-	clipScript, err := optionalArtifactData[ClipScript](inputs, "clipscript")
+	script, err := optionalArtifactData[ClipScript](inputs, "clipscript")
 	if err != nil {
 		return Result{}, err
 	}
 	request := VideoRequest{
 		Inputs:               inputs,
-		ClipScript:           clipScript,
+		ClipScript:           script,
 		Prompt:               plan.Prompt,
 		Duration:             plan.Duration,
 		Model:                plan.Model,
@@ -561,58 +526,57 @@ func (handler nodeHandler) submitVideo(ctx context.Context, command Command, pla
 	}
 	submit := handler.clients.Video.SubmitPreview
 	find := handler.clients.Video.FindPreviewBySubmitKey
-	name := "preview"
+	provider := "preview"
 	if command.NodeRun.Kind == FinalVideoNode {
-		name = "finalvideo"
+		provider = "finalvideo"
 		submit = handler.clients.Video.SubmitFinalVideo
 		find = handler.clients.Video.FindFinalVideoBySubmitKey
 	}
-	job, err := submit(ctx, request)
-	if err == nil {
-		if job.Status != nil {
-			handler.rememberSubmission(ctx, command.NodeRun, request.SubmitKey, job)
-			return handler.videoResult(command, plan, job, *job.Status)
-		}
-		if job.JobID == "" {
-			return unknownSubmissionFailure(command, plan, name, fmt.Errorf("%s submit returned an empty job id", name)), nil
-		}
-		handler.rememberSubmission(ctx, command.NodeRun, request.SubmitKey, job)
-		return waitingResource(command.NodeRun, plan, job.Provider, job.JobID), nil
-	}
-	job, found, findErr := find(ctx, request.SubmitKey)
-	if errors.Is(findErr, ErrSubmitReconciliationUnsupported) {
-		return unknownSubmissionFailure(command, plan, name, err), nil
-	}
-	if found {
-		if job.Status != nil {
-			handler.rememberSubmission(ctx, command.NodeRun, request.SubmitKey, job)
-			return handler.videoResult(command, plan, job, *job.Status)
-		}
-		if job.JobID == "" {
-			return unknownSubmissionFailure(command, plan, name, fmt.Errorf("%s reconciliation returned an empty job id", name)), nil
-		}
-		handler.rememberSubmission(ctx, command.NodeRun, request.SubmitKey, job)
-		return waitingResource(command.NodeRun, plan, job.Provider, job.JobID), nil
-	}
-	return unknownSubmission(command.NodeRun, plan, "video", err, findErr), nil
+	return handler.submitJob(
+		ctx, command, plan, provider, "video", request.SubmitKey,
+		func() (SubmittedJob, error) { return submit(ctx, request) },
+		func(key string) (SubmittedJob, bool, error) { return find(ctx, key) },
+		func(job SubmittedJob, status JobStatus) (Result, error) {
+			return handler.videoResult(command, plan, job, status)
+		},
+	)
 }
 
-func (handler nodeHandler) refreshTTS(ctx context.Context, command Command, plan ResourcePlan) (Result, error) {
-	job, found, err := handler.findTTS(ctx, command.NodeRun)
-	if err != nil {
-		return Result{}, err
+func (handler nodeHandler) submitJob(
+	ctx context.Context,
+	command Command,
+	plan ResourcePlan,
+	provider string,
+	reconcileName string,
+	submitKey string,
+	submit func() (SubmittedJob, error),
+	find func(string) (SubmittedJob, bool, error),
+	complete func(SubmittedJob, JobStatus) (Result, error),
+) (Result, error) {
+	job, errSubmit := submit()
+	if errSubmit != nil {
+		var found bool
+		var errFind error
+		job, found, errFind = find(submitKey)
+		if errors.Is(errFind, ErrSubmitReconciliationUnsupported) {
+			return unknownSubmissionFailure(command, plan, provider, errSubmit), nil
+		}
+		if !found {
+			return unknownSubmission(command.NodeRun, plan, reconcileName, errSubmit, errFind), nil
+		}
 	}
-	if !found {
-		return waitingResource(command.NodeRun, plan, "tts", ""), nil
+	if job.Status == nil && job.JobID == "" {
+		action := "submit"
+		if errSubmit != nil {
+			action = "reconciliation"
+		}
+		return unknownSubmissionFailure(command, plan, provider, fmt.Errorf("%s %s returned an empty job id", provider, action)), nil
 	}
+	handler.rememberSubmission(ctx, command.NodeRun, submitKey, job)
 	if job.Status != nil {
-		return handler.ttsResult(command, plan, job, *job.Status)
+		return complete(job, *job.Status)
 	}
-	status, err := handler.clients.TTS.GetTTS(ctx, job.JobID)
-	if err != nil {
-		return Result{}, err
-	}
-	return handler.ttsResult(command, plan, job, status)
+	return waitingResource(command.NodeRun, plan, job.Provider, job.JobID), nil
 }
 
 func (handler nodeHandler) ttsResult(command Command, plan ResourcePlan, job SubmittedJob, status JobStatus) (Result, error) {
@@ -666,24 +630,6 @@ func applyVoiceDurations(script *ClipScript, artifacts []Artifact) {
 	}
 }
 
-func (handler nodeHandler) refreshImage(ctx context.Context, command Command, plan ResourcePlan) (Result, error) {
-	job, found, err := handler.findImage(ctx, command.NodeRun)
-	if err != nil {
-		return Result{}, err
-	}
-	if !found {
-		return waitingResource(command.NodeRun, plan, "image", ""), nil
-	}
-	if job.Status != nil {
-		return handler.imageResult(ctx, command, plan, job, *job.Status)
-	}
-	status, err := handler.imageClient(command.NodeRun.Kind).GetImage(ctx, job.JobID)
-	if err != nil {
-		return Result{}, err
-	}
-	return handler.imageResult(ctx, command, plan, job, status)
-}
-
 func (handler nodeHandler) imageResult(ctx context.Context, command Command, plan ResourcePlan, job SubmittedJob, status JobStatus) (Result, error) {
 	if status.State == JobPending {
 		return waitingResource(command.NodeRun, plan, job.Provider, job.JobID), nil
@@ -709,9 +655,12 @@ func (handler nodeHandler) imageResult(ctx context.Context, command Command, pla
 		"uri":      status.URI,
 		"url":      status.URL,
 	}, parentIDs(plan))
-	if err != nil || command.NodeRun.Kind != CompetitionReferenceNode {
-		result.Provider, result.JobID = job.Provider, job.JobID
-		return result, err
+	if err != nil {
+		return Result{}, err
+	}
+	result.Provider, result.JobID = job.Provider, job.JobID
+	if command.NodeRun.Kind != CompetitionReferenceNode {
+		return result, nil
 	}
 	annotation, err := encode(map[string]string{
 		"clipscript_artifact_id": plan.ParentArtifactID,
@@ -727,32 +676,34 @@ func (handler nodeHandler) imageResult(ctx context.Context, command Command, pla
 		ParentIDs: []string{plan.ParentArtifactID, result.Artifacts[0].ID},
 		Data:      annotation,
 	})
-	result.Provider, result.JobID = job.Provider, job.JobID
 	return result, nil
 }
 
-func (handler nodeHandler) refreshVideo(ctx context.Context, command Command, plan ResourcePlan) (Result, error) {
-	job, found, err := handler.findVideo(ctx, command.NodeRun)
+func (handler nodeHandler) refreshJob(
+	ctx context.Context,
+	command Command,
+	plan ResourcePlan,
+	provider string,
+	submitKey string,
+	lookup func(context.Context, string) (SubmittedJob, bool, error),
+	statusFn func(context.Context, string) (JobStatus, error),
+	complete func(SubmittedJob, JobStatus) (Result, error),
+) (Result, error) {
+	job, found, err := handler.findSubmission(ctx, command.NodeRun, submitKey, lookup)
 	if err != nil {
 		return Result{}, err
 	}
 	if !found {
-		return waitingResource(command.NodeRun, plan, "video", ""), nil
+		return waitingResource(command.NodeRun, plan, provider, ""), nil
 	}
 	if job.Status != nil {
-		return handler.videoResult(command, plan, job, *job.Status)
+		return complete(job, *job.Status)
 	}
-
-	var status JobStatus
-	if command.NodeRun.Kind == PreviewNode {
-		status, err = handler.clients.Video.GetPreview(ctx, job.JobID)
-	} else {
-		status, err = handler.clients.Video.GetFinalVideo(ctx, job.JobID)
-	}
+	status, err := statusFn(ctx, job.JobID)
 	if err != nil {
 		return Result{}, err
 	}
-	return handler.videoResult(command, plan, job, status)
+	return complete(job, status)
 }
 
 func (handler nodeHandler) videoResult(command Command, plan ResourcePlan, job SubmittedJob, status JobStatus) (Result, error) {
@@ -798,62 +749,21 @@ func (handler nodeHandler) fallbackOrFail(command Command, plan ResourcePlan, ca
 	return Result{State: Pending, ClearJobID: true, FallbackSubmitted: true, ResetSubmission: true}, nil
 }
 
-func (handler nodeHandler) findTTS(ctx context.Context, node NodeRun) (SubmittedJob, bool, error) {
+func (handler nodeHandler) findSubmission(
+	ctx context.Context,
+	node NodeRun,
+	submitKey string,
+	lookup func(context.Context, string) (SubmittedJob, bool, error),
+) (SubmittedJob, bool, error) {
 	if node.JobID != "" {
 		return SubmittedJob{Provider: node.Provider, JobID: node.JobID}, true, nil
 	}
-	if job, found, err := handler.storedSubmission(ctx, node.SubmitKey); found || err != nil {
+	if job, found, err := handler.storedSubmission(ctx, submitKey); found || err != nil {
 		return job, found, err
 	}
-	job, found, err := handler.clients.TTS.FindTTSBySubmitKey(ctx, node.SubmitKey)
+	job, found, err := lookup(ctx, submitKey)
 	if err == nil && found {
-		handler.rememberSubmission(ctx, node, node.SubmitKey, job)
-	}
-	return job, found, err
-}
-
-func (handler nodeHandler) findImage(ctx context.Context, node NodeRun) (SubmittedJob, bool, error) {
-	if node.JobID != "" {
-		return SubmittedJob{Provider: node.Provider, JobID: node.JobID}, true, nil
-	}
-	key := node.SubmitKey
-	if node.FallbackSubmitted {
-		key += ":fallback"
-	}
-	if job, found, err := handler.storedSubmission(ctx, key); found || err != nil {
-		return job, found, err
-	}
-	job, found, err := handler.imageClient(node.Kind).FindImageBySubmitKey(ctx, key)
-	if err == nil && found {
-		handler.rememberSubmission(ctx, node, key, job)
-	}
-	return job, found, err
-}
-
-func (handler nodeHandler) imageClient(kind NodeKind) ImageClient {
-	if kind == CharacterReferenceNode && handler.clients.CharacterImage != nil {
-		return handler.clients.CharacterImage
-	}
-	return handler.clients.Image
-}
-
-func (handler nodeHandler) findVideo(ctx context.Context, node NodeRun) (SubmittedJob, bool, error) {
-	if node.JobID != "" {
-		return SubmittedJob{Provider: node.Provider, JobID: node.JobID}, true, nil
-	}
-	if job, found, err := handler.storedSubmission(ctx, node.SubmitKey); found || err != nil {
-		return job, found, err
-	}
-	var job SubmittedJob
-	var found bool
-	var err error
-	if node.Kind == PreviewNode {
-		job, found, err = handler.clients.Video.FindPreviewBySubmitKey(ctx, node.SubmitKey)
-	} else {
-		job, found, err = handler.clients.Video.FindFinalVideoBySubmitKey(ctx, node.SubmitKey)
-	}
-	if err == nil && found {
-		handler.rememberSubmission(ctx, node, node.SubmitKey, job)
+		handler.rememberSubmission(ctx, node, submitKey, job)
 	}
 	return job, found, err
 }
@@ -902,10 +812,10 @@ func waitingResourceWithMessage(node NodeRun, plan ResourcePlan, provider, jobID
 	}}, Message: message}
 }
 
-func unknownSubmission(node NodeRun, plan ResourcePlan, provider string, submitErr, findErr error) Result {
+func unknownSubmission(node NodeRun, plan ResourcePlan, provider string, errSubmit, errFind error) Result {
 	message := fmt.Sprintf("%s submit outcome is unknown; waiting for submit-key reconciliation", provider)
-	if findErr != nil {
-		message = fmt.Sprintf("%s submit outcome is unknown; submit=%v; reconcile=%v", provider, submitErr, findErr)
+	if errFind != nil {
+		message = fmt.Sprintf("%s submit outcome is unknown; submit=%v; reconcile=%v", provider, errSubmit, errFind)
 	}
 	result := waitingResourceWithMessage(node, plan, provider, "", message)
 	result.SubmissionUnknown = true
@@ -950,13 +860,13 @@ func findArtifact(artifacts []Artifact, kind string) (Artifact, error) {
 	return Artifact{}, fmt.Errorf("artifact not found: %s", kind)
 }
 
-func artifactData[T any](artifacts []Artifact, kind string) (T, error) {
-	artifact, err := findArtifact(artifacts, kind)
+func loadClipScript(artifacts []Artifact) (Artifact, ClipScript, error) {
+	artifact, err := findArtifact(artifacts, "clipscript")
 	if err != nil {
-		var empty T
-		return empty, err
+		return Artifact{}, ClipScript{}, err
 	}
-	return decode[T](artifact.Data)
+	script, err := decode[ClipScript](artifact.Data)
+	return artifact, script, err
 }
 
 func optionalArtifactData[T any](artifacts []Artifact, kind string) (*T, error) {

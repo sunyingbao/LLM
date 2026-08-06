@@ -16,7 +16,7 @@ func TestOperationConfirmationCreatesNewWorkflowVersion(t *testing.T) {
 		t.Fatalf("encode node: %v", err)
 	}
 	operation := CanvasOperation{ID: "operation-1", ProjectID: "project-1", Type: OperationAddNode, Payload: payload, Status: OperationPending}
-	if err := store.CreateOperation(context.Background(), operation); err != nil {
+	if _, _, err := store.CreateOrGetOperation(context.Background(), operation); err != nil {
 		t.Fatalf("CreateOperation() error = %v", err)
 	}
 	confirmed, run, err := runner.ConfirmOperation(context.Background(), operation.ID)
@@ -45,7 +45,7 @@ func TestOperationConfirmationRepairsAppliedWorkflowStatus(t *testing.T) {
 		t.Fatalf("encode node: %v", err)
 	}
 	operation := CanvasOperation{ID: "operation-recover", ProjectID: "project-1", Type: OperationAddNode, Payload: payload, Status: OperationPending}
-	if err := store.CreateOperation(context.Background(), operation); err != nil {
+	if _, _, err := store.CreateOrGetOperation(context.Background(), operation); err != nil {
 		t.Fatalf("CreateOperation() error = %v", err)
 	}
 	if _, err := store.claimOperation(context.Background(), operation.ID, ""); err != nil {
@@ -101,7 +101,7 @@ func TestUpdateWorkflowOperationPersistsEditedCanvas(t *testing.T) {
 		t.Fatalf("encode workflow: %v", err)
 	}
 	operation := CanvasOperation{ID: "operation-workflow", ProjectID: "project-1", Type: OperationUpdateWorkflow, Payload: payload, Status: OperationPending}
-	if err := store.CreateOperation(context.Background(), operation); err != nil {
+	if _, _, err := store.CreateOrGetOperation(context.Background(), operation); err != nil {
 		t.Fatalf("CreateOperation() error = %v", err)
 	}
 	if _, _, err := runner.ConfirmOperation(context.Background(), operation.ID); err != nil {
@@ -129,7 +129,7 @@ func TestUpdateInputOperationPersistsNodeConfig(t *testing.T) {
 		t.Fatalf("encode input update: %v", err)
 	}
 	operation := CanvasOperation{ID: "operation-input", ProjectID: "project-1", Type: OperationUpdateInput, Payload: payload, Status: OperationPending}
-	if err := store.CreateOperation(context.Background(), operation); err != nil {
+	if _, _, err := store.CreateOrGetOperation(context.Background(), operation); err != nil {
 		t.Fatalf("CreateOperation() error = %v", err)
 	}
 	if _, _, err := runner.ConfirmOperation(context.Background(), operation.ID); err != nil {

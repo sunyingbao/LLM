@@ -398,7 +398,11 @@ func TestRefreshUsesPersistedSynchronousSubmission(t *testing.T) {
 	if err != nil || result.State != Succeeded {
 		t.Fatalf("submitTTS() = (%#v, %v), want succeeded", result, err)
 	}
-	result, err = handler.refreshTTS(context.Background(), command, plan)
+	command.NodeRun.Output, err = encode(plan)
+	if err != nil {
+		t.Fatalf("encode resource plan: %v", err)
+	}
+	result, err = handler.Refresh(context.Background(), command)
 	if err != nil || result.State != Succeeded {
 		t.Fatalf("refreshTTS() = (%#v, %v), want persisted synchronous result", result, err)
 	}
@@ -455,10 +459,10 @@ func TestCallbackIsIdempotentAndCharacterUsesOneFallback(t *testing.T) {
 
 	ttsNode := nodeRun(run, "tts", "speaker-1")
 	tts.jobs[ttsNode.JobID] = JobStatus{State: JobSucceeded, ExampleURI: "example://speaker-1"}
-	if err := runner.OnCallback(context.Background(), "tts", "event-1", ttsNode.JobID); err != nil {
+	if err := runner.ProcessCallback(context.Background(), CallbackMessage{Provider: "tts", EventID: "event-1", JobID: ttsNode.JobID}); err != nil {
 		t.Fatalf("OnCallback() error = %v", err)
 	}
-	if err := runner.OnCallback(context.Background(), "tts", "event-1", ttsNode.JobID); err != nil {
+	if err := runner.ProcessCallback(context.Background(), CallbackMessage{Provider: "tts", EventID: "event-1", JobID: ttsNode.JobID}); err != nil {
 		t.Fatalf("duplicate OnCallback() error = %v", err)
 	}
 	if tts.gets != 1 {
@@ -507,12 +511,12 @@ func TestCallbackRetriesAfterRefreshFailure(t *testing.T) {
 
 	ttsNode := nodeRun(run, "tts", "speaker-1")
 	tts.getErr = fmt.Errorf("temporary status failure")
-	if err := runner.OnCallback(context.Background(), "tts", "event-retry", ttsNode.JobID); err == nil {
+	if err := runner.ProcessCallback(context.Background(), CallbackMessage{Provider: "tts", EventID: "event-retry", JobID: ttsNode.JobID}); err == nil {
 		t.Fatal("first OnCallback() error = nil, want refresh failure")
 	}
 	tts.getErr = nil
 	tts.jobs[ttsNode.JobID] = JobStatus{State: JobSucceeded, ExampleURI: "example://speaker-1"}
-	if err := runner.OnCallback(context.Background(), "tts", "event-retry", ttsNode.JobID); err != nil {
+	if err := runner.ProcessCallback(context.Background(), CallbackMessage{Provider: "tts", EventID: "event-retry", JobID: ttsNode.JobID}); err != nil {
 		t.Fatalf("retried OnCallback() error = %v", err)
 	}
 	if tts.gets != 2 {
@@ -522,7 +526,7 @@ func TestCallbackRetriesAfterRefreshFailure(t *testing.T) {
 
 func TestCallbackWaitsForDurableJob(t *testing.T) {
 	runner, _, _, _, _ := testRunner(t)
-	err := runner.OnCallback(context.Background(), "tts", "event-early", "job-not-persisted")
+	err := runner.ProcessCallback(context.Background(), CallbackMessage{Provider: "tts", EventID: "event-early", JobID: "job-not-persisted"})
 	if !errors.Is(err, ErrCallbackNotReady) {
 		t.Fatalf("OnCallback() error = %v, want ErrCallbackNotReady", err)
 	}
@@ -568,7 +572,7 @@ func TestCallbackRequeuesWhenRefreshResultCannotBeSaved(t *testing.T) {
 		backend.saves + 3: true,
 	}
 
-	if err := runner.OnCallback(context.Background(), "tts", "event-save", ttsNode.JobID); err == nil {
+	if err := runner.ProcessCallback(context.Background(), CallbackMessage{Provider: "tts", EventID: "event-save", JobID: ttsNode.JobID}); err == nil {
 		t.Fatal("OnCallback() error = nil, want store failure")
 	}
 	stored, err := store.Get(context.Background(), run.ID)
@@ -581,7 +585,7 @@ func TestCallbackRequeuesWhenRefreshResultCannotBeSaved(t *testing.T) {
 	if got := runner.Metrics.Snapshot()[MonitorReconcileFailed]; got != 1 {
 		t.Fatalf("reconcile failure events = %d, want 1 after apply failure", got)
 	}
-	if err := runner.OnCallback(context.Background(), "tts", "event-save", ttsNode.JobID); err != nil {
+	if err := runner.ProcessCallback(context.Background(), CallbackMessage{Provider: "tts", EventID: "event-save", JobID: ttsNode.JobID}); err != nil {
 		t.Fatalf("retried OnCallback() error = %v", err)
 	}
 }
@@ -880,7 +884,7 @@ func TestRestoreRetriesFailedCancellationFinalization(t *testing.T) {
 	if err := runner.Cancel(context.Background(), run.ID); !errors.Is(err, ErrCancellationUnsupported) {
 		t.Fatalf("Cancel() error = %v, want ErrCancellationUnsupported", err)
 	}
-	cancelFailuresBeforePoll := runner.Metrics.Snapshot()[MonitorCancelFailed]
+	before := runner.Metrics.Snapshot()[MonitorCancelFailed]
 	images.jobs[job.JobID] = JobStatus{State: JobSucceeded, URI: "image://completed"}
 	if err := runner.Poll(context.Background(), run.ID); err == nil {
 		t.Fatal("Poll() error = nil, want cancellation finalization store failure")
@@ -889,8 +893,8 @@ func TestRestoreRetriesFailedCancellationFinalization(t *testing.T) {
 	if !stored.CancelRequested || stored.Canceled || nodeRun(stored, "competition", "competition-1").State != Succeeded {
 		t.Fatalf("run after failed cancellation finalization = %#v", stored)
 	}
-	if got := runner.Metrics.Snapshot()[MonitorCancelFailed]; got != cancelFailuresBeforePoll+1 {
-		t.Fatalf("cancel failure events = %d, want %d", got, cancelFailuresBeforePoll+1)
+	if got := runner.Metrics.Snapshot()[MonitorCancelFailed]; got != before+1 {
+		t.Fatalf("cancel failure events = %d, want %d", got, before+1)
 	}
 	if err := runner.Restore(context.Background(), run.ID); err != nil {
 		t.Fatalf("Restore() error = %v", err)
@@ -994,17 +998,17 @@ func TestClaimHeartbeatFailureCancelsNodeExecution(t *testing.T) {
 		NodeID: "requirement", Kind: RequirementNode, ClaimToken: "stale-claim",
 	}}
 
-	executionCanceled := make(chan struct{})
+	canceled := make(chan struct{})
 	_, err := runner.withClaimHeartbeat(context.Background(), command, func(ctx context.Context, _ Command) (Result, error) {
 		<-ctx.Done()
-		close(executionCanceled)
+		close(canceled)
 		return Result{}, context.Cause(ctx)
 	})
 	if !errors.Is(err, ErrClaimHeartbeat) {
 		t.Fatalf("withClaimHeartbeat() error = %v, want ErrClaimHeartbeat", err)
 	}
 	select {
-	case <-executionCanceled:
+	case <-canceled:
 	default:
 		t.Fatal("node execution was not canceled after losing its claim")
 	}
@@ -1080,7 +1084,7 @@ func TestInvalidRunOperationRemainsRejectable(t *testing.T) {
 		Payload:   mustJSON(RunInput{ProductName: "shoe"}),
 		Status:    OperationPending,
 	}
-	if err := application.Store.CreateOperation(context.Background(), operation); err != nil {
+	if _, _, err := application.Store.CreateOrGetOperation(context.Background(), operation); err != nil {
 		t.Fatalf("CreateOperation() error = %v", err)
 	}
 
@@ -1121,7 +1125,7 @@ func TestConfirmRetryOperationResubmitsFailedResource(t *testing.T) {
 		Payload:   mustJSON(map[string]string{"run_id": run.ID}),
 		Status:    OperationPending,
 	}
-	if err := store.CreateOperation(context.Background(), operation); err != nil {
+	if _, _, err := store.CreateOrGetOperation(context.Background(), operation); err != nil {
 		t.Fatalf("CreateOperation() error = %v", err)
 	}
 	confirmed, retried, err := runner.ConfirmOperation(context.Background(), operation.ID)
@@ -1160,7 +1164,7 @@ func TestConfirmCancelOperationStopsRun(t *testing.T) {
 		Payload:   mustJSON(map[string]string{"run_id": run.ID}),
 		Status:    OperationPending,
 	}
-	if err := store.CreateOperation(context.Background(), operation); err != nil {
+	if _, _, err := store.CreateOrGetOperation(context.Background(), operation); err != nil {
 		t.Fatalf("CreateOperation() error = %v", err)
 	}
 
@@ -1263,7 +1267,7 @@ func TestPlanPreviewUsesOnlyResourcesForEachScene(t *testing.T) {
 			{ID: "image:two", Kind: "competition_reference_image", Status: string(Succeeded), Data: resourceTwo},
 			{ID: "image:shared", Kind: "competition_reference_image", Status: string(Succeeded), Data: shared},
 		},
-	})
+	}, NodeConfig{})
 	if err != nil {
 		t.Fatalf("planPreview() error = %v", err)
 	}

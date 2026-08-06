@@ -58,11 +58,11 @@ func (backend *mongoJobBackend) Load() (localJobData, error) {
 }
 
 func (backend *mongoJobBackend) Save(data localJobData) error {
-	previousRevision := data.Revision
+	prevRev := data.Revision
 	data.Revision++
 	result, err := backend.collection.ReplaceOne(
 		context.Background(),
-		bson.M{"_id": mongoJobsDocumentID, "data.revision": previousRevision},
+		bson.M{"_id": mongoJobsDocumentID, "data.revision": prevRev},
 		mongoJobDocument{ID: mongoJobsDocumentID, Data: normalizeLocalJobData(data)},
 	)
 	if err != nil {

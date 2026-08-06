@@ -968,7 +968,6 @@ code.byted.org/gopkg/env v1.4.17/go.mod h1:gGi633mn6glSlyBw2pe7fbMti2HsjgVFaQMKT
 code.byted.org/gopkg/env v1.4.19/go.mod h1:gGi633mn6glSlyBw2pe7fbMti2HsjgVFaQMKTAAPt3A=
 code.byted.org/gopkg/env v1.4.20/go.mod h1:gGi633mn6glSlyBw2pe7fbMti2HsjgVFaQMKTAAPt3A=
 code.byted.org/gopkg/env v1.4.21/go.mod h1:gGi633mn6glSlyBw2pe7fbMti2HsjgVFaQMKTAAPt3A=
-code.byted.org/gopkg/env v1.5.2/go.mod h1:gGi633mn6glSlyBw2pe7fbMti2HsjgVFaQMKTAAPt3A=
 code.byted.org/gopkg/env v1.5.7/go.mod h1:gGi633mn6glSlyBw2pe7fbMti2HsjgVFaQMKTAAPt3A=
 code.byted.org/gopkg/env v1.5.8/go.mod h1:gGi633mn6glSlyBw2pe7fbMti2HsjgVFaQMKTAAPt3A=
 code.byted.org/gopkg/env v1.5.13/go.mod h1:gGi633mn6glSlyBw2pe7fbMti2HsjgVFaQMKTAAPt3A=
@@ -976,7 +975,6 @@ code.byted.org/gopkg/env v1.5.18/go.mod h1:gGi633mn6glSlyBw2pe7fbMti2HsjgVFaQMKT
 code.byted.org/gopkg/env v1.5.21/go.mod h1:gGi633mn6glSlyBw2pe7fbMti2HsjgVFaQMKTAAPt3A=
 code.byted.org/gopkg/env v1.6.0/go.mod h1:gGi633mn6glSlyBw2pe7fbMti2HsjgVFaQMKTAAPt3A=
 code.byted.org/gopkg/env v1.6.7/go.mod h1:gGi633mn6glSlyBw2pe7fbMti2HsjgVFaQMKTAAPt3A=
-code.byted.org/gopkg/env v1.6.9/go.mod h1:gGi633mn6glSlyBw2pe7fbMti2HsjgVFaQMKTAAPt3A=
 code.byted.org/gopkg/env v1.6.18/go.mod h1:gGi633mn6glSlyBw2pe7fbMti2HsjgVFaQMKTAAPt3A=
 code.byted.org/gopkg/env v1.7.1/go.mod h1:gGi633mn6glSlyBw2pe7fbMti2HsjgVFaQMKTAAPt3A=
 code.byted.org/gopkg/env v1.7.16 h1:wRyxIjDeDUWVzQWO+VByq1Jcm8JYcNLoO3QrnkunUyQ=
@@ -1047,8 +1045,6 @@ code.byted.org/gopkg/logs v1.2.11/go.mod h1:copg9TuNHuKc3eL/iSAOD4Y/dmZwmDCPqMZM
 code.byted.org/gopkg/logs v1.2.12/go.mod h1:dkR9c+Ax3QTf3wAz+NcP8H2Cj5TeF1nsE9PdNEvFKdM=
 code.byted.org/gopkg/logs v1.2.14/go.mod h1:OJ6preIDJtzvcIuuG1uZP/tYpgMl2xgPhQHk+9ySNmM=
 code.byted.org/gopkg/logs v1.2.15/go.mod h1:U6JShnxuHn79hP0JuF0J3vP+gsl2+L0zI3FjQD8w1GA=
-code.byted.org/gopkg/logs v1.2.16/go.mod h1:q0pNkZpcISl379vv5yktVtCqnzuAhoLVGtGavyCV3WA=
-code.byted.org/gopkg/logs v1.2.17/go.mod h1:q0pNkZpcISl379vv5yktVtCqnzuAhoLVGtGavyCV3WA=
 code.byted.org/gopkg/logs v1.2.21/go.mod h1:ZzURY3FJAjZRuk/V6yNxu731EqDnekKvs38qjTKVv5Q=
 code.byted.org/gopkg/logs v1.2.23/go.mod h1:YymZVx26krhturJqYl3oMAoAMG/xEEIi1FyxY/dGeV4=
 code.byted.org/gopkg/logs v1.2.26 h1:gNJ8pLrUYnLdqURfMH31V7K6Bc4+Y+PFWynTgF3GC6M=
@@ -1065,7 +1061,6 @@ code.byted.org/gopkg/logs/v2 v2.1.25/go.mod h1:+TJUv/m+uK7IhD5M0hpXThUi9j7DnvBWC
 code.byted.org/gopkg/logs/v2 v2.1.48/go.mod h1:658N2Y8GMQZ5QZzzuIyWF7pJCPkcjHZWfhGCdOUrzYo=
 code.byted.org/gopkg/logs/v2 v2.1.49/go.mod h1:O/SiUy3BaU5ZL7nz4JV8n6PWYrfhC5vUIdauHRkbgRA=
 code.byted.org/gopkg/logs/v2 v2.1.51/go.mod h1:JgOoP+JG4sZGz/JZ1wMestGZ7+H6W/Gdaz//EGkIFpY=
-code.byted.org/gopkg/logs/v2 v2.1.52/go.mod h1:JgOoP+JG4sZGz/JZ1wMestGZ7+H6W/Gdaz//EGkIFpY=
 code.byted.org/gopkg/logs/v2 v2.1.58/go.mod h1:w715UcGOkKlRYWmFEf8b0U1Z3vDe7v5OjdMSalSvXbc=
 code.byted.org/gopkg/logs/v2 v2.1.59/go.mod h1:w715UcGOkKlRYWmFEf8b0U1Z3vDe7v5OjdMSalSvXbc=
 code.byted.org/gopkg/logs/v2 v2.1.60/go.mod h1:w715UcGOkKlRYWmFEf8b0U1Z3vDe7v5OjdMSalSvXbc=
@@ -1176,8 +1171,6 @@ code.byted.org/gopkg/tccclient v1.2.32/go.mod h1:pw3JoWB+0Q/8UeEaK9SPJ4yYEJu9llz
 code.byted.org/gopkg/tccclient v1.2.33/go.mod h1:Rq+O9sKADDKYNbwNekye0nFNp5K3ayt45c0EFqCYQZs=
 code.byted.org/gopkg/tccclient v1.4.2/go.mod h1:ArXBvjQ2r+VzE8fB5kwPB2mA13FathUljeQPLKtb22M=
 code.byted.org/gopkg/tccclient v1.4.3/go.mod h1:1cyGfICI0XEd4FyBa9tYb5frYbdn4vcevySbfRkkC6A=
-code.byted.org/gopkg/tccclient v1.4.5/go.mod h1:1cyGfICI0XEd4FyBa9tYb5frYbdn4vcevySbfRkkC6A=
-code.byted.org/gopkg/tccclient v1.4.9/go.mod h1:lveiKPuSHNck1HGEDv6m1vrGf50qNG94HS0vAj93gkY=
 code.byted.org/gopkg/tccclient v1.6.0 h1:La8EZQTal2eup9rs/ABkpyOVpeBkyOZLHYOoUM2LW7A=
 code.byted.org/gopkg/tccclient v1.6.0/go.mod h1:zUnY+IH8wvNi6c/mcDqf04O5zgfZ/K4UsomPcQFhgjQ=
 code.byted.org/gopkg/tccclient/v3 v3.0.4 h1:dXpWmIJbx8OmLqzH4s8Jsex9ATc7RzHL7a13Vg3AYyE=
@@ -1378,7 +1371,6 @@ code.byted.org/security/zti-jwt-helper-golang v1.0.8/go.mod h1:o8EAccHzXCPR/YUiz
 code.byted.org/security/zti-jwt-helper-golang v1.0.9/go.mod h1:4cPAMhaIQoKEZLeF9VhOPvjSc7/aYftXXe18QQ91jbY=
 code.byted.org/security/zti-jwt-helper-golang v1.0.13/go.mod h1:hJzSJAKE3YVKfGbJhIFPUnPXDJL9yO1QfZ7Q5YS4Yc4=
 code.byted.org/security/zti-jwt-helper-golang v1.0.15/go.mod h1:MjycWDGtKjwaup5P9A/8NxvPSSB+h4muHxlTM+bpE04=
-code.byted.org/security/zti-jwt-helper-golang v1.0.16/go.mod h1:N4dIGAlgz5P8js+g9E0Otv80kZ6X/HvwdeR8zgaGykQ=
 code.byted.org/security/zti-jwt-helper-golang v1.0.17 h1:tka3D0j8sD778jsB7LwcImjhvKppiRdCbdxkPVnz32Y=
 code.byted.org/security/zti-jwt-helper-golang v1.0.17/go.mod h1:ovfxoNtw+B/q/U9KS9+SWj1gZiGTnwV17uMB/jGfKpI=
 code.byted.org/seed/common_idls/llmserver v1.0.9 h1:EVjKtXrtXq5EBzhA1d7AWp2GVERJiF8Soqai2dNFBHg=
@@ -1437,8 +1429,6 @@ code.byted.org/videoarch/bktmeta-simple-sdk v1.0.21 h1:86o6Js4oBXI3YZeaCVAuJuQea
 code.byted.org/videoarch/bktmeta-simple-sdk v1.0.21/go.mod h1:vugaKrPwPhgo2U4kS5DaKKSokQAmZMPbNSXmNoNfTFo=
 code.byted.org/videoarch/cdn_schedule_sdk v1.9.14-rc3 h1:WSjvnGOX1ecor9R8WwDMop0Q4b82BFu0OD8yEyDIIkU=
 code.byted.org/videoarch/cdn_schedule_sdk v1.9.14-rc3/go.mod h1:gqi1StvGgnkKR4hT9im7iSWrMrYHO/3ix0UnXlA8bfw=
-code.byted.org/videoarch/easyut v0.0.0-20221216085250-7233b02de4f1 h1:Lx+9Q+ggN9DeNGEn5JJypqHS2/FQYlaxPtYAXVpaeYk=
-code.byted.org/videoarch/easyut v0.0.0-20221216085250-7233b02de4f1/go.mod h1:fYjgMWYp7+Zz5UgpU9PcdY1SSCaWOxHNIITXsOgaprk=
 code.byted.org/videoarch/env v1.0.8 h1:dJmjvwPLfL06ZMcZUDDIprMa8YB0IrgjiMQohGP8WsM=
 code.byted.org/videoarch/env v1.0.8/go.mod h1:0zz+IMMffK7yoaM2D5M0Ojezk2L/IbHpmdR4ZBZ1qmU=
 code.byted.org/videoarch/geoisp v1.1.0/go.mod h1:WXx8DIb3MXXgeI4VuXCULDkRhtir2LZFyk/tkUK3Fj0=
@@ -1450,10 +1440,6 @@ code.byted.org/videoarch/httpcli v1.0.6/go.mod h1:l7Aw1Vmw9KtD8UEe+8bGGdEqHEwAj+
 code.byted.org/videoarch/iamsdk v1.0.23/go.mod h1:C4f+48HTtaOxu8JhYYast8P+Pfo134OUFAMCmXwfLO4=
 code.byted.org/videoarch/iamsdk v1.0.30 h1:01INtXHVCM2Z2p1XGMOIBfbSAbe5X6EA5C9IKql7zD4=
 code.byted.org/videoarch/iamsdk v1.0.30/go.mod h1:po+XK03cxdr1Tgy85WfqobVXZJF6IESCfDkZ/Ujx35U=
-code.byted.org/videoarch/imagex-sdk-golang v1.0.21 h1:HGX0CdJ65d+xeKtDRO36g3LAYmbmFP43nAJGOtrgmns=
-code.byted.org/videoarch/imagex-sdk-golang v1.0.21/go.mod h1:r4fJBncNgZONAetHTSwE0SVhVKGjO1O9Bb25LLFGPJ8=
-code.byted.org/videoarch/lcache v0.0.0-20230216055440-42cd6127c5fc h1:KdlMZjj2ERqh/1XolSTat6tqljP0ed5UWy1ibGSSWrI=
-code.byted.org/videoarch/lcache v0.0.0-20230216055440-42cd6127c5fc/go.mod h1:X7S63labn8eXDWtrRtV0Bm8yRluOt5Ia3cdqf9tFyZ8=
 code.byted.org/videoarch/terminator-sdk-go v1.5.0 h1:Id0Zx0jpvBwhTz/oGklpEeENlul3L1CbMCU84S1R618=
 code.byted.org/videoarch/terminator-sdk-go v1.5.0/go.mod h1:n2Qyp0a66vehNUOr6VvAF91KDYZOyGJnE7YIzn8F8PE=
 code.byted.org/videoarch/tracker-sdk-go v1.1.12 h1:SR29B393nY9jNpZdNykLfTx363If8TJOrpVv3YizHlM=
@@ -1467,8 +1453,6 @@ code.byted.org/videoarch/uploadauth_parser v0.0.0-20230518065427-ebe806e9201e h1
 code.byted.org/videoarch/uploadauth_parser v0.0.0-20230518065427-ebe806e9201e/go.mod h1:EZs2S1SI45pWg0vK6ib0WYc5gIc0rvMowH3vXGHqZMs=
 code.byted.org/videoarch/uploader_v5 v1.0.31 h1:qXAT/RJkS566QmvVUz1AP4zLs3LxaIC9RJvK+ibgVwI=
 code.byted.org/videoarch/uploader_v5 v1.0.31/go.mod h1:5zoPylCV7m/2WgRiMFBKGScP+Zd1btFNmML4N1IGXSQ=
-code.byted.org/videoarch/vecrypto v0.0.0-20230712111758-0ce17e22f1c9 h1:nI87PGzIXvumPSVw4AIJx/HJbcTyo+II4+tOytoyykU=
-code.byted.org/videoarch/vecrypto v0.0.0-20230712111758-0ce17e22f1c9/go.mod h1:Va5v5oFTo+tOKKFqX5g5RnsXLSETNqO54/yi1FstNXo=
 code.byted.org/videoarch/vfastcache v1.0.1/go.mod h1:xe4A9UpGz1ERMRemeWn2DiUp4cJ8Mz9SJiu5vNZ6bg4=
 code.byted.org/videoarch/vfastcache v1.0.9/go.mod h1:HEqpSR2WXHTGjAOf8yGpKHiHuBhBv1YHOaawsxX/huY=
 code.byted.org/videoarch/vfastcache v1.0.10 h1:PQLc3lh17iFnioTG1eZYgn3NWN3e1dQC2Ek5BkoGomk=
@@ -1603,7 +1587,6 @@ github.com/armon/go-radix v1.0.0/go.mod h1:ufUuZ+zHj4x4TnLV4JWEpy2hxWSpsRywHrMgI
 github.com/aryann/difflib v0.0.0-20170710044230-e206f873d14a/go.mod h1:DAHtR1m6lCRdSC2Tm3DSWRPvIPr6xNKyeHdqDQSQT+A=
 github.com/atotto/clipboard v0.1.4 h1:EH0zSVneZPSuFR11BlR9YppQTVDbh5+16AmcJi4g1z4=
 github.com/atotto/clipboard v0.1.4/go.mod h1:ZY9tmq7sm5xIbd9bOK4onWV4S6X0u6GY7Vn0Yu86PYI=
-github.com/avast/retry-go v3.0.0+incompatible h1:4SOWQ7Qs+oroOTQOYnAHqelpCO0biHSxpiH9JdtuBj0=
 github.com/avast/retry-go v3.0.0+incompatible/go.mod h1:XtSnn+n/sHqQIpZ10K1qAevBhOOCWBLXXy3hyiqqBrY=
 github.com/aws/aws-lambda-go v1.13.3/go.mod h1:4UKl9IzQMoD+QF79YdCuzCwp8VbmG4VAQwij/eHl5CU=
 github.com/aws/aws-sdk-go v1.27.0/go.mod h1:KmX6BPdI08NWTb3/sm4ZGu5ShLoqVDhKgpiN924inxo=
@@ -2061,11 +2044,8 @@ github.com/getsentry/raven-go v0.2.0/go.mod h1:KungGk8q33+aIAZUIVWZDr2OfAEBsO49P
 github.com/ghetzel/testify v1.4.1 h1:wpJirdM+znAnxWruGDBdIys5aU+wGJHNUTkgEo4PYwk=
 github.com/ghetzel/testify v1.4.1/go.mod h1:FwvFn1OiGEUgzhS3ySCjTBG7/sez0WRvOAxz5uQU8so=
 github.com/ghodss/yaml v1.0.0/go.mod h1:4dBDuWmgqj2HViK6kFavaiC9ZROes6MMH2rRYeMEF04=
-github.com/gin-contrib/sse v0.1.0 h1:Y/yl/+YNO8GZSjAhjMsSuLt29uWRFHdHYUb5lYOV9qE=
 github.com/gin-contrib/sse v0.1.0/go.mod h1:RHrZQHXnP2xjPF+u1gW/2HnVO7nvIa9PG3Gm+fLHvGI=
 github.com/gin-gonic/gin v1.6.3/go.mod h1:75u5sXoLsGZoRN5Sgbi1eraJ4GU3++wFwWzhwvtwp4M=
-github.com/gin-gonic/gin v1.7.4 h1:QmUZXrvJ9qZ3GfWvQ+2wnW/1ePrTEJqPKMYEU3lD/DM=
-github.com/gin-gonic/gin v1.7.4/go.mod h1:jD2toBW3GZUr5UMcdrwQA10I7RuaFOl/SGeDjXkfUtY=
 github.com/go-check/check v0.0.0-20180628173108-788fd7840127 h1:0gkP6mzaMqkmpcJYCFOLkIBwI7xFExG03bbkOkCvUPI=
 github.com/go-check/check v0.0.0-20180628173108-788fd7840127/go.mod h1:9ES+weclKsC9YodN5RgxqK/VD9HM9JsCSh7rNhMZE98=
 github.com/go-fonts/dejavu v0.1.0/go.mod h1:4Wt4I4OU2Nq9asgDCteaAaWZOV24E+0/Pwo0gppep4g=
@@ -2112,13 +2092,9 @@ github.com/go-openapi/swag v0.19.5/go.mod h1:POnQmlKehdgb5mhVOsnJFsivZCEZ/vjK9gh
 github.com/go-pdf/fpdf v0.5.0/go.mod h1:HzcnA+A23uwogo0tp9yU+l3V+KXhiESpt1PMayhOh5M=
 github.com/go-pdf/fpdf v0.6.0/go.mod h1:HzcnA+A23uwogo0tp9yU+l3V+KXhiESpt1PMayhOh5M=
 github.com/go-playground/assert/v2 v2.0.1/go.mod h1:VDjEfimB/XKnb+ZQfWdccd7VUvScMdVu0Titje2rxJ4=
-github.com/go-playground/locales v0.13.0 h1:HyWk6mgj5qFqCT5fjGBuRArbVDfE4hi8+e8ceBS/t7Q=
 github.com/go-playground/locales v0.13.0/go.mod h1:taPMhCMXrRLJO55olJkUXHZBHCxTMfnGwq/HNwmWNS8=
-github.com/go-playground/universal-translator v0.17.0 h1:icxd5fm+REJzpZx7ZfpaD876Lmtgy7VtROAbHHXk8no=
 github.com/go-playground/universal-translator v0.17.0/go.mod h1:UkSxE5sNxxRwHyU+Scu5vgOQjsIJAF8j9muTVoKLVtA=
 github.com/go-playground/validator/v10 v10.2.0/go.mod h1:uOYAAleCW8F/7oMFd6aG0GOhaH6EGOAJShg8Id5JGkI=
-github.com/go-playground/validator/v10 v10.4.1 h1:pH2c5ADXtd66mxoE0Zm9SUhxE20r7aM3F26W0hOn+GE=
-github.com/go-playground/validator/v10 v10.4.1/go.mod h1:nlOn6nFhuKACm19sB/8EGNn9GlaMV7XkbRSipzJ0Ii4=
 github.com/go-sql-driver/mysql v1.4.0/go.mod h1:zAC/RDZ24gD3HViQzih4MyKcchzm+sOG5ZlKdlhCg5w=
 github.com/go-sql-driver/mysql v1.5.0/go.mod h1:DCzpHaOWr8IXmIStZouvnhqoel9Qv2LBy8hT2VhHyBg=
 github.com/go-stack/stack v1.8.0/go.mod h1:v0f6uXyyMGvRgIKkXu+yp6POWl0qKG85gN/melR3HDY=
@@ -2463,7 +2439,6 @@ github.com/kr/text v0.2.0 h1:5Nx0Ya0ZqY2ygV366QzturHI13Jq95ApcVaJBhpS+AY=
 github.com/kr/text v0.2.0/go.mod h1:eLer722TekiGuMkidMxC/pM04lWEeraHUUmBw8l2grE=
 github.com/kylelemons/godebug v1.1.0 h1:RPNrshWIDI6G2gRW9EHilWtl7Z6Sb1BR0xunSBf0SNc=
 github.com/kylelemons/godebug v1.1.0/go.mod h1:9/0rRGxNHcop5bhtWyNeEfOS8JIWk580+fNqagV/RAw=
-github.com/leodido/go-urn v1.2.0 h1:hpXL4XnriNwQ/ABnpepYM/1vCLWNDfUNts8dX3xTG6Y=
 github.com/leodido/go-urn v1.2.0/go.mod h1:+8+nEpDfqqsY+g338gtMEUOtuK+4dEMhiQEgxpxOKII=
 github.com/lib/pq v1.8.0/go.mod h1:AlVN5x4E4T544tWzH6hKfbfQvm3HdbOxrmggDNAPY9o=
 github.com/lightstep/lightstep-tracer-common/golang/gogo v0.0.0-20190605223551-bc2310a04743/go.mod h1:qklhhLq1aX+mtWk9cPHPzaBjWImj5ULL6C7HFJtXQMM=

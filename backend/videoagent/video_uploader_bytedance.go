@@ -15,6 +15,8 @@ import (
 type VideoStorageConfig struct {
 	Space        string `json:"space"`
 	TopAccountID string `json:"top_account_id"`
+	AccessKey    string `json:"video_access_key"`
+	SecretKey    string `json:"video_secret_key"`
 	MaxBytes     int64  `json:"max_bytes,omitempty"`
 }
 
@@ -23,14 +25,32 @@ type bytedanceVideoUploader struct {
 	client *uploader.Client
 }
 
-func NewBytedanceVideoUploader(config VideoStorageConfig) (VideoUploader, error) {
+func NewBytedanceVideoUploader(config VideoStorageConfig) (uploaderClient VideoUploader, err error) {
 	if config.Space == "" {
 		config.Space = "jichuang"
 	}
 	if config.TopAccountID == "" {
 		return nil, fmt.Errorf("video storage top_account_id is required")
 	}
-	return &bytedanceVideoUploader{config: config, client: uploader.NewClientV2()}, nil
+	if (config.AccessKey == "") != (config.SecretKey == "") {
+		return nil, fmt.Errorf("video storage requires both video_access_key and video_secret_key")
+	}
+
+	options := make([]uploader.Option, 0, 1)
+	if config.AccessKey != "" {
+		options = append(options, uploader.WithPubVisBkt(uploader.BktPubVisOption{
+			Env: uploader.CNENV,
+			Ak:  config.AccessKey,
+			Sk:  config.SecretKey,
+		}))
+	}
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			uploaderClient = nil
+			err = fmt.Errorf("initialize video uploader: %v", recovered)
+		}
+	}()
+	return &bytedanceVideoUploader{config: config, client: uploader.NewClientV2(options...)}, nil
 }
 
 func (client *bytedanceVideoUploader) UploadVideo(ctx context.Context, reader io.Reader, size int64) (string, error) {

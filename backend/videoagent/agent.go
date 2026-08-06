@@ -45,11 +45,11 @@ func NewCanvasAgent(chatModel model.BaseChatModel, store *Store) (*CanvasAgent, 
 	if chatModel == nil {
 		return &CanvasAgent{store: store, maxIterations: 8}, nil
 	}
-	toolCallingModel, ok := chatModel.(model.ToolCallingChatModel)
+	toolModel, ok := chatModel.(model.ToolCallingChatModel)
 	if !ok {
 		return nil, fmt.Errorf("canvas agent model does not support tool calling")
 	}
-	return &CanvasAgent{model: toolCallingModel, store: store, maxIterations: 8}, nil
+	return &CanvasAgent{model: toolModel, store: store, maxIterations: 8}, nil
 }
 
 func (agent *CanvasAgent) Chat(ctx context.Context, input AgentChatInput) (reply AgentChatReply, err error) {
@@ -59,10 +59,10 @@ func (agent *CanvasAgent) Chat(ctx context.Context, input AgentChatInput) (reply
 	if err = EnsureProject(ctx, agent.store, input.ProjectID); err != nil {
 		return reply, err
 	}
-	if cached, originalText, found, err := agent.store.FindAgentChatReply(ctx, input.ProjectID, input.IdempotencyKey); err != nil {
+	if cached, oldText, found, err := agent.store.FindAgentChatReply(ctx, input.ProjectID, input.IdempotencyKey); err != nil {
 		return reply, err
 	} else if found {
-		if originalText != input.Text {
+		if oldText != input.Text {
 			return reply, fmt.Errorf("idempotency key was already used with a different message")
 		}
 		return cached, nil
@@ -154,7 +154,13 @@ func (agent *CanvasAgent) localCanvasOperation(ctx context.Context, input AgentC
 	if strings.Contains(text, "连接") || strings.Contains(text, "连线") {
 		from, to := localNodePair(text, workflow.Nodes)
 		if from != nil && to != nil {
-			edge := WorkflowEdge{FromNodeID: from.ID, FromPort: defaultOutput(from.Kind), ToNodeID: to.ID, ToPort: defaultInput(to.Kind)}
+			catalog := defaultNodeCatalog()
+			edge := WorkflowEdge{
+				FromNodeID: from.ID,
+				FromPort:   firstPortName(catalog[from.Kind].Outputs),
+				ToNodeID:   to.ID,
+				ToPort:     firstPortName(catalog[to.Kind].Inputs),
+			}
 			payload, _ := json.Marshal(edge)
 			return CanvasOperation{ProjectID: input.ProjectID, Type: OperationConnect, Payload: payload}, "已经准备好连接节点，请确认。", true
 		}
@@ -172,25 +178,27 @@ func (agent *CanvasAgent) localCanvasOperation(ctx context.Context, input AgentC
 }
 
 func localNodeKind(text string) NodeKind {
-	for _, candidate := range []struct {
-		words []string
-		kind  NodeKind
-	}{
-		{[]string{"需求分析", "需求"}, RequirementNode},
-		{[]string{"分镜脚本", "分镜"}, ClipScriptNode},
-		{[]string{"竞品图", "竞品"}, CompetitionReferenceNode},
-		{[]string{"tts", "配音", "音频"}, PromptTTSNode},
-		{[]string{"人物参考", "人物图"}, CharacterReferenceNode},
-		{[]string{"预览", "粗剪"}, PreviewNode},
-		{[]string{"成片", "正式视频"}, FinalVideoNode},
-	} {
-		for _, word := range candidate.words {
+	for _, candidate := range localNodeAliases {
+		for _, word := range candidate.aliases {
 			if strings.Contains(text, word) {
 				return candidate.kind
 			}
 		}
 	}
 	return ""
+}
+
+var localNodeAliases = []struct {
+	kind    NodeKind
+	aliases []string
+}{
+	{RequirementNode, []string{"需求分析", "需求"}},
+	{ClipScriptNode, []string{"分镜脚本", "分镜"}},
+	{CompetitionReferenceNode, []string{"竞品图", "竞品"}},
+	{PromptTTSNode, []string{"tts", "配音", "音频"}},
+	{CharacterReferenceNode, []string{"人物参考", "人物图"}},
+	{PreviewNode, []string{"预览", "粗剪"}},
+	{FinalVideoNode, []string{"成片", "正式视频"}},
 }
 
 func localNodePair(text string, nodes []WorkflowNode) (*WorkflowNode, *WorkflowNode) {
@@ -211,41 +219,28 @@ func nodeMentioned(text string, node WorkflowNode) bool {
 	if strings.Contains(text, strings.ToLower(node.ID)) || strings.Contains(text, node.ID) {
 		return true
 	}
-	aliases := map[NodeKind][]string{
-		RequirementNode:          {"需求分析", "需求"},
-		ClipScriptNode:           {"分镜脚本", "分镜"},
-		CompetitionReferenceNode: {"竞品图", "竞品"},
-		PromptTTSNode:            {"tts", "配音", "音频"},
-		CharacterReferenceNode:   {"人物参考", "人物图"},
-		PreviewNode:              {"预览", "粗剪"},
-		FinalVideoNode:           {"成片", "正式视频"},
-	}
-	for _, alias := range aliases[node.Kind] {
-		if strings.Contains(text, alias) {
-			return true
+	for _, candidate := range localNodeAliases {
+		if candidate.kind != node.Kind {
+			continue
+		}
+		for _, alias := range candidate.aliases {
+			if strings.Contains(text, alias) {
+				return true
+			}
 		}
 	}
 	return false
 }
 
-func defaultOutput(kind NodeKind) string {
-	definition := defaultNodeCatalog()[kind]
-	if len(definition.Outputs) == 0 {
+func firstPortName(ports []PortDefinition) string {
+	if len(ports) == 0 {
 		return ""
 	}
-	return definition.Outputs[0].Name
-}
-
-func defaultInput(kind NodeKind) string {
-	definition := defaultNodeCatalog()[kind]
-	if len(definition.Inputs) == 0 {
-		return ""
-	}
-	return definition.Inputs[0].Name
+	return ports[0].Name
 }
 
 func (agent *CanvasAgent) react(ctx context.Context, input AgentChatInput, conversation Conversation) (AgentChatReply, error) {
-	tools, err := agent.tools(ctx, input)
+	tools, err := agent.tools(input)
 	if err != nil {
 		return AgentChatReply{}, err
 	}
@@ -266,7 +261,7 @@ func (agent *CanvasAgent) react(ctx context.Context, input AgentChatInput, conve
 			messages = append(messages, schema.UserMessage(content))
 		}
 	}
-	reactAgent, err := react.NewAgent(ctx, &react.AgentConfig{
+	reactRun, err := react.NewAgent(ctx, &react.AgentConfig{
 		ToolCallingModel: agent.model,
 		ToolsConfig:      compose.ToolsNodeConfig{Tools: tools},
 		ToolReturnDirectly: map[string]struct{}{
@@ -278,18 +273,18 @@ func (agent *CanvasAgent) react(ctx context.Context, input AgentChatInput, conve
 	if err != nil {
 		return AgentChatReply{}, err
 	}
-	message, err := reactAgent.Generate(ctx, messages)
+	msg, err := reactRun.Generate(ctx, messages)
 	if err != nil {
 		return AgentChatReply{}, err
 	}
-	if message == nil {
+	if msg == nil {
 		return AgentChatReply{}, fmt.Errorf("agent model returned nil message")
 	}
-	if message.Role != schema.Tool || message.ToolName != "propose_canvas_operation" {
-		return agent.saveReply(ctx, input, conversation, message.Content, nil)
+	if msg.Role != schema.Tool || msg.ToolName != "propose_canvas_operation" {
+		return agent.saveReply(ctx, input, conversation, msg.Content, nil)
 	}
 	var operation CanvasOperation
-	if err := json.Unmarshal([]byte(message.Content), &operation); err != nil {
+	if err := json.Unmarshal([]byte(msg.Content), &operation); err != nil {
 		return AgentChatReply{}, fmt.Errorf("decode proposed canvas operation: %w", err)
 	}
 	return agent.saveReply(ctx, input, conversation, "已经准备好画布操作，请确认后执行。", &operation)
@@ -305,9 +300,9 @@ func messageText(message Message) string {
 	return strings.Join(parts, "\n")
 }
 
-func (agent *CanvasAgent) tools(ctx context.Context, input AgentChatInput) ([]tool.BaseTool, error) {
+func (agent *CanvasAgent) tools(input AgentChatInput) ([]tool.BaseTool, error) {
 	projectID := input.ProjectID
-	workflowTool, err := utils.InferTool("get_canvas_workflow", "读取当前画布工作流。", func(ctx context.Context, _ struct{}) (string, error) {
+	flowTool, err := utils.InferTool("get_canvas_workflow", "读取当前画布工作流。", func(ctx context.Context, _ struct{}) (string, error) {
 		project, err := agent.store.GetProject(ctx, projectID)
 		if err != nil {
 			return "", err
@@ -322,7 +317,7 @@ func (agent *CanvasAgent) tools(ctx context.Context, input AgentChatInput) ([]to
 	if err != nil {
 		return nil, err
 	}
-	operationTool, err := utils.InferTool("propose_canvas_operation", "提出一个需要用户确认的画布操作。", func(ctx context.Context, args canvasOperationArgs) (string, error) {
+	opTool, err := utils.InferTool("propose_canvas_operation", "提出一个需要用户确认的画布操作。", func(ctx context.Context, args canvasOperationArgs) (string, error) {
 		if !validOperationType(args.Type) {
 			return "", fmt.Errorf("unsupported canvas operation: %s", args.Type)
 		}
@@ -349,7 +344,7 @@ func (agent *CanvasAgent) tools(ctx context.Context, input AgentChatInput) ([]to
 	if err != nil {
 		return nil, err
 	}
-	return []tool.BaseTool{workflowTool, operationTool}, nil
+	return []tool.BaseTool{flowTool, opTool}, nil
 }
 
 func (agent *CanvasAgent) createOperationReply(ctx context.Context, input AgentChatInput, conversation Conversation, operation CanvasOperation, text string) (AgentChatReply, error) {

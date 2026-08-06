@@ -339,7 +339,6 @@ type Clients struct {
 	Planner        Planner
 	PreviewPlanner PreviewPlanner
 	Image          ImageClient
-	CharacterImage ImageClient
 	TTS            TTSClient
 	Video          VideoClient
 	Audit          ImageAuditor

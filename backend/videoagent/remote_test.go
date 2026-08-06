@@ -142,7 +142,7 @@ func TestValidateCanvasRemoteConfigAcceptsDirectMediaClients(t *testing.T) {
 		CallbackSecret: "secret",
 		Seedance:       &SeedanceConfig{BaseURL: "http://seedance.test", APIKey: "key", Model: "model"},
 		PromptTTS:      &PromptTTSConfig{},
-		ImageGateway:   &ModelGatewayImageConfig{Model: "model"},
+		ImageArk:       &ArkImageConfig{BaseURL: "http://ark.test", APIKey: "key", Model: "model"},
 		FinalVideo:     &MetaFinalVideoConfig{BizID: 1},
 		VideoStorage:   &VideoStorageConfig{TopAccountID: "account"},
 		Endpoints: map[string]string{

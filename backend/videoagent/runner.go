@@ -296,7 +296,7 @@ func (runner *Runner) confirmRunOperation(ctx context.Context, operationID strin
 		}
 	}
 	if operation.Type == OperationRetry {
-		if err := runner.retry(operation.RunID); err != nil {
+		if err := runner.store.retry(operation.RunID); err != nil {
 			return operation, nil, err
 		}
 	} else if err := runner.Cancel(ctx, operation.RunID); err != nil {
@@ -429,14 +429,10 @@ func (runner *Runner) Restore(ctx context.Context, runID string) error {
 
 // Retry clears failed nodes and advances the same immutable workflow version.
 func (runner *Runner) Retry(ctx context.Context, runID string) error {
-	if err := runner.retry(runID); err != nil {
+	if err := runner.store.retry(runID); err != nil {
 		return err
 	}
 	return runner.Advance(ctx, runID)
-}
-
-func (runner *Runner) retry(runID string) error {
-	return runner.store.retry(runID)
 }
 
 // Cancel stops orchestration for a Run and makes later callbacks no-ops.
@@ -489,11 +485,6 @@ func (runner *Runner) cancelLateSubmission(ctx context.Context, command Command,
 		result.Artifacts[index].Message = result.Message
 	}
 	return result
-}
-
-// OnCallback refreshes an existing job and records deduplication only after the Run advances.
-func (runner *Runner) OnCallback(ctx context.Context, provider, eventID, jobID string) error {
-	return runner.ProcessCallback(ctx, CallbackMessage{Provider: provider, EventID: eventID, JobID: jobID})
 }
 
 // ProcessCallback resumes one persisted job from a durable MQ message.

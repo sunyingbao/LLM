@@ -137,7 +137,7 @@ func TestPlanFinalVideoCreatesOneRenderJobPerCut(t *testing.T) {
 			{ID: "preview-one", Kind: "preview_video", Status: string(Succeeded), Data: previewOne},
 			{ID: "preview-two", Kind: "preview_video", Status: string(Succeeded), Data: previewTwo},
 		},
-	})
+	}, NodeConfig{})
 	if err != nil {
 		t.Fatalf("planFinalVideo() error = %v", err)
 	}

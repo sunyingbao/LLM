@@ -10,7 +10,6 @@ require (
 	code.byted.org/overpass/ad_site_creative_meta_server v0.0.0-20260625031545-56e7bc369f93
 	code.byted.org/overpass/lab_creative_model_gateway v0.0.0-20240531050809-42894aba4b4d
 	code.byted.org/videoarch/alpha-go-sdk v0.1.32
-	code.byted.org/videoarch/imagex-sdk-golang v1.0.21
 	code.byted.org/videoarch/uploader_v5 v1.0.31
 	github.com/bmatcuk/doublestar/v4 v4.10.0
 	github.com/bytedance/sonic v1.15.0
@@ -26,6 +25,7 @@ require (
 	github.com/getkin/kin-openapi v0.118.0
 	github.com/mattn/go-runewidth v0.0.19
 	github.com/nats-io/nats.go v1.52.0
+	github.com/volcengine/volcengine-go-sdk v1.1.44
 	go.mongodb.org/mongo-driver/v2 v2.5.0
 	golang.org/x/sync v0.20.0
 	golang.org/x/sys v0.42.0
@@ -156,13 +156,11 @@ require (
 	code.byted.org/videoarch/go-utils v0.7.4 // indirect
 	code.byted.org/videoarch/httpcli v1.0.6 // indirect
 	code.byted.org/videoarch/iamsdk v1.0.30 // indirect
-	code.byted.org/videoarch/lcache v0.0.0-20230216055440-42cd6127c5fc // indirect
 	code.byted.org/videoarch/terminator-sdk-go v1.5.0 // indirect
 	code.byted.org/videoarch/tracker-sdk-go v1.1.12 // indirect
 	code.byted.org/videoarch/ttlcache v1.0.6 // indirect
 	code.byted.org/videoarch/upload_auth_go v1.0.8 // indirect
 	code.byted.org/videoarch/uploadauth_parser v0.0.0-20230518065427-ebe806e9201e // indirect
-	code.byted.org/videoarch/vecrypto v0.0.0-20230712111758-0ce17e22f1c9 // indirect
 	code.byted.org/videoarch/vfastcache v1.0.10 // indirect
 	code.byted.org/videoarch/vstorage-common v1.0.4 // indirect
 	code.byted.org/videoarch/winter v1.0.8 // indirect
@@ -182,7 +180,6 @@ require (
 	github.com/antonmedv/expr v1.15.5 // indirect
 	github.com/apache/thrift v0.16.0 // indirect
 	github.com/atotto/clipboard v0.1.4 // indirect
-	github.com/avast/retry-go v3.0.0+incompatible // indirect
 	github.com/aws/aws-sdk-go-v2 v1.33.0 // indirect
 	github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream v1.6.3 // indirect
 	github.com/aws/aws-sdk-go-v2/config v1.29.1 // indirect
@@ -351,7 +348,6 @@ require (
 	github.com/vmihailenco/tagparser v0.1.2 // indirect
 	github.com/vmihailenco/tagparser/v2 v2.0.0 // indirect
 	github.com/volcengine/volc-sdk-golang v1.0.172 // indirect
-	github.com/volcengine/volcengine-go-sdk v1.1.44 // indirect
 	github.com/wk8/go-ordered-map/v2 v2.1.8 // indirect
 	github.com/xdg-go/pbkdf2 v1.0.0 // indirect
 	github.com/xdg-go/scram v1.2.0 // indirect

@@ -12,21 +12,20 @@ import (
 )
 
 type RemoteConfig struct {
-	BaseURL        string                   `json:"base_url"`
-	APIKey         string                   `json:"api_key"`
-	CallbackSecret string                   `json:"callback_secret"`
-	Endpoints      map[string]string        `json:"endpoints"`
-	Seedance       *SeedanceConfig          `json:"seedance,omitempty"`
-	PromptTTS      *PromptTTSConfig         `json:"prompt_tts,omitempty"`
-	ImageGateway   *ModelGatewayImageConfig `json:"image_gateway,omitempty"`
-	ClipMix        *ClipMixConfig           `json:"clipmix,omitempty"`
-	CharacterImage *ModelHubImageConfig     `json:"character_image,omitempty"`
-	VideoStorage   *VideoStorageConfig      `json:"video_storage,omitempty"`
-	FinalVideo     *MetaFinalVideoConfig    `json:"finalvideo,omitempty"`
-	MediaURL       *MediaURLConfig          `json:"media_url,omitempty"`
-	ImageMediaURL  *MediaURLConfig          `json:"image_media_url,omitempty"`
-	AudioMediaURL  *MediaURLConfig          `json:"audio_media_url,omitempty"`
-	VideoMediaURL  *MediaURLConfig          `json:"video_media_url,omitempty"`
+	BaseURL        string                `json:"base_url"`
+	APIKey         string                `json:"api_key"`
+	CallbackSecret string                `json:"callback_secret"`
+	Endpoints      map[string]string     `json:"endpoints"`
+	Seedance       *SeedanceConfig       `json:"seedance,omitempty"`
+	PromptTTS      *PromptTTSConfig      `json:"prompt_tts,omitempty"`
+	ImageArk       *ArkImageConfig       `json:"image_ark,omitempty"`
+	ClipMix        *ClipMixConfig        `json:"clipmix,omitempty"`
+	VideoStorage   *VideoStorageConfig   `json:"video_storage,omitempty"`
+	FinalVideo     *MetaFinalVideoConfig `json:"finalvideo,omitempty"`
+	MediaURL       *MediaURLConfig       `json:"media_url,omitempty"`
+	ImageMediaURL  *MediaURLConfig       `json:"image_media_url,omitempty"`
+	AudioMediaURL  *MediaURLConfig       `json:"audio_media_url,omitempty"`
+	VideoMediaURL  *MediaURLConfig       `json:"video_media_url,omitempty"`
 }
 
 // NewRemoteClients creates production adapters without depending on Mega workflow APIs.
@@ -36,9 +35,6 @@ func NewRemoteClients(config RemoteConfig, videoImportCache VideoImportCache) (C
 	}
 	if config.Seedance != nil && config.FinalVideo != nil && config.VideoStorage == nil {
 		return Clients{}, fmt.Errorf("video storage is required between seedance preview and meta finalvideo")
-	}
-	if config.CharacterImage != nil && (config.Endpoints["prompt_shield"] == "" || config.Endpoints["image_audit"] == "") {
-		return Clients{}, fmt.Errorf("character image requires prompt_shield and image_audit endpoints")
 	}
 	httpClient := &http.Client{Timeout: 2 * time.Minute}
 	transport := newRemoteTransport(config, httpClient)
@@ -93,9 +89,9 @@ func NewRemoteClients(config RemoteConfig, videoImportCache VideoImportCache) (C
 		}
 		var importer AudioImporter
 		if config.PromptTTS.Storage != nil {
-			uploader, uploadErr := NewBytedanceAudioUploader(*config.PromptTTS.Storage)
-			if uploadErr != nil {
-				return Clients{}, uploadErr
+			uploader, err := NewBytedanceAudioUploader(*config.PromptTTS.Storage)
+			if err != nil {
+				return Clients{}, err
 			}
 			importer, err = NewHTTPAudioImporter(uploader, nil, config.PromptTTS.Storage.MaxBytes)
 			if err != nil {
@@ -107,37 +103,23 @@ func NewRemoteClients(config RemoteConfig, videoImportCache VideoImportCache) (C
 			return Clients{}, err
 		}
 	}
-	var gateway ModelGateway
-	if config.ImageGateway != nil || config.ClipMix != nil {
-		gateway, err = NewBytedanceModelGateway()
-		if err != nil {
-			return Clients{}, err
-		}
-	}
-	if config.ImageGateway != nil {
-		clients.Image, err = NewModelGatewayImageClient(*config.ImageGateway, gateway)
+	if config.ImageArk != nil {
+		clients.Image, err = NewArkImageClient(*config.ImageArk)
 		if err != nil {
 			return Clients{}, err
 		}
 	}
 	if config.ClipMix != nil {
+		gateway, gatewayErr := NewBytedanceModelGateway()
+		if gatewayErr != nil {
+			return Clients{}, gatewayErr
+		}
 		clients.PreviewPlanner, err = NewClipMixPlanner(gateway, config.ClipMix.Model)
 		if err != nil {
 			return Clients{}, err
 		}
 	}
-	if config.CharacterImage != nil {
-		uploader, err := NewBytedanceImageUploader(config.CharacterImage.ImageX)
-		if err != nil {
-			return Clients{}, err
-		}
-		clients.CharacterImage, err = NewModelHubImageClient(*config.CharacterImage, httpClient, uploader)
-		if err != nil {
-			return Clients{}, err
-		}
-	}
 	clients.Image = withImageURL(clients.Image, mediaResolvers.Image)
-	clients.CharacterImage = withImageURL(clients.CharacterImage, mediaResolvers.Image)
 	return clients, nil
 }
 
@@ -147,7 +129,7 @@ func ValidateCanvasRemoteConfig(config RemoteConfig) error {
 		return err
 	}
 	missing := make([]string, 0, 6)
-	if config.ImageGateway == nil && !hasEndpoints(config.Endpoints, "image_submit", "image_status", "image_find") {
+	if config.ImageArk == nil && !hasEndpoints(config.Endpoints, "image_submit", "image_status", "image_find") {
 		missing = append(missing, "image")
 	}
 	if config.PromptTTS == nil && !hasEndpoints(config.Endpoints, "tts_submit", "tts_status", "tts_find") {
