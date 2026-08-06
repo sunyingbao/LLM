@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"eino-cli/videoagent/backend/application"
+	"eino-cli/videoagent/backend/messaging"
 	"github.com/cloudwego/eino/components/model"
 	"go.mongodb.org/mongo-driver/v2/mongo"
 	"go.mongodb.org/mongo-driver/v2/mongo/options"
@@ -38,10 +39,10 @@ func run() error {
 	mongoURI := flag.String("mongo-uri", "mongodb://127.0.0.1:27017", "MongoDB URI; empty disables MongoDB state")
 	mongoDatabase := flag.String("mongo-database", "video_agent", "MongoDB database name")
 	mongoCollection := flag.String("mongo-collection", "workflow_state", "MongoDB state collection name")
-	natsURL := flag.String("nats-url", videoagent.DefaultNATSURL, "NATS server URL")
-	natsStream := flag.String("nats-stream", videoagent.DefaultNATSStream, "JetStream stream name")
-	natsSubject := flag.String("nats-subject", videoagent.DefaultNATSSubject, "callback subject")
-	natsConsumer := flag.String("nats-consumer", videoagent.DefaultNATSConsumer, "durable callback consumer")
+	natsURL := flag.String("nats-url", messaging.DefaultNATSURL, "NATS server URL")
+	natsStream := flag.String("nats-stream", messaging.DefaultNATSStream, "JetStream stream name")
+	natsSubject := flag.String("nats-subject", messaging.DefaultNATSSubject, "callback subject")
+	natsConsumer := flag.String("nats-consumer", messaging.DefaultNATSConsumer, "durable callback consumer")
 	flag.Parse()
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -54,7 +55,7 @@ func run() error {
 		credentials = &loaded
 	}
 
-	messageBus, err := videoagent.NewNATSMessageBus(ctx, videoagent.NATSConfig{
+	messageBus, err := messaging.NewNATSMessageBus(ctx, messaging.NATSConfig{
 		URL:      *natsURL,
 		Stream:   *natsStream,
 		Subject:  *natsSubject,
