@@ -12,7 +12,7 @@ import (
 	"syscall"
 	"time"
 
-	"eino-cli/backend/videoagent"
+	"eino-cli/videoagent"
 	"github.com/cloudwego/eino/components/model"
 	"go.mongodb.org/mongo-driver/v2/mongo"
 	"go.mongodb.org/mongo-driver/v2/mongo/options"

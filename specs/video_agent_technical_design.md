@@ -316,24 +316,24 @@ HTTP 回调只负责读取原始 body、验签并发布 `CallbackMessage`；它�
 
 | 文件 | 责任 |
 |---|---|
-| `backend/videoagent/types.go` | VideoWorkflow、Run、Artifact、节点类型 |
-| `backend/videoagent/workflow.go` | 节点目录、端口校验、环路校验和 Workflow 快照复制 |
-| `backend/videoagent/runner.go` | Start、Advance、MQ Callback |
-| `backend/videoagent/handler.go` | 需求、clipscript、资源、预览、finalvideo 节点 |
-| `backend/videoagent/store.go` | JSON/Mongo 持久化、任务认领和回调幂等收据 |
-| `backend/videoagent/local.go` | 本地 Job 库、队列及确定性 Client |
-| `backend/videoagent/mongo_application.go` | 使用 MongoDB 状态的本地确定性应用 |
-| `backend/videoagent/agent.go` | Eino ReAct 对话、Canvas Operation 提议和确认入口 |
-| `backend/videoagent/model_planner.go` | 用注入 Chat Model 生成需求、分镜和资源计划 |
-| `backend/videoagent/prompt_planner.go` | 使用真实 PromptKey 构造需求、clipscript、竞品图、TTS 和人物参考图计划 |
-| `backend/videoagent/fornax_prompt.go` | `PromptExecutor` 的 Fornax SDK 实现 |
-| `backend/videoagent/remote.go` | 直接能力 HTTP Client；不调用 Mega 工作流 |
-| `backend/videoagent/queue.go` | MQ 消息到 Run 回调恢复的适配边界 |
-| `backend/videoagent/nats.go` | NATS JetStream 持久发布、消费确认、失败重投和消息去重 |
-| `backend/videoagent/callback_auth.go` | 本地放行校验和生产 HMAC 校验实现 |
-| `backend/videoagent/monitor.go` | 节点执行、回调和错误的观测事件及本地计数器 |
-| `backend/videoagent/http.go` | Canvas、Agent、Operation、Run、回调 HTTP API |
-| `backend/videoagent/workflow_test.go` | 非法端口、环路和自定义 Workflow 快照测试 |
+| `videoagent/types.go` | VideoWorkflow、Run、Artifact、节点类型 |
+| `videoagent/workflow.go` | 节点目录、端口校验、环路校验和 Workflow 快照复制 |
+| `videoagent/runner.go` | Start、Advance、MQ Callback |
+| `videoagent/handler.go` | 需求、clipscript、资源、预览、finalvideo 节点 |
+| `videoagent/store.go` | JSON/Mongo 持久化、任务认领和回调幂等收据 |
+| `videoagent/local.go` | 本地 Job 库、队列及确定性 Client |
+| `videoagent/mongo_application.go` | 使用 MongoDB 状态的本地确定性应用 |
+| `videoagent/agent.go` | Eino ReAct 对话、Canvas Operation 提议和确认入口 |
+| `videoagent/model_planner.go` | 用注入 Chat Model 生成需求、分镜和资源计划 |
+| `videoagent/prompt_planner.go` | 使用真实 PromptKey 构造需求、clipscript、竞品图、TTS 和人物参考图计划 |
+| `videoagent/fornax_prompt.go` | `PromptExecutor` 的 Fornax SDK 实现 |
+| `videoagent/remote.go` | 直接能力 HTTP Client；不调用 Mega 工作流 |
+| `videoagent/queue.go` | MQ 消息到 Run 回调恢复的适配边界 |
+| `videoagent/nats.go` | NATS JetStream 持久发布、消费确认、失败重投和消息去重 |
+| `videoagent/callback_auth.go` | 本地放行校验和生产 HMAC 校验实现 |
+| `videoagent/monitor.go` | 节点执行、回调和错误的观测事件及本地计数器 |
+| `videoagent/http.go` | Canvas、Agent、Operation、Run、回调 HTTP API |
+| `videoagent/workflow_test.go` | 非法端口、环路和自定义 Workflow 快照测试 |
 | `cmd/videoagent/main.go` | 可启动入口 |
 
 ```bash
@@ -560,8 +560,8 @@ POST /callbacks/{provider}
 8. Canvas 修改产生新 WorkflowVersion，旧 Run 仍按快照执行；Agent 不可绕过画布确认直接改写已运行版本。
 
 ```bash
-GOTOOLCHAIN=go1.25.0 go test -race ./backend/videoagent
-GOTOOLCHAIN=go1.25.0 go vet ./backend/videoagent
+GOTOOLCHAIN=go1.25.0 go test -race ./videoagent
+GOTOOLCHAIN=go1.25.0 go vet ./videoagent
 make videoagent-build
 ```
 

@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"eino-cli/backend/videoagent"
+	"eino-cli/videoagent"
 	modelcomponent "github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
 )

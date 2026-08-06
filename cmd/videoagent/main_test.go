@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"eino-cli/backend/videoagent"
+	"eino-cli/videoagent"
 )
 
 func TestExampleConfigsDecode(t *testing.T) {
