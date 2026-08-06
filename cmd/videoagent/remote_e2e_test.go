@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"eino-cli/videoagent"
+	"eino-cli/videoagent/backend/application"
 )
 
 func TestRemoteVideoAgentEndToEnd(t *testing.T) {

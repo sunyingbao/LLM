@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"eino-cli/videoagent"
+	"eino-cli/videoagent/backend/application"
 )
 
 func TestDirectMediaProvidersSmoke(t *testing.T) {

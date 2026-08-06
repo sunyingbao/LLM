@@ -5,7 +5,7 @@ videoagent-build:
 	GOTOOLCHAIN=go1.25.0 go build -mod=readonly -tags 'fornax bytedance' -o bin/videoagent ./cmd/videoagent
 
 videoagent-test:
-	GOTOOLCHAIN=go1.25.0 go test -mod=readonly ./videoagent ./cmd/videoagent
+	GOTOOLCHAIN=go1.25.0 go test -mod=readonly ./videoagent/backend/... ./cmd/videoagent
 
 videoagent-tidy:
 	GOTOOLCHAIN=go1.25.0 go mod tidy
