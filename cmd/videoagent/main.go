@@ -12,8 +12,9 @@ import (
 	"syscall"
 	"time"
 
-	videoagent "eino-cli/videoagent/backend/application"
+	app "eino-cli/videoagent/backend/application"
 	"eino-cli/videoagent/backend/messaging"
+	videomodel "eino-cli/videoagent/backend/model"
 	"github.com/cloudwego/eino/components/model"
 	"go.mongodb.org/mongo-driver/v2/mongo"
 	"go.mongodb.org/mongo-driver/v2/mongo/options"
@@ -46,9 +47,9 @@ func run() error {
 	flag.Parse()
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	var credentials *videoagent.CredentialsConfig
+	var credentials *videomodel.CredentialsConfig
 	if *credentialsConfigPath != "" {
-		loaded, err := readJSON[videoagent.CredentialsConfig](*credentialsConfigPath)
+		loaded, err := readJSON[videomodel.CredentialsConfig](*credentialsConfigPath)
 		if err != nil {
 			return err
 		}
@@ -77,18 +78,19 @@ func run() error {
 		if err := application.Start(ctx); err != nil {
 			return err
 		}
-		return serve(ctx, *address, videoagent.NewApplicationHTTPHandler(application))
+		return serve(ctx, *address, app.NewApplicationHTTPHandler(application))
 	}
 
-	var application *videoagent.LocalApplication
+	var application *app.LocalApplication
 	if *mongoURI != "" {
-		application, err = videoagent.NewMongoLocalApplication(*dataDir, *mongoURI, *mongoDatabase, *mongoCollection)
+		application, err = app.NewMongoLocalApplication(*dataDir, *mongoURI, *mongoDatabase, *mongoCollection)
 	} else {
-		application, err = videoagent.NewLocalApplication(*dataDir)
+		application, err = app.NewLocalApplication(*dataDir)
 	}
 	if err != nil {
 		return err
 	}
+	defer application.Close()
 	if *modelConfigPath != "" || credentials != nil {
 		chatModel, err := loadChatModel(*modelConfigPath, *chatModelKey, credentials)
 		if err != nil {
@@ -117,11 +119,10 @@ func run() error {
 		}
 	}
 	application.SetMessageQueue(messageBus, messageBus)
-	defer application.Close()
 	if err := application.Start(ctx); err != nil {
 		return err
 	}
-	return serve(ctx, *address, videoagent.NewHTTPHandler(application))
+	return serve(ctx, *address, app.NewHTTPHandler(application))
 }
 
 func logCloseError(name string, close func() error) {
@@ -156,22 +157,22 @@ func serve(ctx context.Context, address string, handler http.Handler) error {
 	}
 }
 
-func loadChatModel(path, promptKey string, credentials *videoagent.CredentialsConfig) (model.BaseChatModel, error) {
+func loadChatModel(path, promptKey string, credentials *videomodel.CredentialsConfig) (model.BaseChatModel, error) {
 	if credentials != nil {
 		config, err := credentials.ChatModelConfig(promptKey)
 		if err != nil {
 			return nil, err
 		}
-		return videoagent.NewChatModel(context.Background(), config)
+		return app.NewChatModel(context.Background(), config)
 	}
-	config, err := readJSON[videoagent.ChatModelConfig](path)
+	config, err := readJSON[app.ChatModelConfig](path)
 	if err != nil {
 		return nil, err
 	}
-	return videoagent.NewChatModel(context.Background(), config)
+	return app.NewChatModel(context.Background(), config)
 }
 
-func loadCredentialPlanner(ctx context.Context, credentials videoagent.CredentialsConfig) (videoagent.Planner, error) {
+func loadCredentialPlanner(ctx context.Context, credentials videomodel.CredentialsConfig) (app.Planner, error) {
 	requirementModel, err := loadCredentialModel(ctx, credentials, "aic.aic_tool.user_req_analysis")
 	if err != nil {
 		return nil, err
@@ -180,21 +181,21 @@ func loadCredentialPlanner(ctx context.Context, credentials videoagent.Credentia
 	if err != nil {
 		return nil, err
 	}
-	return videoagent.NewStageModelPlanner(requirementModel, clipScriptModel, requirementModel)
+	return app.NewStageModelPlanner(requirementModel, clipScriptModel, requirementModel)
 }
 
-func loadCredentialModel(ctx context.Context, credentials videoagent.CredentialsConfig, promptKey string) (model.BaseChatModel, error) {
+func loadCredentialModel(ctx context.Context, credentials videomodel.CredentialsConfig, promptKey string) (model.BaseChatModel, error) {
 	config, err := credentials.ChatModelConfig(promptKey)
 	if err != nil {
 		return nil, err
 	}
-	return videoagent.NewChatModel(ctx, config)
+	return app.NewChatModel(ctx, config)
 }
 
-func loadPromptPlanner(path string, credentials *videoagent.CredentialsConfig) (videoagent.Planner, error) {
-	config := videoagent.PromptRuntimeConfig{Planner: videoagent.DefaultPromptPlannerConfig()}
+func loadPromptPlanner(path string, credentials *videomodel.CredentialsConfig) (app.Planner, error) {
+	config := app.PromptRuntimeConfig{Planner: app.DefaultPromptPlannerConfig()}
 	if path != "" {
-		loaded, err := readJSON[videoagent.PromptRuntimeConfig](path)
+		loaded, err := readJSON[app.PromptRuntimeConfig](path)
 		if err != nil {
 			return nil, err
 		}
@@ -203,28 +204,28 @@ func loadPromptPlanner(path string, credentials *videoagent.CredentialsConfig) (
 	if credentials != nil {
 		config.Fornax = credentials.Fornax
 	}
-	executor, err := videoagent.NewFornaxPromptExecutor(config.Fornax)
+	executor, err := app.NewFornaxPromptExecutor(config.Fornax)
 	if err != nil {
 		return nil, err
 	}
-	return videoagent.NewPromptPlanner(executor, config.Planner)
+	return app.NewPromptPlanner(executor, config.Planner)
 }
 
-func newRemoteApplication(ctx context.Context, dataDir, remoteConfigPath, modelConfigPath, promptConfigPath, mongoURI, mongoDatabase, mongoCollection, chatModelKey string, credentials *videoagent.CredentialsConfig) (application *videoagent.Application, err error) {
+func newRemoteApplication(ctx context.Context, dataDir, remoteConfigPath, modelConfigPath, promptConfigPath, mongoURI, mongoDatabase, mongoCollection, chatModelKey string, credentials *videomodel.CredentialsConfig) (application *app.Application, err error) {
 	if modelConfigPath == "" && credentials == nil {
 		return nil, errors.New("model config is required in remote mode")
 	}
 	if promptConfigPath == "" && credentials == nil {
 		return nil, errors.New("prompt config is required in remote mode")
 	}
-	remoteConfig, err := readJSON[videoagent.RemoteConfig](remoteConfigPath)
+	remoteConfig, err := readJSON[app.RemoteConfig](remoteConfigPath)
 	if err != nil {
 		return nil, err
 	}
-	if err := videoagent.ValidateCanvasRemoteConfig(remoteConfig); err != nil {
+	if err := app.ValidateCanvasRemoteConfig(remoteConfig); err != nil {
 		return nil, err
 	}
-	store := videoagent.NewStore(dataDir + "/workflow.json")
+	store := app.NewStore(dataDir + "/workflow.json")
 	var mongoClient *mongo.Client
 	defer func() {
 		if err != nil && mongoClient != nil {
@@ -242,12 +243,12 @@ func newRemoteApplication(ctx context.Context, dataDir, remoteConfigPath, modelC
 		if err != nil {
 			return nil, err
 		}
-		store, err = videoagent.NewMongoStore(mongoClient, mongoDatabase, mongoCollection)
+		store, err = app.NewMongoStore(mongoClient, mongoDatabase, mongoCollection)
 		if err != nil {
 			return nil, err
 		}
 	}
-	clients, err := videoagent.NewRemoteClients(remoteConfig, store)
+	clients, err := app.NewRemoteClients(remoteConfig, store)
 	if err != nil {
 		return nil, err
 	}
@@ -255,7 +256,7 @@ func newRemoteApplication(ctx context.Context, dataDir, remoteConfigPath, modelC
 	if err != nil {
 		return nil, err
 	}
-	clients.Planner, err = videoagent.NewModelPlanner(chatModel)
+	clients.Planner, err = app.NewModelPlanner(chatModel)
 	if err != nil {
 		return nil, err
 	}
@@ -271,18 +272,18 @@ func newRemoteApplication(ctx context.Context, dataDir, remoteConfigPath, modelC
 			return nil, err
 		}
 	}
-	agent, err := videoagent.NewCanvasAgent(chatModel, store)
+	agent, err := app.NewCanvasAgent(chatModel, store)
 	if err != nil {
 		return nil, err
 	}
-	if err := videoagent.EnsureProject(ctx, store, "demo"); err != nil {
+	if err := app.EnsureProject(ctx, store, "demo"); err != nil {
 		return nil, err
 	}
-	application, err = videoagent.NewApplication(store, clients, agent)
+	application, err = app.NewApplication(store, clients, agent)
 	if err != nil {
 		return nil, err
 	}
-	application.Runner.SetMonitor(videoagent.MonitorFunc(func(_ context.Context, event videoagent.RunEvent) {
+	application.Runner.SetMonitor(app.MonitorFunc(func(_ context.Context, event app.RunEvent) {
 		log.Printf("video_agent action=%s run_id=%s node_id=%s kind=%s state=%s provider=%s duration_ms=%d message=%q",
 			event.Action, event.RunID, event.NodeID, event.Kind, event.State, event.Provider, event.DurationMS, event.Message)
 	}))
@@ -290,7 +291,7 @@ func newRemoteApplication(ctx context.Context, dataDir, remoteConfigPath, modelC
 	if mongoClient != nil {
 		closeResources = func() error { return mongoClient.Disconnect(context.Background()) }
 	}
-	application.SetCallbackVerifier(videoagent.HMACCallbackVerifier{Secret: remoteConfig.CallbackSecret})
+	application.SetCallbackVerifier(app.HMACCallbackVerifier{Secret: remoteConfig.CallbackSecret})
 	application.SetJobPollInterval(2 * time.Second)
 	application.SetClose(closeResources)
 	return application, nil

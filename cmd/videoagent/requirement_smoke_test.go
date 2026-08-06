@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"eino-cli/videoagent/backend/application"
+	app "eino-cli/videoagent/backend/application"
 	modelcomponent "github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
 )
@@ -21,7 +21,7 @@ func TestRequirementModelSmoke(t *testing.T) {
 	if credentialsPath == "" {
 		t.Fatal("VIDEO_AGENT_CREDENTIALS_CONFIG is required")
 	}
-	credentials, err := readJSON[videoagent.CredentialsConfig](credentialsPath)
+	credentials, err := readJSON[app.CredentialsConfig](credentialsPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -36,7 +36,7 @@ func TestRequirementModelSmoke(t *testing.T) {
 		t.Fatal(err)
 	}
 	capture := &capturingModel{BaseChatModel: clipScriptModel}
-	planner, err := videoagent.NewStageModelPlanner(requirementModel, capture, requirementModel)
+	planner, err := app.NewStageModelPlanner(requirementModel, capture, requirementModel)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -48,7 +48,7 @@ func TestRequirementModelSmoke(t *testing.T) {
 	if brief == "" {
 		brief = "请分析商品核心卖点、目标人群和适用场景"
 	}
-	input := videoagent.RunInput{ProductName: productName, Brief: brief}
+	input := app.RunInput{ProductName: productName, Brief: brief}
 	requirement, err := planner.AnalyzeRequirement(ctx, input)
 	if err != nil {
 		t.Fatal(err)

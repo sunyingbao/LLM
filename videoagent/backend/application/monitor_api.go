@@ -1,4 +1,4 @@
-package videoagent
+package application
 
 import "eino-cli/videoagent/backend/workflow"
 

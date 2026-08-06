@@ -7,18 +7,18 @@ import (
 	"strings"
 	"testing"
 
-	"eino-cli/videoagent/backend/application"
+	app "eino-cli/videoagent/backend/application"
 )
 
 func TestExampleConfigsDecode(t *testing.T) {
 	root := filepath.Join("..", "..", "configs", "videoagent")
-	if _, err := readJSON[videoagent.RemoteConfig](filepath.Join(root, "remote.example.json")); err != nil {
+	if _, err := readJSON[app.RemoteConfig](filepath.Join(root, "remote.example.json")); err != nil {
 		t.Fatalf("decode remote config: %v", err)
 	}
-	if _, err := readJSON[videoagent.ChatModelConfig](filepath.Join(root, "model.example.json")); err != nil {
+	if _, err := readJSON[app.ChatModelConfig](filepath.Join(root, "model.example.json")); err != nil {
 		t.Fatalf("decode model config: %v", err)
 	}
-	if _, err := readJSON[videoagent.PromptRuntimeConfig](filepath.Join(root, "prompt.example.json")); err != nil {
+	if _, err := readJSON[app.PromptRuntimeConfig](filepath.Join(root, "prompt.example.json")); err != nil {
 		t.Fatalf("decode prompt config: %v", err)
 	}
 }

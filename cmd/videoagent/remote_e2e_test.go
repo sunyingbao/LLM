@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"eino-cli/videoagent/backend/application"
+	app "eino-cli/videoagent/backend/application"
 )
 
 func TestRemoteVideoAgentEndToEnd(t *testing.T) {
@@ -36,7 +36,7 @@ func TestRemoteVideoAgentEndToEnd(t *testing.T) {
 	defer cancel()
 
 	suffix := fmt.Sprintf("%d", time.Now().UTC().UnixNano())
-	bus, err := videoagent.NewNATSMessageBus(ctx, videoagent.NATSConfig{
+	bus, err := app.NewNATSMessageBus(ctx, app.NATSConfig{
 		URL:      natsURL,
 		Stream:   "VIDEO_AGENT_E2E_" + suffix,
 		Subject:  "video_agent.e2e." + suffix,
@@ -71,11 +71,11 @@ func TestRemoteVideoAgentEndToEnd(t *testing.T) {
 
 	productName := firstEnv("VIDEO_AGENT_E2E_PRODUCT_NAME", "软底厚底休闲鞋")
 	brief := firstEnv("VIDEO_AGENT_E2E_BRIEF", "请结合商品卖点生成一条短视频广告，并运行当前工作流")
-	reply, err := application.Agent.Chat(ctx, videoagent.AgentChatInput{
+	reply, err := application.Agent.Chat(ctx, app.AgentChatInput{
 		ProjectID:      "demo",
 		IdempotencyKey: "remote-e2e-" + suffix,
 		Text:           brief,
-		RunInput: videoagent.RunInput{
+		RunInput: app.RunInput{
 			ProductName:      productName,
 			ProductImageURLs: splitLines(os.Getenv("VIDEO_AGENT_E2E_PRODUCT_IMAGES")),
 			Brief:            brief,
@@ -84,7 +84,7 @@ func TestRemoteVideoAgentEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatalf("run Canvas Agent: %v", err)
 	}
-	if reply.Operation == nil || reply.Operation.Type != videoagent.OperationRun {
+	if reply.Operation == nil || reply.Operation.Type != app.OperationRun {
 		t.Fatalf("Canvas Agent did not propose a run operation: %#v", reply.Operation)
 	}
 
@@ -101,20 +101,20 @@ func TestRemoteVideoAgentEndToEnd(t *testing.T) {
 	t.Logf("remote E2E succeeded: run_id=%s artifacts=%d", run.ID, artifactCount(run))
 }
 
-func remoteE2EModelConfig(t *testing.T) (modelConfig, promptConfig string, credentials *videoagent.CredentialsConfig) {
+func remoteE2EModelConfig(t *testing.T) (modelConfig, promptConfig string, credentials *app.CredentialsConfig) {
 	t.Helper()
 	credentialsPath := strings.TrimSpace(os.Getenv("VIDEO_AGENT_E2E_CREDENTIALS_CONFIG"))
 	if credentialsPath == "" {
 		return requiredEnv(t, "VIDEO_AGENT_E2E_MODEL_CONFIG"), requiredEnv(t, "VIDEO_AGENT_E2E_PROMPT_CONFIG"), nil
 	}
-	loaded, err := readJSON[videoagent.CredentialsConfig](credentialsPath)
+	loaded, err := readJSON[app.CredentialsConfig](credentialsPath)
 	if err != nil {
 		t.Fatalf("read VIDEO_AGENT_E2E_CREDENTIALS_CONFIG: %v", err)
 	}
 	return "", "", &loaded
 }
 
-func waitForRemoteRun(t *testing.T, ctx context.Context, store *videoagent.Store, runID string) videoagent.Run {
+func waitForRemoteRun(t *testing.T, ctx context.Context, store *app.Store, runID string) app.Run {
 	t.Helper()
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
@@ -125,11 +125,11 @@ func waitForRemoteRun(t *testing.T, ctx context.Context, store *videoagent.Store
 		}
 		finished := len(run.NodeRuns) > 0
 		for _, node := range run.NodeRuns {
-			if node.State == videoagent.Failed || node.State == videoagent.Canceled {
+			if node.State == app.Failed || node.State == app.Canceled {
 				payload, _ := json.MarshalIndent(run, "", "  ")
 				t.Fatalf("remote run failed at %s/%s: %s\n%s", node.NodeID, node.InstanceKey, node.Message, payload)
 			}
-			if node.State != videoagent.Succeeded {
+			if node.State != app.Succeeded {
 				finished = false
 			}
 		}
@@ -145,9 +145,9 @@ func waitForRemoteRun(t *testing.T, ctx context.Context, store *videoagent.Store
 	}
 }
 
-func validateRemoteArtifacts(t *testing.T, run videoagent.Run) {
+func validateRemoteArtifacts(t *testing.T, run app.Run) {
 	t.Helper()
-	artifacts := make(map[string]videoagent.Artifact)
+	artifacts := make(map[string]app.Artifact)
 	kinds := make(map[string]int)
 	for _, node := range run.NodeRuns {
 		for _, artifact := range node.Artifacts {
@@ -189,7 +189,7 @@ func validateRemoteArtifacts(t *testing.T, run videoagent.Run) {
 	}
 }
 
-func validateRemoteMedia(t *testing.T, artifact videoagent.Artifact) {
+func validateRemoteMedia(t *testing.T, artifact app.Artifact) {
 	t.Helper()
 	var data map[string]any
 	if len(artifact.Data) == 0 || json.Unmarshal(artifact.Data, &data) != nil {
@@ -236,7 +236,7 @@ func splitLines(value string) []string {
 	return result
 }
 
-func artifactCount(run videoagent.Run) int {
+func artifactCount(run app.Run) int {
 	count := 0
 	for _, node := range run.NodeRuns {
 		count += len(node.Artifacts)
