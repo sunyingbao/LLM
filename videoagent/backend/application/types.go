@@ -2,7 +2,6 @@ package application
 
 import (
 	"fmt"
-	"strconv"
 	"sync/atomic"
 	"time"
 
@@ -31,7 +30,6 @@ type (
 	Run             = contract.Run
 	Command         = contract.Command
 	Result          = contract.Result
-	FornaxConfig    = contract.FornaxConfig
 )
 
 const (
@@ -71,23 +69,4 @@ var idSequence atomic.Uint64
 
 func newID(prefix string) string {
 	return fmt.Sprintf("%s-%d-%d", prefix, time.Now().UTC().UnixNano(), idSequence.Add(1))
-}
-
-func newSubmitKey(runID, nodeID, instanceKey string) string {
-	return fmt.Sprintf("%s:%s:%s", runID, nodeID, instanceKey)
-}
-
-func artifactID(node NodeRun) string {
-	if node.InstanceKey == "" {
-		return node.NodeID
-	}
-	return node.NodeID + ":" + node.InstanceKey
-}
-
-func parsePositiveID(value string, fallback int64) int64 {
-	id, err := strconv.ParseInt(value, 10, 64)
-	if err != nil || id <= 0 {
-		return fallback
-	}
-	return id
 }

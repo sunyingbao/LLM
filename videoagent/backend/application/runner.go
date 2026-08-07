@@ -20,7 +20,6 @@ var errRunCancelRequested = contract.ErrRunCancelRequested
 type Runner struct {
 	store          *Store
 	handler        nodeHandler
-	catalog        NodeCatalog
 	monitor        Monitor
 	claimHeartbeat time.Duration
 	Metrics        *Metrics
@@ -35,7 +34,7 @@ func NewRunner(store *Store, clients Clients) (*Runner, error) {
 	}
 	metrics := NewMetrics()
 	return &Runner{
-		store: store, handler: nodeHandler{clients: clients, store: store}, catalog: defaultNodeCatalog(),
+		store: store, handler: nodeHandler{clients: clients, store: store},
 		monitor: metrics, claimHeartbeat: nodeClaimTTL / 3, Metrics: metrics,
 	}, nil
 }
@@ -54,22 +53,18 @@ func (runner *Runner) SetMonitor(monitor Monitor) {
 
 // StartRun persists the static workflow before executing any model or remote call.
 func (runner *Runner) StartRun(ctx context.Context, projectID string, input RunInput) (run Run, err error) {
-	project, err := runner.store.GetProject(ctx, projectID)
-	if err != nil && !errors.Is(err, ErrProjectNotFound) {
+	if err = EnsureProject(ctx, runner.store, projectID); err != nil {
 		return run, err
 	}
-	if errors.Is(err, ErrProjectNotFound) || len(project.WorkflowVersions) == 0 {
-		version, saveErr := runner.SaveWorkflow(ctx, projectID, VideoWorkflow())
-		if saveErr != nil {
-			return run, saveErr
-		}
-		return runner.StartWorkflow(ctx, projectID, version.Workflow, input)
+	project, err := runner.store.GetProject(ctx, projectID)
+	if err != nil {
+		return run, err
 	}
 	version, err := currentWorkflow(project)
 	if err != nil {
 		return run, err
 	}
-	return runner.StartWorkflow(ctx, projectID, version.Workflow, input)
+	return runner.createRun(ctx, projectID, version.Workflow, input, newID("run"))
 }
 
 // SaveWorkflow validates and publishes the latest editable canvas version.
@@ -77,7 +72,7 @@ func (runner *Runner) SaveWorkflow(ctx context.Context, projectID string, workfl
 	if projectID == "" {
 		return WorkflowVersion{}, fmt.Errorf("project id is empty")
 	}
-	if err := runner.catalog.ValidateDraft(workflow); err != nil {
+	if err := defaultNodeCatalog().ValidateDraft(workflow); err != nil {
 		return WorkflowVersion{}, err
 	}
 	versionID := newID("workflow")
@@ -96,14 +91,14 @@ func (runner *Runner) SaveWorkflow(ctx context.Context, projectID string, workfl
 
 // StartWorkflow validates a user-edited graph and stores an immutable Run snapshot.
 func (runner *Runner) StartWorkflow(ctx context.Context, projectID string, workflow Workflow, input RunInput) (run Run, err error) {
-	return runner.startWorkflow(ctx, projectID, workflow, input, newID("run"))
+	return runner.createRun(ctx, projectID, workflow, input, newID("run"))
 }
 
-func (runner *Runner) startWorkflow(ctx context.Context, projectID string, workflow Workflow, input RunInput, runID string) (run Run, err error) {
+func (runner *Runner) createRun(ctx context.Context, projectID string, workflow Workflow, input RunInput, runID string) (run Run, err error) {
 	if projectID == "" {
 		return run, fmt.Errorf("project id is empty")
 	}
-	if err = runner.catalog.Validate(workflow); err != nil {
+	if err = defaultNodeCatalog().Validate(workflow); err != nil {
 		return run, err
 	}
 	if existing, getErr := runner.store.Get(ctx, runID); getErr == nil {
@@ -117,7 +112,7 @@ func (runner *Runner) startWorkflow(ctx context.Context, projectID string, workf
 			Kind:      node.Kind,
 			Config:    append([]byte(nil), node.Config...),
 			State:     Pending,
-			SubmitKey: newSubmitKey(runID, node.ID, ""),
+			SubmitKey: contract.SubmitKey(runID, node.ID, ""),
 		})
 	}
 	workflowID := "workflow:" + runID
@@ -178,23 +173,18 @@ func (runner *Runner) ConfirmOperation(ctx context.Context, operationID string) 
 		if err != nil {
 			return CanvasOperation{}, nil, err
 		}
-		if err := runner.catalog.Validate(latest.Workflow); err != nil {
+		if err := defaultNodeCatalog().Validate(latest.Workflow); err != nil {
 			return operation, nil, err
 		}
-		if operation.Status == OperationPending {
-			operation, err = runner.store.ClaimOperation(ctx, operationID, "run:operation:"+operationID)
-			if err != nil {
-				operation, err = runner.store.GetOperation(ctx, operationID)
-				if err != nil || (operation.Status != OperationConfirmed && operation.Status != OperationApplied) {
-					return CanvasOperation{}, nil, err
-				}
-			}
+		operation, err = runner.claimOperation(ctx, operation, "run:operation:"+operationID)
+		if err != nil {
+			return CanvasOperation{}, nil, err
 		}
 		runID := operation.RunID
 		if runID == "" {
 			runID = "run:operation:" + operationID
 		}
-		run, err := runner.startWorkflow(ctx, operation.ProjectID, latest.Workflow, input, runID)
+		run, err := runner.createRun(ctx, operation.ProjectID, latest.Workflow, input, runID)
 		if err != nil {
 			return operation, nil, err
 		}
@@ -211,14 +201,9 @@ func (runner *Runner) ConfirmOperation(ctx context.Context, operationID string) 
 	}
 
 	versionID := "workflow:operation:" + operationID
-	if operation.Status == OperationPending {
-		operation, err = runner.store.ClaimOperation(ctx, operationID, "")
-		if err != nil {
-			operation, err = runner.store.GetOperation(ctx, operationID)
-			if err != nil || (operation.Status != OperationConfirmed && operation.Status != OperationApplied) {
-				return CanvasOperation{}, nil, err
-			}
-		}
+	operation, err = runner.claimOperation(ctx, operation, "")
+	if err != nil {
+		return CanvasOperation{}, nil, err
 	}
 	_, err = runner.store.UpdateProject(operation.ProjectID, false, func(project *Project) error {
 		for _, version := range project.WorkflowVersions {
@@ -234,7 +219,7 @@ func (runner *Runner) ConfirmOperation(ctx context.Context, operationID string) 
 		if err != nil {
 			return err
 		}
-		if err := runner.catalog.ValidateDraft(updated); err != nil {
+		if err := defaultNodeCatalog().ValidateDraft(updated); err != nil {
 			return err
 		}
 		version := WorkflowVersion{ID: versionID, ProjectID: operation.ProjectID, Revision: len(project.WorkflowVersions) + 1, Workflow: cloneWorkflow(updated)}
@@ -269,6 +254,24 @@ func currentWorkflow(project Project) (WorkflowVersion, error) {
 	return project.WorkflowVersions[len(project.WorkflowVersions)-1], nil
 }
 
+func (runner *Runner) claimOperation(ctx context.Context, operation CanvasOperation, runID string) (CanvasOperation, error) {
+	if operation.Status != OperationPending {
+		return operation, nil
+	}
+	claimed, claimErr := runner.store.ClaimOperation(ctx, operation.ID, runID)
+	if claimErr == nil {
+		return claimed, nil
+	}
+	current, err := runner.store.GetOperation(ctx, operation.ID)
+	if err != nil {
+		return CanvasOperation{}, err
+	}
+	if current.Status != OperationConfirmed && current.Status != OperationApplied {
+		return CanvasOperation{}, claimErr
+	}
+	return current, nil
+}
+
 func (runner *Runner) confirmRunOperation(ctx context.Context, operationID string, operation CanvasOperation) (CanvasOperation, *Run, error) {
 	if operation.RunID == "" {
 		input, err := decode[struct {
@@ -279,23 +282,13 @@ func (runner *Runner) confirmRunOperation(ctx context.Context, operationID strin
 		}
 		operation.RunID = input.RunID
 	}
-	if operation.Status == OperationPending {
-		claimed, err := runner.store.ClaimOperation(ctx, operationID, operation.RunID)
-		if err != nil {
-			operation, err = runner.store.GetOperation(ctx, operationID)
-			if err != nil {
-				return CanvasOperation{}, nil, err
-			}
-			if operation.Status == OperationApplied {
-				run, runErr := runner.store.Get(ctx, operation.RunID)
-				return operation, &run, runErr
-			}
-			if operation.Status != OperationConfirmed {
-				return operation, nil, err
-			}
-		} else {
-			operation = claimed
-		}
+	operation, err := runner.claimOperation(ctx, operation, operation.RunID)
+	if err != nil {
+		return CanvasOperation{}, nil, err
+	}
+	if operation.Status == OperationApplied {
+		run, runErr := runner.store.Get(ctx, operation.RunID)
+		return operation, &run, runErr
 	}
 	if operation.Type == OperationRetry {
 		if err := runner.store.Retry(operation.RunID); err != nil {
@@ -406,19 +399,11 @@ func (runner *Runner) Poll(ctx context.Context, runID string) error {
 		if !claimed {
 			return runner.Advance(ctx, runID)
 		}
-		skipped[nodeRunKey(command.NodeRun)] = true
+		skipped[command.NodeRun.Key()] = true
 		if _, err := runner.refresh(ctx, command); err != nil {
 			return err
 		}
 	}
-}
-
-// Recover restores a Run after process restart without resubmitting a started job.
-func (runner *Runner) Recover(ctx context.Context, runID string) error {
-	if err := runner.store.Recover(runID); err != nil {
-		return err
-	}
-	return runner.Poll(ctx, runID)
 }
 
 // Restore repairs persisted orchestration state without querying remote jobs.
@@ -457,7 +442,7 @@ func (runner *Runner) Cancel(ctx context.Context, runID string) error {
 	canceledJobs := make(map[string]string)
 	for _, node := range run.NodeRuns {
 		if !node.State.Terminal() && node.JobID != "" {
-			canceledJobs[nodeRunKey(node)] = node.JobID
+			canceledJobs[node.Key()] = node.JobID
 		}
 	}
 	return runner.store.CompleteCancelIfIdle(runID, canceledJobs)
@@ -494,15 +479,19 @@ func (runner *Runner) ProcessCallback(ctx context.Context, message CallbackMessa
 	if message.Provider == "" || message.EventID == "" || (message.JobID == "" && message.SubmitKey == "") {
 		return fmt.Errorf("callback provider, event id and job id or submit key are required")
 	}
+	identity := message.JobID
+	if identity == "" {
+		identity = message.SubmitKey
+	}
 	command, claimed, needsRefresh, duplicate, err := runner.store.ClaimCallback(message)
 	if err != nil {
 		runner.record(ctx, RunEvent{
 			Action: MonitorCallback, Provider: message.Provider,
-			Message: message.Provider + ":" + firstNonEmpty(message.JobID, message.SubmitKey) + " claim failed: " + err.Error(),
+			Message: message.Provider + ":" + identity + " claim failed: " + err.Error(),
 		})
 		return err
 	}
-	event := RunEvent{Action: MonitorCallback, Message: message.Provider + ":" + firstNonEmpty(message.JobID, message.SubmitKey)}
+	event := RunEvent{Action: MonitorCallback, Message: message.Provider + ":" + identity}
 	if claimed {
 		event.RunID, event.NodeID, event.Kind = command.RunID, command.NodeRun.NodeID, command.NodeRun.Kind
 		event.State, event.Provider = command.NodeRun.State, command.NodeRun.Provider
@@ -512,7 +501,7 @@ func (runner *Runner) ProcessCallback(ctx context.Context, message CallbackMessa
 		return nil
 	}
 	if !claimed {
-		if isPollingMessage(message) {
+		if strings.HasPrefix(message.EventID, "poll:") || strings.HasPrefix(message.EventID, "reconcile:") {
 			return nil
 		}
 		return ErrCallbackNotReady
@@ -546,7 +535,7 @@ func (runner *Runner) finishCancellation(ctx context.Context, runID string) (boo
 		return false, err
 	}
 	if !run.CancelRequested {
-		return false, err
+		return false, nil
 	}
 	for _, node := range run.NodeRuns {
 		if !node.State.Terminal() && (node.JobID != "" || node.SubmitStarted) {
@@ -558,10 +547,6 @@ func (runner *Runner) finishCancellation(ctx context.Context, runID string) (boo
 		return true, err
 	}
 	return true, nil
-}
-
-func isPollingMessage(message CallbackMessage) bool {
-	return strings.HasPrefix(message.EventID, "poll:") || strings.HasPrefix(message.EventID, "reconcile:")
 }
 
 func (runner *Runner) refresh(ctx context.Context, command Command) (NodeState, error) {
@@ -656,7 +641,7 @@ func failedResult(command Command, err error) Result {
 	return Result{
 		State: Failed,
 		Artifacts: []Artifact{{
-			ID:      artifactID(command.NodeRun),
+			ID:      command.NodeRun.ArtifactID(),
 			Kind:    string(command.NodeRun.Kind),
 			Status:  string(Failed),
 			Message: err.Error(),

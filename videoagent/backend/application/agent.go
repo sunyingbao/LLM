@@ -21,14 +21,11 @@ const canvasAgentSystemPrompt = `你是广告视频画布助手。
 任何会改变画布或启动任务的行为都必须先调用 propose_canvas_operation，返回待确认操作，不能直接执行。
 回答要简洁，明确告诉用户当前操作是否需要确认。`
 
-type CanvasAgent struct {
-	model         model.ToolCallingChatModel
-	store         *Store
-	maxIterations int
-}
+const canvasAgentMaxIterations = 8
 
-type ChatAgent interface {
-	Chat(context.Context, AgentChatInput) (AgentChatReply, error)
+type CanvasAgent struct {
+	model model.ToolCallingChatModel
+	store *Store
 }
 
 type canvasOperationArgs struct {
@@ -43,13 +40,13 @@ func NewCanvasAgent(chatModel model.BaseChatModel, store *Store) (*CanvasAgent, 
 		return nil, fmt.Errorf("agent store is nil")
 	}
 	if chatModel == nil {
-		return &CanvasAgent{store: store, maxIterations: 8}, nil
+		return &CanvasAgent{store: store}, nil
 	}
 	toolModel, ok := chatModel.(model.ToolCallingChatModel)
 	if !ok {
 		return nil, fmt.Errorf("canvas agent model does not support tool calling")
 	}
-	return &CanvasAgent{model: toolModel, store: store, maxIterations: 8}, nil
+	return &CanvasAgent{model: toolModel, store: store}, nil
 }
 
 func (agent *CanvasAgent) Chat(ctx context.Context, input AgentChatInput) (reply AgentChatReply, err error) {
@@ -250,7 +247,7 @@ func (agent *CanvasAgent) react(ctx context.Context, input AgentChatInput, conve
 		return AgentChatReply{}, err
 	}
 	for _, item := range history {
-		content := messageText(item)
+		content := item.Text()
 		if content == "" {
 			continue
 		}
@@ -267,7 +264,7 @@ func (agent *CanvasAgent) react(ctx context.Context, input AgentChatInput, conve
 		ToolReturnDirectly: map[string]struct{}{
 			"propose_canvas_operation": {},
 		},
-		MaxStep:   agent.maxIterations*2 + 1,
+		MaxStep:   canvasAgentMaxIterations*2 + 1,
 		GraphName: "CanvasAgent",
 	})
 	if err != nil {
@@ -288,16 +285,6 @@ func (agent *CanvasAgent) react(ctx context.Context, input AgentChatInput, conve
 		return AgentChatReply{}, fmt.Errorf("decode proposed canvas operation: %w", err)
 	}
 	return agent.saveReply(ctx, input, conversation, "已经准备好画布操作，请确认后执行。", &operation)
-}
-
-func messageText(message Message) string {
-	parts := make([]string, 0, len(message.Parts))
-	for _, part := range message.Parts {
-		if part.Type == "text" && strings.TrimSpace(part.Text) != "" {
-			parts = append(parts, part.Text)
-		}
-	}
-	return strings.Join(parts, "\n")
 }
 
 func (agent *CanvasAgent) tools(input AgentChatInput) ([]tool.BaseTool, error) {
@@ -330,12 +317,11 @@ func (agent *CanvasAgent) tools(input AgentChatInput) ([]tool.BaseTool, error) {
 			}
 		}
 		operation := CanvasOperation{
-			ID: newID("operation"), ProjectID: projectID, RunID: args.RunID,
+			ProjectID: projectID, RunID: args.RunID,
 			IdempotencyKey: input.IdempotencyKey, SourceMessageID: idempotentChatID("message", input, "assistant"),
 			Type: args.Type, TargetNodeID: args.TargetNodeID, Payload: payload,
-			Status: OperationPending, CreatedAt: time.Now().UTC(),
 		}
-		stored, _, err := agent.store.CreateOrGetOperation(ctx, operation)
+		stored, _, err := proposeOperation(ctx, agent.store, operation)
 		if err != nil {
 			return "", err
 		}
@@ -348,12 +334,9 @@ func (agent *CanvasAgent) tools(input AgentChatInput) ([]tool.BaseTool, error) {
 }
 
 func (agent *CanvasAgent) createOperationReply(ctx context.Context, input AgentChatInput, conversation Conversation, operation CanvasOperation, text string) (AgentChatReply, error) {
-	operation.ID = newID("operation")
 	operation.IdempotencyKey = input.IdempotencyKey
 	operation.SourceMessageID = idempotentChatID("message", input, "assistant")
-	operation.Status = OperationPending
-	operation.CreatedAt = time.Now().UTC()
-	stored, _, err := agent.store.CreateOrGetOperation(ctx, operation)
+	stored, _, err := proposeOperation(ctx, agent.store, operation)
 	if err != nil {
 		return AgentChatReply{}, err
 	}

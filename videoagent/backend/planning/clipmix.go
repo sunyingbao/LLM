@@ -224,8 +224,8 @@ func appendPlanningReferences(references *clipMixPlanningReferences, artifacts [
 }
 
 func artifactMediaValues(artifact Artifact) (string, string) {
-	uri := firstArtifactValue(artifact, "uri", "preview_audio_uri", "audio_uri")
-	url := firstArtifactValue(artifact, "url", "preview_audio_url", "audio_url")
+	uri := artifact.Text("uri", "preview_audio_uri", "audio_uri")
+	url := artifact.Text("url", "preview_audio_url", "audio_url")
 	return uri, url
 }
 

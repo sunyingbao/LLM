@@ -35,17 +35,7 @@ type MediaURLResolvers struct {
 }
 
 func NewSeedanceClient(config SeedanceConfig, client *http.Client) (*SeedanceClient, error) {
-	return NewSeedanceClientWithImporter(config, client, nil)
-}
-
-func NewSeedanceClientWithImporter(config SeedanceConfig, client *http.Client, importer VideoImporter) (*SeedanceClient, error) {
-	return NewSeedanceClientWithMediaResolvers(config, client, importer, MediaURLResolvers{})
-}
-
-func NewSeedanceClientWithMediaResolver(config SeedanceConfig, client *http.Client, importer VideoImporter, mediaResolver MediaURLResolver) (*SeedanceClient, error) {
-	return NewSeedanceClientWithMediaResolvers(config, client, importer, MediaURLResolvers{
-		Image: mediaResolver, Audio: mediaResolver, Video: mediaResolver,
-	})
+	return NewSeedanceClientWithMediaResolvers(config, client, nil, MediaURLResolvers{})
 }
 
 func NewSeedanceClientWithMediaResolvers(config SeedanceConfig, client *http.Client, importer VideoImporter, mediaResolvers MediaURLResolvers) (*SeedanceClient, error) {
@@ -269,7 +259,7 @@ func videoPrompt(request VideoRequest) string {
 }
 
 func artifactMediaURL(artifact Artifact) string {
-	return firstArtifactValue(artifact, "url", "preview_audio_url", "audio_url")
+	return artifact.Text("url", "preview_audio_url", "audio_url")
 }
 
 func firstPositive(value, fallback int) int {

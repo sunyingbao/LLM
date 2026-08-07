@@ -52,10 +52,10 @@ func TestCallbackPublishesMessageInsteadOfRunningInline(t *testing.T) {
 	}
 	defer application.Close()
 	var published CallbackMessage
-	application.SetMessagePublisher(MessagePublisherFunc(func(_ context.Context, message CallbackMessage) error {
+	application.SetMessageQueue(MessagePublisherFunc(func(_ context.Context, message CallbackMessage) error {
 		published = message
 		return nil
-	}))
+	}), nil)
 
 	body, err := json.Marshal(map[string]string{"event_id": "event-1", "job_id": "job-1"})
 	if err != nil {
@@ -79,10 +79,10 @@ func TestCallbackAcceptsProviderTaskIDWithoutEventID(t *testing.T) {
 	}
 	defer application.Close()
 	var published CallbackMessage
-	application.SetMessagePublisher(MessagePublisherFunc(func(_ context.Context, message CallbackMessage) error {
+	application.SetMessageQueue(MessagePublisherFunc(func(_ context.Context, message CallbackMessage) error {
 		published = message
 		return nil
-	}))
+	}), nil)
 
 	request := httptest.NewRequest(http.MethodPost, "/callbacks/capability", bytes.NewBufferString(`{"task_id":123,"task_status":30}`))
 	response := httptest.NewRecorder()

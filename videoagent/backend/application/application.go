@@ -23,8 +23,8 @@ type RuntimeStatus struct {
 type Application struct {
 	Runner            *Runner
 	Store             *Store
-	Agent             ChatAgent
-	runtime           RuntimeStatus
+	Agent             *CanvasAgent
+	Queue             *LocalQueue
 	callbackVerifier  CallbackVerifier
 	callbackPublisher MessagePublisher
 	callbackConsumer  MessageConsumer
@@ -36,7 +36,7 @@ type Application struct {
 	closeResources    func() error
 }
 
-func NewApplication(store *Store, clients Clients, agent ChatAgent) (*Application, error) {
+func NewApplication(store *Store, clients Clients) (*Application, error) {
 	if store == nil {
 		return nil, fmt.Errorf("workflow store is nil")
 	}
@@ -44,71 +44,54 @@ func NewApplication(store *Store, clients Clients, agent ChatAgent) (*Applicatio
 	if err != nil {
 		return nil, err
 	}
-	return &Application{
-		Runner: runner,
-		Store:  store,
-		Agent:  agent,
-		runtime: RuntimeStatus{
-			Mode:       "remote",
-			Image:      clients.Image != nil,
-			TTS:        clients.TTS != nil,
-			Preview:    clients.Video != nil,
-			FinalVideo: clients.Video != nil,
-		},
-	}, nil
+	return &Application{Runner: runner, Store: store, Agent: &CanvasAgent{store: store}}, nil
 }
 
 func (app *Application) RuntimeStatus() RuntimeStatus {
 	if app == nil {
 		return RuntimeStatus{}
 	}
-	return app.runtime
+	mode := "remote"
+	if app.Queue != nil {
+		mode = "local"
+	}
+	return RuntimeStatus{Mode: mode, Image: true, TTS: true, Preview: true, FinalVideo: true}
 }
 
-// UseChatModel replaces local planning and Canvas intent parsing with one injected model.
-func (app *Application) UseChatModel(chatModel model.BaseChatModel) error {
+// ConfigureModels installs the optional chat model and the selected workflow planner once.
+func (app *Application) ConfigureModels(chatModel model.BaseChatModel, planner Planner) error {
 	if app == nil || app.Runner == nil || app.Store == nil {
 		return fmt.Errorf("application is not initialized")
 	}
-	planner, err := planning.NewModelPlanner(chatModel)
-	if err != nil {
-		return err
+	if chatModel != nil {
+		agent, err := NewCanvasAgent(chatModel, app.Store)
+		if err != nil {
+			return err
+		}
+		app.Agent = agent
+		if planner == nil {
+			planner, err = planning.NewModelPlanner(chatModel)
+			if err != nil {
+				return err
+			}
+		}
 	}
-	agent, err := NewCanvasAgent(chatModel, app.Store)
-	if err != nil {
-		return err
+	if planner != nil {
+		app.Runner.handler.clients.Planner = planner
 	}
-	app.Runner.handler.clients.Planner = planner
-	app.Agent = agent
 	return nil
 }
 
-// UsePlanner replaces only the workflow planning capability.
-func (app *Application) UsePlanner(planner Planner) error {
-	if app == nil || app.Runner == nil {
-		return fmt.Errorf("application is not initialized")
-	}
-	if planner == nil {
-		return fmt.Errorf("planner is nil")
-	}
-	app.Runner.handler.clients.Planner = planner
-	return nil
-}
-
-// SetMessageConsumer injects the production MQ adapter used for async callbacks.
-func (app *Application) SetMessageConsumer(consumer MessageConsumer) {
-	if app == nil {
-		return
-	}
-	app.callbackConsumer = consumer
-}
-
-// SetMessagePublisher injects the production MQ publisher used by HTTP callbacks.
-func (app *Application) SetMessagePublisher(publisher MessagePublisher) {
+// SetMessageQueue configures callback publishing and consumption.
+func (app *Application) SetMessageQueue(publisher MessagePublisher, consumer MessageConsumer) {
 	if app == nil {
 		return
 	}
 	app.callbackPublisher = publisher
+	app.callbackConsumer = consumer
+	if app.Queue != nil {
+		app.Queue.publisher = publisher
+	}
 }
 
 // SetJobPollInterval enables polling providers that do not support callbacks.
@@ -131,6 +114,9 @@ func (app *Application) SetCallbackVerifier(verifier CallbackVerifier) {
 func (app *Application) Close() error {
 	if app == nil {
 		return nil
+	}
+	if app.Queue != nil {
+		app.Queue.Close()
 	}
 	if app.stopWorkers != nil {
 		app.stopWorkers()
@@ -237,6 +223,12 @@ func (app *Application) Start(ctx context.Context) error {
 	if app == nil || app.Runner == nil || app.Store == nil {
 		return fmt.Errorf("application is not initialized")
 	}
+	if app.Queue != nil {
+		if app.Queue.publisher == nil {
+			return fmt.Errorf("local message publisher is not configured")
+		}
+		app.Queue.Start()
+	}
 	runs, err := app.Store.List(ctx)
 	if err != nil {
 		return err
@@ -252,11 +244,17 @@ func (app *Application) Start(ctx context.Context) error {
 		failedRunIDs = append(failedRunIDs, run.ID)
 	}
 	if app.callbackConsumer == nil && len(failedRunIDs) == 0 {
+		if app.Queue != nil {
+			return app.Queue.Recover()
+		}
 		return nil
 	}
-	poller, err := app.newPoller()
-	if err != nil {
-		return err
+	var poller *JobPoller
+	if app.callbackConsumer != nil && app.pollInterval > 0 {
+		poller, err = NewJobPoller(app.Store, app.callbackPublisher, app.pollInterval)
+		if err != nil {
+			return err
+		}
 	}
 	workerCtx, cancel := context.WithCancel(ctx)
 	app.stopWorkers = cancel
@@ -271,22 +269,17 @@ func (app *Application) Start(ctx context.Context) error {
 	}
 	if app.callbackConsumer != nil {
 		app.startWorker(workerCtx, func(ctx context.Context) error {
-			return ConsumeCallbacks(ctx, app.callbackConsumer, CallbackProcessor{Runner: app.Runner})
+			return app.callbackConsumer.Consume(ctx, app.Runner.ProcessCallback)
 		})
 	}
 	if poller != nil {
 		app.startWorker(workerCtx, poller.Run)
 	}
+	if app.Queue != nil {
+		return app.Queue.Recover()
+	}
 	return nil
 }
-
-func (app *Application) newPoller() (*JobPoller, error) {
-	if app.callbackConsumer == nil || app.pollInterval <= 0 {
-		return nil, nil
-	}
-	return NewJobPoller(app.Store, app.callbackPublisher, app.pollInterval)
-}
-
 func (app *Application) startWorker(ctx context.Context, work func(context.Context) error) {
 	app.workerWG.Add(1)
 	go func() {

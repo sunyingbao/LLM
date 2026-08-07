@@ -84,7 +84,7 @@ func (queue *LocalQueue) process(jobID string) {
 }
 
 func (queue *LocalQueue) publish(job LocalJob) error {
-	message := CallbackMessage{Provider: job.Provider, EventID: "local:" + job.ID, JobID: job.ID}
+	message := CallbackMessage{Provider: localJobProvider(job.Kind), EventID: "local:" + job.ID, JobID: job.ID}
 	publishContext, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	return queue.publisher.Publish(publishContext, message)

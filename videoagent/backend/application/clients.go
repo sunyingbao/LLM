@@ -12,28 +12,11 @@ type (
 	NodeConfig           = contract.NodeConfig
 	Planner              = contract.Planner
 	PreviewPlanner       = contract.PreviewPlanner
-	PromptRequest        = contract.PromptRequest
-	PromptExecutor       = contract.PromptExecutor
 	ImageRequest         = contract.ImageRequest
 	TTSRequest           = contract.TTSRequest
-	MatxRequest          = contract.MatxRequest
-	MatxResponse         = contract.MatxResponse
-	MatxClient           = contract.MatxClient
-	ModelTaskRequest     = contract.ModelTaskRequest
-	ModelTaskStatus      = contract.ModelTaskStatus
-	ModelGateway         = contract.ModelGateway
 	SubmittedJob         = contract.SubmittedJob
 	JobState             = contract.JobState
 	JobStatus            = contract.JobStatus
-	StoredVideo          = contract.StoredVideo
-	VideoImporter        = contract.VideoImporter
-	MediaURLResolver     = contract.MediaURLResolver
-	VideoImportCache     = contract.VideoImportCache
-	VideoUploader        = contract.VideoUploader
-	RenderScene          = contract.RenderScene
-	RenderAudio          = contract.RenderAudio
-	RenderPlan           = contract.RenderPlan
-	VideoRenderer        = contract.VideoRenderer
 	ImageClient          = contract.ImageClient
 	ImageCanceler        = contract.ImageCanceler
 	TTSClient            = contract.TTSClient
@@ -70,7 +53,3 @@ var (
 	ErrSubmitReconciliationUnsupported = contract.ErrSubmitReconciliationUnsupported
 	ErrCancellationUnsupported         = contract.ErrCancellationUnsupported
 )
-
-func CombineVideoClients(preview PreviewClient, final FinalVideoClient) (VideoClient, error) {
-	return contract.CombineVideoClients(preview, final)
-}

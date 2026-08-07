@@ -75,18 +75,17 @@ func run() error {
 		if err != nil {
 			return err
 		}
-		application.SetMessagePublisher(messageBus)
-		application.SetMessageConsumer(messageBus)
+		application.SetMessageQueue(messageBus, messageBus)
 		defer logCloseError("application", application.Close)
 		if err := application.Start(ctx); err != nil {
 			return err
 		}
-		return serve(ctx, *address, app.NewApplicationHTTPHandler(application))
+		return serve(ctx, *address, app.NewHTTPHandler(application))
 	}
 
-	var application *app.LocalApplication
+	var application *app.Application
 	if *mongoURI != "" {
-		application, err = app.NewMongoLocalApplication(*dataDir, *mongoURI, *mongoDatabase, *mongoCollection)
+		application, err = app.NewMongoLocalApplication(*mongoURI, *mongoDatabase, *mongoCollection)
 	} else {
 		application, err = app.NewLocalApplication(*dataDir)
 	}
@@ -94,32 +93,22 @@ func run() error {
 		return err
 	}
 	defer application.Close()
+	var chatModel model.BaseChatModel
 	if *modelConfigPath != "" || credentials != nil {
-		chatModel, err := loadChatModel(*modelConfigPath, *chatModelKey, credentials)
+		chatModel, err = loadChatModel(*modelConfigPath, *chatModelKey, credentials)
 		if err != nil {
-			return err
-		}
-		if err := application.UseChatModel(chatModel); err != nil {
 			return err
 		}
 	}
-	if credentials != nil {
-		planner, err := loadCredentialPlanner(ctx, *credentials)
+	var planner contract.Planner
+	if credentials != nil || *promptConfigPath != "" {
+		planner, err = loadWorkflowPlanner(ctx, *promptConfigPath, credentials, chatModel)
 		if err != nil {
-			return err
-		}
-		if err := application.UsePlanner(planner); err != nil {
 			return err
 		}
 	}
-	if *promptConfigPath != "" {
-		planner, err := loadPromptPlanner(*promptConfigPath, credentials)
-		if err != nil {
-			return err
-		}
-		if err := application.UsePlanner(planner); err != nil {
-			return err
-		}
+	if err := application.ConfigureModels(chatModel, planner); err != nil {
+		return err
 	}
 	application.SetMessageQueue(messageBus, messageBus)
 	if err := application.Start(ctx); err != nil {
@@ -214,6 +203,16 @@ func loadPromptPlanner(path string, credentials *videomodel.CredentialsConfig) (
 	return planning.NewPromptPlanner(executor, config.Planner)
 }
 
+func loadWorkflowPlanner(ctx context.Context, promptConfigPath string, credentials *videomodel.CredentialsConfig, chatModel model.BaseChatModel) (contract.Planner, error) {
+	if promptConfigPath != "" {
+		return loadPromptPlanner(promptConfigPath, credentials)
+	}
+	if credentials != nil {
+		return loadCredentialPlanner(ctx, *credentials)
+	}
+	return planning.NewModelPlanner(chatModel)
+}
+
 func newRemoteApplication(ctx context.Context, dataDir, remoteConfigPath, modelConfigPath, promptConfigPath, mongoURI, mongoDatabase, mongoCollection, chatModelKey string, credentials *videomodel.CredentialsConfig) (application *app.Application, err error) {
 	if modelConfigPath == "" && credentials == nil {
 		return nil, errors.New("model config is required in remote mode")
@@ -259,31 +258,18 @@ func newRemoteApplication(ctx context.Context, dataDir, remoteConfigPath, modelC
 	if err != nil {
 		return nil, err
 	}
-	clients.Planner, err = planning.NewModelPlanner(chatModel)
-	if err != nil {
-		return nil, err
-	}
-	if credentials != nil {
-		clients.Planner, err = loadCredentialPlanner(ctx, *credentials)
-		if err != nil {
-			return nil, err
-		}
-	}
-	if promptConfigPath != "" {
-		clients.Planner, err = loadPromptPlanner(promptConfigPath, credentials)
-		if err != nil {
-			return nil, err
-		}
-	}
-	agent, err := app.NewCanvasAgent(chatModel, store)
+	clients.Planner, err = loadWorkflowPlanner(ctx, promptConfigPath, credentials, chatModel)
 	if err != nil {
 		return nil, err
 	}
 	if err := app.EnsureProject(ctx, store, "demo"); err != nil {
 		return nil, err
 	}
-	application, err = app.NewApplication(store, clients, agent)
+	application, err = app.NewApplication(store, clients)
 	if err != nil {
+		return nil, err
+	}
+	if err = application.ConfigureModels(chatModel, clients.Planner); err != nil {
 		return nil, err
 	}
 	application.Runner.SetMonitor(app.MonitorFunc(func(_ context.Context, event app.RunEvent) {

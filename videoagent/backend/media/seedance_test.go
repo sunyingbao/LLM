@@ -105,12 +105,13 @@ func TestSeedanceClientResolvesInternalMediaURL(t *testing.T) {
 		_ = json.NewEncoder(writer).Encode(map[string]string{"id": "task-1"})
 	}))
 	defer server.Close()
-	client, err := NewSeedanceClientWithMediaResolver(
+	resolver := fixedMediaURLResolver{}
+	client, err := NewSeedanceClientWithMediaResolvers(
 		SeedanceConfig{BaseURL: server.URL, APIKey: "key", Model: "model"},
-		server.Client(), nil, fixedMediaURLResolver{},
+		server.Client(), nil, MediaURLResolvers{Image: resolver, Audio: resolver, Video: resolver},
 	)
 	if err != nil {
-		t.Fatalf("NewSeedanceClientWithMediaResolver() error = %v", err)
+		t.Fatalf("NewSeedanceClientWithMediaResolvers() error = %v", err)
 	}
 	if _, err := client.SubmitPreview(context.Background(), VideoRequest{ImageURLs: []string{"tos://image/generated"}}); err != nil {
 		t.Fatalf("SubmitPreview() error = %v", err)
@@ -181,13 +182,14 @@ func TestSeedanceClientImportsSucceededPreview(t *testing.T) {
 		})
 	}))
 	defer server.Close()
-	client, err := NewSeedanceClientWithImporter(
+	client, err := NewSeedanceClientWithMediaResolvers(
 		SeedanceConfig{BaseURL: server.URL, APIKey: "key", Model: "model"},
 		server.Client(),
 		fixedVideoImporter{},
+		MediaURLResolvers{},
 	)
 	if err != nil {
-		t.Fatalf("NewSeedanceClientWithImporter() error = %v", err)
+		t.Fatalf("NewSeedanceClientWithMediaResolvers() error = %v", err)
 	}
 	status, err := client.GetPreview(context.Background(), "task")
 	if err != nil {

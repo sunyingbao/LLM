@@ -9,7 +9,6 @@ type PortDefinition struct {
 }
 
 type NodeDefinition struct {
-	Kind    NodeKind         `json:"kind"`
 	Inputs  []PortDefinition `json:"inputs,omitempty"`
 	Outputs []PortDefinition `json:"outputs,omitempty"`
 }
@@ -18,16 +17,16 @@ type NodeCatalog map[NodeKind]NodeDefinition
 
 func DefaultNodeCatalog() NodeCatalog {
 	return NodeCatalog{
-		RequirementNode:          {Kind: RequirementNode, Outputs: []PortDefinition{{Name: "requirement", ArtifactKind: "requirement"}}},
-		ClipScriptNode:           {Kind: ClipScriptNode, Inputs: []PortDefinition{{Name: "requirement", ArtifactKind: "requirement", Required: true}}, Outputs: []PortDefinition{{Name: "clipscript", ArtifactKind: "clipscript"}}},
-		CompetitionReferenceNode: {Kind: CompetitionReferenceNode, Inputs: []PortDefinition{{Name: "clipscript", ArtifactKind: "clipscript", Required: true}}, Outputs: []PortDefinition{{Name: "competition_reference_image", ArtifactKind: "competition_reference_image"}}},
-		PromptTTSNode:            {Kind: PromptTTSNode, Inputs: []PortDefinition{{Name: "clipscript", ArtifactKind: "clipscript", Required: true}}, Outputs: []PortDefinition{{Name: "voice_preview", ArtifactKind: "voice_preview"}}},
-		CharacterReferenceNode:   {Kind: CharacterReferenceNode, Inputs: []PortDefinition{{Name: "clipscript", ArtifactKind: "clipscript", Required: true}}, Outputs: []PortDefinition{{Name: "character_reference_image", ArtifactKind: "character_reference_image"}}},
-		PreviewNode: {Kind: PreviewNode, Inputs: []PortDefinition{
+		RequirementNode:          {Outputs: []PortDefinition{{Name: "requirement", ArtifactKind: "requirement"}}},
+		ClipScriptNode:           {Inputs: []PortDefinition{{Name: "requirement", ArtifactKind: "requirement", Required: true}}, Outputs: []PortDefinition{{Name: "clipscript", ArtifactKind: "clipscript"}}},
+		CompetitionReferenceNode: {Inputs: []PortDefinition{{Name: "clipscript", ArtifactKind: "clipscript", Required: true}}, Outputs: []PortDefinition{{Name: "competition_reference_image", ArtifactKind: "competition_reference_image"}}},
+		PromptTTSNode:            {Inputs: []PortDefinition{{Name: "clipscript", ArtifactKind: "clipscript", Required: true}}, Outputs: []PortDefinition{{Name: "voice_preview", ArtifactKind: "voice_preview"}}},
+		CharacterReferenceNode:   {Inputs: []PortDefinition{{Name: "clipscript", ArtifactKind: "clipscript", Required: true}}, Outputs: []PortDefinition{{Name: "character_reference_image", ArtifactKind: "character_reference_image"}}},
+		PreviewNode: {Inputs: []PortDefinition{
 			{Name: "clipscript", ArtifactKind: "clipscript", Required: true},
 			{Name: "resources", ArtifactKind: "resource"},
 		}, Outputs: []PortDefinition{{Name: "preview_video", ArtifactKind: "preview_video"}}},
-		FinalVideoNode: {Kind: FinalVideoNode, Inputs: []PortDefinition{
+		FinalVideoNode: {Inputs: []PortDefinition{
 			{Name: "clipscript", ArtifactKind: "clipscript", Required: true},
 			{Name: "preview_video", ArtifactKind: "preview_video", Required: true},
 			{Name: "resources", ArtifactKind: "resource"},

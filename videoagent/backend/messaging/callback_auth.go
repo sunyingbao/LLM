@@ -38,10 +38,6 @@ func (verifier HMACCallbackVerifier) Verify(_ context.Context, provider string, 
 	return nil
 }
 
-func parseCallbackMessage(provider string, body []byte) (CallbackMessage, error) {
-	return ParseCallbackMessageWithEventID(provider, body, "")
-}
-
 func ParseCallbackMessageWithEventID(provider string, body []byte, headerEventID string) (CallbackMessage, error) {
 	var payload struct {
 		Provider  string          `json:"provider"`

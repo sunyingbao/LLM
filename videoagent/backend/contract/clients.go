@@ -135,8 +135,6 @@ type TTSRequest struct {
 	Speaker     string
 	Text        string
 	CPM         int
-	Model       string
-	Async       bool
 	WithExample bool
 	SubmitKey   string
 }

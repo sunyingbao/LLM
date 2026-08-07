@@ -257,7 +257,7 @@ func TestSubmitAndReconcileFailureStaysVisibleAndRecoverable(t *testing.T) {
 	}
 
 	node := nodeRun(run, "tts", "speaker-1")
-	if node.State != Waiting || node.JobID != "" || !node.SubmissionUnknown {
+	if node.State != Waiting || node.JobID != "" || node.Provider != "tts" || !node.SubmissionUnknown {
 		t.Fatalf("uncertain tts node = %#v, want waiting without job id", node)
 	}
 	if node.Message == "" {
@@ -683,9 +683,9 @@ func TestCallbacksSettleJobsWhileCancellationIsPending(t *testing.T) {
 			{FromNodeID: "clipscript", FromPort: "clipscript", ToNodeID: "competition", ToPort: "clipscript"},
 		},
 	}
-	run, err := runner.startWorkflow(context.Background(), "project-1", workflow, RunInput{ProductName: "shoe"}, "cancel-callback-run")
+	run, err := runner.createRun(context.Background(), "project-1", workflow, RunInput{ProductName: "shoe"}, "cancel-callback-run")
 	if err != nil {
-		t.Fatalf("startWorkflow() error = %v", err)
+		t.Fatalf("createRun() error = %v", err)
 	}
 	job := nodeRun(run, "competition", "competition-1")
 	if err := runner.Cancel(context.Background(), run.ID); !errors.Is(err, ErrCancellationUnsupported) {
@@ -725,9 +725,9 @@ func TestPollingSettlesJobsWhileCancellationIsPending(t *testing.T) {
 			{FromNodeID: "clipscript", FromPort: "clipscript", ToNodeID: "competition", ToPort: "clipscript"},
 		},
 	}
-	run, err := runner.startWorkflow(context.Background(), "project-1", workflow, RunInput{ProductName: "shoe"}, "cancel-poll-run")
+	run, err := runner.createRun(context.Background(), "project-1", workflow, RunInput{ProductName: "shoe"}, "cancel-poll-run")
 	if err != nil {
-		t.Fatalf("startWorkflow() error = %v", err)
+		t.Fatalf("createRun() error = %v", err)
 	}
 	job := nodeRun(run, "competition", "competition-1")
 	if err := runner.Cancel(context.Background(), run.ID); !errors.Is(err, ErrCancellationUnsupported) {
@@ -787,7 +787,7 @@ func TestCancelCompensatesJobSubmittedDuringCancellation(t *testing.T) {
 
 	done := make(chan error, 1)
 	go func() {
-		_, runErr := runner.startWorkflow(context.Background(), "project-1", VideoWorkflow(), RunInput{ProductName: "shoe"}, "cancel-submit-race")
+		_, runErr := runner.createRun(context.Background(), "project-1", VideoWorkflow(), RunInput{ProductName: "shoe"}, "cancel-submit-race")
 		done <- runErr
 	}()
 	<-blockingImages.started
@@ -796,7 +796,7 @@ func TestCancelCompensatesJobSubmittedDuringCancellation(t *testing.T) {
 	}
 	close(blockingImages.release)
 	if err := <-done; err != nil {
-		t.Fatalf("startWorkflow() error = %v", err)
+		t.Fatalf("createRun() error = %v", err)
 	}
 	if len(images.jobs) != 0 {
 		t.Fatalf("remote jobs after cancel = %#v, want none", images.jobs)
@@ -826,7 +826,7 @@ func TestLateSubmissionCancelFailureReportsRemoteJobAsWaiting(t *testing.T) {
 
 	done := make(chan error, 1)
 	go func() {
-		_, runErr := runner.startWorkflow(context.Background(), "project-1", VideoWorkflow(), RunInput{ProductName: "shoe"}, "cancel-submit-failure")
+		_, runErr := runner.createRun(context.Background(), "project-1", VideoWorkflow(), RunInput{ProductName: "shoe"}, "cancel-submit-failure")
 		done <- runErr
 	}()
 	<-blockingImages.started
@@ -835,7 +835,7 @@ func TestLateSubmissionCancelFailureReportsRemoteJobAsWaiting(t *testing.T) {
 	}
 	close(blockingImages.release)
 	if err := <-done; err != nil {
-		t.Fatalf("startWorkflow() error = %v", err)
+		t.Fatalf("createRun() error = %v", err)
 	}
 	if cancelFailure.State != Waiting || cancelFailure.Provider == "" {
 		t.Fatalf("cancel failure event = %#v, want waiting remote job", cancelFailure)
@@ -866,7 +866,7 @@ func TestRestoreRetriesFailedCancellationFinalization(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewRunner() error = %v", err)
 	}
-	run, err := runner.startWorkflow(context.Background(), "project-1", Workflow{
+	run, err := runner.createRun(context.Background(), "project-1", Workflow{
 		Nodes: []WorkflowNode{
 			{ID: "requirement", Kind: RequirementNode},
 			{ID: "clipscript", Kind: ClipScriptNode},
@@ -878,7 +878,7 @@ func TestRestoreRetriesFailedCancellationFinalization(t *testing.T) {
 		},
 	}, RunInput{ProductName: "shoe"}, "cancel-finalize-retry")
 	if err != nil {
-		t.Fatalf("startWorkflow() error = %v", err)
+		t.Fatalf("createRun() error = %v", err)
 	}
 	job := nodeRun(run, "competition", "competition-1")
 	if err := runner.Cancel(context.Background(), run.ID); !errors.Is(err, ErrCancellationUnsupported) {
@@ -967,7 +967,7 @@ func TestLongRunningSubmissionRenewsNodeClaim(t *testing.T) {
 
 	done := make(chan error, 1)
 	go func() {
-		_, runErr := runner.startWorkflow(context.Background(), "project-1", VideoWorkflow(), RunInput{ProductName: "shoe"}, "lease-heartbeat")
+		_, runErr := runner.createRun(context.Background(), "project-1", VideoWorkflow(), RunInput{ProductName: "shoe"}, "lease-heartbeat")
 		done <- runErr
 	}()
 	<-blockingImages.started
@@ -982,7 +982,7 @@ func TestLongRunningSubmissionRenewsNodeClaim(t *testing.T) {
 	}
 	close(blockingImages.release)
 	if err := <-done; err != nil {
-		t.Fatalf("startWorkflow() error = %v", err)
+		t.Fatalf("createRun() error = %v", err)
 	}
 }
 
@@ -1258,7 +1258,7 @@ func TestPlanPreviewUsesOnlyResourcesForEachScene(t *testing.T) {
 	resourceOne, _ := encode(map[string]string{"scene_id": "scene-1", "url": "https://example/one.png"})
 	resourceTwo, _ := encode(map[string]string{"scene_id": "scene-2", "url": "https://example/two.png"})
 	shared, _ := encode(map[string]string{"url": "https://example/shared.png"})
-	result, err := planPreview(Command{
+	result, err := (nodeHandler{}).planPreview(context.Background(), Command{
 		RunID:   "run-1",
 		NodeRun: NodeRun{NodeID: "preview", Kind: PreviewNode},
 		Inputs: []Artifact{

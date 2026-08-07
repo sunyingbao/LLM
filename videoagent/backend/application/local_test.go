@@ -271,7 +271,7 @@ func TestHTTPRunCreationIsIdempotent(t *testing.T) {
 
 func TestLocalJobsCancelMarksJobFailed(t *testing.T) {
 	jobs := NewLocalJobs(t.TempDir() + "/jobs.json")
-	job, _, err := jobs.Submit("local", PreviewNode, "cancel-once")
+	job, _, err := jobs.Submit(PreviewNode, "cancel-once")
 	if err != nil {
 		t.Fatalf("Submit() error = %v", err)
 	}
@@ -287,7 +287,7 @@ func TestLocalJobsCancelMarksJobFailed(t *testing.T) {
 	}
 }
 
-func waitForFinalVideo(t *testing.T, application *LocalApplication, runID string) Run {
+func waitForFinalVideo(t *testing.T, application *Application, runID string) Run {
 	return waitForFinalVideoInStore(t, application.Store, runID)
 }
 

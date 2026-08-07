@@ -2,10 +2,11 @@ package media
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
+
+	"eino-cli/videoagent/backend/contract"
 )
 
 type MetaFinalVideoConfig struct {
@@ -62,14 +63,14 @@ func buildRenderPlan(config MetaFinalVideoConfig, request VideoRequest) (RenderP
 	if request.ClipScript == nil || len(request.ClipScript.Scenes) == 0 {
 		return RenderPlan{}, fmt.Errorf("finalvideo requires clipscript scenes")
 	}
-	voices := artifactsByScene(request.Inputs, "voice_preview")
-	previewsByScene := artifactsByScene(request.Inputs, "preview_video")
+	voices := contract.ArtifactsByScene(request.Inputs, "voice_preview")
+	previewsByScene := contract.ArtifactsByScene(request.Inputs, "preview_video")
 	previewsByPicture := make(map[int64][]Artifact)
 	for _, artifact := range request.Inputs {
 		if artifact.Kind != "preview_video" {
 			continue
 		}
-		for _, pictureID := range artifactInt64s(artifact, "origin_picture_clip_ids") {
+		for _, pictureID := range artifact.Int64s("origin_picture_clip_ids") {
 			previewsByPicture[pictureID] = append(previewsByPicture[pictureID], artifact)
 		}
 	}
@@ -83,7 +84,7 @@ func buildRenderPlan(config MetaFinalVideoConfig, request VideoRequest) (RenderP
 		}
 		durationMS := normalizedDurationMS(scene.DurationMS)
 		if voice, ok := voices[sceneID]; ok {
-			if audioDuration := firstArtifactInt(voice, "duration_ms"); audioDuration > durationMS {
+			if audioDuration := voice.PositiveInt("duration_ms"); audioDuration > durationMS {
 				durationMS = audioDuration
 			}
 		}
@@ -115,9 +116,9 @@ func buildRenderPlan(config MetaFinalVideoConfig, request VideoRequest) (RenderP
 		}
 		durationMS := sceneDurations[sceneID]
 		if voice, ok := voices[sceneID]; ok {
-			source := firstArtifactValue(voice, "audio_uri", "audio_url")
+			source := voice.Text("audio_uri", "audio_url")
 			if source != "" {
-				audioDuration := firstArtifactInt(voice, "duration_ms")
+				audioDuration := voice.PositiveInt("duration_ms")
 				if audioDuration <= 0 || audioDuration > durationMS {
 					audioDuration = durationMS
 				}
@@ -131,7 +132,7 @@ func buildRenderPlan(config MetaFinalVideoConfig, request VideoRequest) (RenderP
 			if artifact.Kind != "voice_preview" {
 				continue
 			}
-			source := firstArtifactValue(artifact, "audio_uri", "audio_url")
+			source := artifact.Text("audio_uri", "audio_url")
 			if source != "" {
 				plan.Audios = append(plan.Audios, RenderAudio{Source: source, DurationMS: startMS})
 				break
@@ -156,7 +157,7 @@ func orderedCutPreviews(artifacts []Artifact, cuts []int32) ([]placedPreview, bo
 		if artifact.Kind != "preview_video" || artifact.Status != string(Succeeded) {
 			continue
 		}
-		for _, placement := range artifactCutPlacements(artifact) {
+		for _, placement := range artifact.CutPlacements() {
 			if placement.CutNumber == cut {
 				previews = append(previews, placedPreview{artifact: artifact, placement: placement})
 				break
@@ -199,7 +200,7 @@ func buildCutRenderScenes(previews []placedPreview, pictureDurations map[int64]i
 func fitPreviewGroup(previews []placedPreview, targetDuration int) ([]RenderScene, error) {
 	if targetDuration <= 0 {
 		for _, preview := range previews {
-			targetDuration += firstArtifactInt(preview.artifact, "duration_seconds") * 1000
+			targetDuration += preview.artifact.PositiveInt("duration_seconds") * 1000
 		}
 	}
 	if targetDuration <= 0 {
@@ -242,21 +243,21 @@ func fitPreviewGroup(previews []placedPreview, targetDuration int) ([]RenderScen
 }
 
 func renderSceneFromArtifact(preview Artifact, fallbackDuration int) (RenderScene, int, error) {
-	source := firstArtifactValue(preview, "uri", "url")
+	source := preview.Text("uri", "url")
 	if !strings.HasPrefix(source, "vid://") {
 		return RenderScene{}, 0, fmt.Errorf("preview %s is not an internal video", preview.ID)
 	}
-	clipStart := firstArtifactInt(preview, "clip_start_ms")
-	clipEnd := firstArtifactInt(preview, "clip_end_ms")
+	clipStart := preview.PositiveInt("clip_start_ms")
+	clipEnd := preview.PositiveInt("clip_end_ms")
 	rawDuration := clipEnd - clipStart
 	if rawDuration <= 0 {
-		rawDuration = firstArtifactInt(preview, "duration_seconds") * 1000
+		rawDuration = preview.PositiveInt("duration_seconds") * 1000
 		if rawDuration <= 0 {
 			rawDuration = fallbackDuration
 		}
 		clipEnd = clipStart + rawDuration
 	}
-	previewID := firstArtifactValue(preview, "candidate_id")
+	previewID := preview.Text("candidate_id")
 	if previewID == "" {
 		previewID = preview.ID
 	}
@@ -268,7 +269,7 @@ func renderSceneFromArtifact(preview Artifact, fallbackDuration int) (RenderScen
 
 func pictureDuration(preview Artifact, durations map[int64]int) int {
 	duration := 0
-	for _, pictureID := range artifactInt64s(preview, "origin_picture_clip_ids") {
+	for _, pictureID := range preview.Int64s("origin_picture_clip_ids") {
 		duration += durations[pictureID]
 	}
 	return duration
@@ -300,7 +301,7 @@ func buildSceneOrderedRenderScenes(
 		if !ok || usedPreviews[preview.ID] {
 			return nil, fmt.Errorf("preview is missing for scene %s", sceneID)
 		}
-		originIDs := artifactInt64s(preview, "origin_picture_clip_ids")
+		originIDs := preview.Int64s("origin_picture_clip_ids")
 		if len(originIDs) == 0 {
 			originIDs = []int64{pictureID}
 		}
@@ -332,87 +333,6 @@ func firstUnusedArtifact(artifacts []Artifact, used map[string]bool) (Artifact, 
 		}
 	}
 	return Artifact{}, false
-}
-
-func artifactsByScene(artifacts []Artifact, kind string) map[string]Artifact {
-	result := make(map[string]Artifact)
-	for _, artifact := range artifacts {
-		if artifact.Kind != kind {
-			continue
-		}
-		sceneID := firstArtifactValue(artifact, "scene_id")
-		if sceneID == "" {
-			_, sceneID, _ = strings.Cut(artifact.ID, ":")
-		}
-		if sceneID != "" {
-			result[sceneID] = artifact
-		}
-	}
-	return result
-}
-
-func firstArtifactValue(artifact Artifact, keys ...string) string {
-	var data map[string]json.RawMessage
-	if json.Unmarshal(artifact.Data, &data) != nil {
-		return ""
-	}
-	for _, key := range keys {
-		var value string
-		if json.Unmarshal(data[key], &value) == nil && value != "" {
-			return value
-		}
-	}
-	return ""
-}
-
-func firstArtifactInt(artifact Artifact, keys ...string) int {
-	var data map[string]json.RawMessage
-	if json.Unmarshal(artifact.Data, &data) != nil {
-		return 0
-	}
-	for _, key := range keys {
-		var value int
-		if json.Unmarshal(data[key], &value) == nil && value > 0 {
-			return value
-		}
-	}
-	return 0
-}
-
-func artifactInt64s(artifact Artifact, key string) []int64 {
-	var data map[string]json.RawMessage
-	if json.Unmarshal(artifact.Data, &data) != nil {
-		return nil
-	}
-	var values []int64
-	if json.Unmarshal(data[key], &values) != nil {
-		return nil
-	}
-	return values
-}
-
-func artifactInt32s(artifact Artifact, key string) []int32 {
-	var data map[string]json.RawMessage
-	if json.Unmarshal(artifact.Data, &data) != nil {
-		return nil
-	}
-	var values []int32
-	if json.Unmarshal(data[key], &values) != nil {
-		return nil
-	}
-	return values
-}
-
-func artifactCutPlacements(artifact Artifact) []CutPlacement {
-	var data map[string]json.RawMessage
-	if json.Unmarshal(artifact.Data, &data) != nil {
-		return nil
-	}
-	var placements []CutPlacement
-	if json.Unmarshal(data["cut_placements"], &placements) != nil {
-		return nil
-	}
-	return placements
 }
 
 func normalizedDurationMS(duration int) int {

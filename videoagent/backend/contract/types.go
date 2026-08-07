@@ -6,7 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"sync/atomic"
+	"strings"
 	"time"
 )
 
@@ -90,7 +90,6 @@ type ProjectSession struct {
 type MessagePart struct {
 	Type        string `json:"type"`
 	Text        string `json:"text,omitempty"`
-	ArtifactID  string `json:"artifact_id,omitempty"`
 	OperationID string `json:"operation_id,omitempty"`
 }
 
@@ -101,6 +100,16 @@ type Message struct {
 	Role           string        `json:"role"`
 	Parts          []MessagePart `json:"parts"`
 	CreatedAt      time.Time     `json:"created_at"`
+}
+
+func (message Message) Text() string {
+	parts := make([]string, 0, len(message.Parts))
+	for _, part := range message.Parts {
+		if part.Type == "text" && strings.TrimSpace(part.Text) != "" {
+			parts = append(parts, part.Text)
+		}
+	}
+	return strings.Join(parts, "\n")
 }
 
 type AgentChatInput struct {
@@ -219,6 +228,21 @@ type NodeRun struct {
 	Message           string          `json:"message,omitempty"`
 }
 
+func (node NodeRun) Key() string {
+	return node.NodeID + ":" + node.InstanceKey
+}
+
+func (node NodeRun) ArtifactID() string {
+	if node.InstanceKey == "" {
+		return node.NodeID
+	}
+	return node.Key()
+}
+
+func SubmitKey(runID, nodeID, instanceKey string) string {
+	return fmt.Sprintf("%s:%s:%s", runID, nodeID, instanceKey)
+}
+
 type Run struct {
 	ID              string          `json:"run_id"`
 	ProjectID       string          `json:"project_id"`
@@ -240,11 +264,9 @@ type Result struct {
 	State             NodeState
 	Provider          string
 	JobID             string
-	ClearJobID        bool
 	Artifacts         []Artifact
 	Children          []NodeRun
 	FallbackSubmitted bool
-	ResetSubmission   bool
 	SubmissionUnknown bool
 	Message           string
 }
@@ -272,21 +294,4 @@ func (kind NodeKind) Resource() bool {
 	default:
 		return false
 	}
-}
-
-var idSequence atomic.Uint64
-
-func newID(prefix string) string {
-	return fmt.Sprintf("%s-%d-%d", prefix, time.Now().UTC().UnixNano(), idSequence.Add(1))
-}
-
-func newSubmitKey(runID, nodeID, instanceKey string) string {
-	return fmt.Sprintf("%s:%s:%s", runID, nodeID, instanceKey)
-}
-
-func artifactID(node NodeRun) string {
-	if node.InstanceKey == "" {
-		return node.NodeID
-	}
-	return node.NodeID + ":" + node.InstanceKey
 }

@@ -249,7 +249,7 @@ func (store *Store) FindAgentChatReply(_ context.Context, projectID, idempotency
 		}
 		switch message.Role {
 		case "user":
-			userText = messageText(message)
+			userText = message.Text()
 		case "assistant":
 			current := message
 			assistant = &current
@@ -522,7 +522,7 @@ func (store *Store) ClaimWaiting(runID string, skipped map[string]bool) (command
 		}
 		for index := range run.NodeRuns {
 			node := &run.NodeRuns[index]
-			if node.State != Waiting || skipped[nodeRunKey(*node)] {
+			if node.State != Waiting || skipped[node.Key()] {
 				continue
 			}
 			node.State = Running
@@ -621,9 +621,6 @@ func (store *Store) Apply(command Command, result Result) error {
 		if result.Provider != "" {
 			node.Provider = result.Provider
 		}
-		if result.ClearJobID {
-			node.JobID = ""
-		}
 		if result.JobID != "" {
 			node.JobID = result.JobID
 		}
@@ -632,8 +629,7 @@ func (store *Store) Apply(command Command, result Result) error {
 		}
 		if result.FallbackSubmitted {
 			node.FallbackSubmitted = true
-		}
-		if result.ResetSubmission {
+			node.JobID = ""
 			node.SubmitStarted = false
 		}
 		node.SubmissionUnknown = result.SubmissionUnknown
@@ -781,7 +777,7 @@ func (store *Store) Retry(runID string) error {
 				node.Output = nil
 			} else {
 				node.Attempt++
-				node.SubmitKey = fmt.Sprintf("%s:attempt-%d", newSubmitKey(run.ID, node.NodeID, node.InstanceKey), node.Attempt)
+				node.SubmitKey = fmt.Sprintf("%s:attempt-%d", contract.SubmitKey(run.ID, node.NodeID, node.InstanceKey), node.Attempt)
 			}
 			node.Artifacts = nil
 			node.SubmitStarted = false
@@ -848,7 +844,7 @@ func (store *Store) CompleteCancelIfIdle(runID string, canceledJobs map[string]s
 			if node.State.Terminal() || !node.SubmitStarted {
 				continue
 			}
-			if node.JobID == "" || canceledJobs[nodeRunKey(node)] != node.JobID {
+			if node.JobID == "" || canceledJobs[node.Key()] != node.JobID {
 				return nil
 			}
 		}
@@ -1329,10 +1325,6 @@ func FindNodeRun(run Run, target NodeRun) int {
 		}
 	}
 	return -1
-}
-
-func nodeRunKey(node NodeRun) string {
-	return node.NodeID + ":" + node.InstanceKey
 }
 
 func hasChildren(run Run, nodeID string) bool {

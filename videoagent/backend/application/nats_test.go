@@ -196,15 +196,14 @@ func TestNATSPollerCompletesProvidersWithoutCallbacks(t *testing.T) {
 	application, err := NewApplication(store, Clients{
 		Planner: testPlanner{}, Image: images, TTS: tts, Video: videos,
 		Audit: allowAudit{}, Shield: allowShield{},
-	}, nil)
+	})
 	if err != nil {
 		t.Fatalf("NewApplication() error = %v", err)
 	}
 	if err := EnsureProject(context.Background(), store, "demo"); err != nil {
 		t.Fatalf("EnsureProject() error = %v", err)
 	}
-	application.SetMessagePublisher(bus)
-	application.SetMessageConsumer(bus)
+	application.SetMessageQueue(bus, bus)
 	application.SetJobPollInterval(10 * time.Millisecond)
 	defer application.Close()
 	if err := application.Start(context.Background()); err != nil {

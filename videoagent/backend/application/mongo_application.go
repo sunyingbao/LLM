@@ -11,7 +11,7 @@ import (
 )
 
 // NewMongoLocalApplication runs the deterministic local clients on MongoDB state.
-func NewMongoLocalApplication(dataDir, uri, database, collection string) (*LocalApplication, error) {
+func NewMongoLocalApplication(uri, database, collection string) (*Application, error) {
 	if uri == "" || database == "" || collection == "" {
 		return nil, fmt.Errorf("mongo uri, database and collection are required")
 	}
@@ -36,7 +36,7 @@ func NewMongoLocalApplication(dataDir, uri, database, collection string) (*Local
 		_ = client.Disconnect(context.Background())
 		return nil, err
 	}
-	application, err := newLocalApplication(dataDir, store, jobs, func() error {
+	application, err := newLocalApplication(store, jobs, func() error {
 		return client.Disconnect(context.Background())
 	})
 	if err != nil {

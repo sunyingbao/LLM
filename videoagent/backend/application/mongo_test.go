@@ -20,7 +20,7 @@ func TestMongoLocalWorkflowCompletes(t *testing.T) {
 	ctx := context.Background()
 	database := "video_agent_test_" + newID("mongo")
 	dataDir := t.TempDir()
-	application, err := NewMongoLocalApplication(dataDir, uri, database, "workflow_state")
+	application, err := NewMongoLocalApplication(uri, database, "workflow_state")
 	if err != nil {
 		t.Fatalf("NewMongoLocalApplication() error = %v", err)
 	}
@@ -59,12 +59,12 @@ func TestMongoNodeClaimIsSharedAcrossInstances(t *testing.T) {
 
 	ctx := context.Background()
 	database := "video_agent_claim_test_" + newID("mongo")
-	first, err := NewMongoLocalApplication(t.TempDir(), uri, database, "workflow_state")
+	first, err := NewMongoLocalApplication(uri, database, "workflow_state")
 	if err != nil {
 		t.Fatalf("NewMongoLocalApplication(first) error = %v", err)
 	}
 	defer first.Close()
-	second, err := NewMongoLocalApplication(t.TempDir(), uri, database, "workflow_state")
+	second, err := NewMongoLocalApplication(uri, database, "workflow_state")
 	if err != nil {
 		t.Fatalf("NewMongoLocalApplication(second) error = %v", err)
 	}
@@ -90,12 +90,12 @@ func TestMongoConcurrentProjectUpdatesKeepBothVersions(t *testing.T) {
 
 	ctx := context.Background()
 	database := "video_agent_project_test_" + newID("mongo")
-	first, err := NewMongoLocalApplication(t.TempDir(), uri, database, "workflow_state")
+	first, err := NewMongoLocalApplication(uri, database, "workflow_state")
 	if err != nil {
 		t.Fatalf("NewMongoLocalApplication(first) error = %v", err)
 	}
 	defer first.Close()
-	second, err := NewMongoLocalApplication(t.TempDir(), uri, database, "workflow_state")
+	second, err := NewMongoLocalApplication(uri, database, "workflow_state")
 	if err != nil {
 		t.Fatalf("NewMongoLocalApplication(second) error = %v", err)
 	}
@@ -150,12 +150,12 @@ func TestMongoEnsureProjectDoesNotOverwriteConcurrentWorkflow(t *testing.T) {
 
 	ctx := context.Background()
 	database := "video_agent_ensure_project_test_" + newID("mongo")
-	first, err := NewMongoLocalApplication(t.TempDir(), uri, database, "workflow_state")
+	first, err := NewMongoLocalApplication(uri, database, "workflow_state")
 	if err != nil {
 		t.Fatalf("NewMongoLocalApplication(first) error = %v", err)
 	}
 	defer first.Close()
-	second, err := NewMongoLocalApplication(t.TempDir(), uri, database, "workflow_state")
+	second, err := NewMongoLocalApplication(uri, database, "workflow_state")
 	if err != nil {
 		t.Fatalf("NewMongoLocalApplication(second) error = %v", err)
 	}
@@ -200,12 +200,12 @@ func TestMongoClaimTakeoverCancelsPreviousExecution(t *testing.T) {
 
 	ctx := context.Background()
 	database := "video_agent_claim_fencing_test_" + newID("mongo")
-	first, err := NewMongoLocalApplication(t.TempDir(), uri, database, "workflow_state")
+	first, err := NewMongoLocalApplication(uri, database, "workflow_state")
 	if err != nil {
 		t.Fatalf("NewMongoLocalApplication(first) error = %v", err)
 	}
 	defer first.Close()
-	second, err := NewMongoLocalApplication(t.TempDir(), uri, database, "workflow_state")
+	second, err := NewMongoLocalApplication(uri, database, "workflow_state")
 	if err != nil {
 		t.Fatalf("NewMongoLocalApplication(second) error = %v", err)
 	}

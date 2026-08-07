@@ -69,7 +69,7 @@ func (backend *mongoJobBackend) Save(data localJobData) error {
 		return err
 	}
 	if result.MatchedCount == 0 {
-		return fmt.Errorf("mongo job state changed before save")
+		return errJobStateConflict
 	}
 	return nil
 }

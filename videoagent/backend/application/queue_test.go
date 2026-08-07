@@ -9,12 +9,12 @@ import (
 
 func TestApplicationRunsInjectedCallbackConsumerUntilClose(t *testing.T) {
 	runner, store, _, _, _ := testRunner(t)
-	application, err := NewApplication(store, runner.handler.clients, nil)
+	application, err := NewApplication(store, runner.handler.clients)
 	if err != nil {
 		t.Fatalf("NewApplication() error = %v", err)
 	}
 	consumer := &blockingConsumer{started: make(chan struct{})}
-	application.SetMessageConsumer(consumer)
+	application.SetMessageQueue(nil, consumer)
 	if err := application.Start(context.Background()); err != nil {
 		t.Fatalf("Start() error = %v", err)
 	}
@@ -44,7 +44,7 @@ func TestLocalApplicationRequiresMessagePublisher(t *testing.T) {
 
 func TestLocalQueuePublishesCompletedJob(t *testing.T) {
 	jobs := NewLocalJobs(t.TempDir() + "/jobs.json")
-	job, _, err := jobs.Submit("image", CompetitionReferenceNode, "submit-once")
+	job, _, err := jobs.Submit(CompetitionReferenceNode, "submit-once")
 	if err != nil {
 		t.Fatalf("Submit() error = %v", err)
 	}

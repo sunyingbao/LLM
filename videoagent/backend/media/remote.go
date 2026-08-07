@@ -258,54 +258,40 @@ type remoteTransport struct {
 }
 
 func (remote *remoteTransport) AnalyzeRequirement(ctx context.Context, input RunInput) (Requirement, error) {
-	var output Requirement
-	err := remote.call(ctx, "requirement", input, &output)
-	return output, err
+	return callRemote[Requirement](ctx, remote, "requirement", input)
 }
 
 func (remote *remoteTransport) CreateClipScript(ctx context.Context, requirement Requirement, input RunInput) (ClipScript, error) {
-	var output ClipScript
-	err := remote.call(ctx, "clipscript", struct {
+	return callRemote[ClipScript](ctx, remote, "clipscript", struct {
 		Requirement Requirement `json:"requirement"`
 		Input       RunInput    `json:"input"`
-	}{requirement, input}, &output)
-	return output, err
+	}{requirement, input})
 }
 
 func (remote *remoteTransport) PlanCompetition(ctx context.Context, input ClipScript, runInput RunInput) ([]ResourcePlan, error) {
-	var output []ResourcePlan
-	err := remote.call(ctx, "competition_plan", struct {
+	return callRemote[[]ResourcePlan](ctx, remote, "competition_plan", struct {
 		ClipScript ClipScript `json:"clipscript"`
 		Input      RunInput   `json:"input"`
-	}{input, runInput}, &output)
-	return output, err
+	}{input, runInput})
 }
 
 func (remote *remoteTransport) PlanTTS(ctx context.Context, input ClipScript) ([]ResourcePlan, error) {
-	var output []ResourcePlan
-	err := remote.call(ctx, "tts_plan", input, &output)
-	return output, err
+	return callRemote[[]ResourcePlan](ctx, remote, "tts_plan", input)
 }
 
 func (remote *remoteTransport) PlanCharacterReferences(ctx context.Context, input ClipScript, runInput RunInput) ([]ResourcePlan, error) {
-	var output []ResourcePlan
-	err := remote.call(ctx, "character_plan", struct {
+	return callRemote[[]ResourcePlan](ctx, remote, "character_plan", struct {
 		ClipScript ClipScript `json:"clipscript"`
 		Input      RunInput   `json:"input"`
-	}{input, runInput}, &output)
-	return output, err
+	}{input, runInput})
 }
 
 func (remote *remoteTransport) SubmitImage(ctx context.Context, input ImageRequest) (SubmittedJob, error) {
-	var output SubmittedJob
-	err := remote.call(ctx, "image_submit", input, &output)
-	return output, err
+	return callRemote[SubmittedJob](ctx, remote, "image_submit", input)
 }
 
 func (remote *remoteTransport) GetImage(ctx context.Context, jobID string) (JobStatus, error) {
-	var output JobStatus
-	err := remote.call(ctx, "image_status", map[string]string{"job_id": jobID}, &output)
-	return output, err
+	return callRemote[JobStatus](ctx, remote, "image_status", map[string]string{"job_id": jobID})
 }
 
 func (remote *remoteTransport) CancelImage(ctx context.Context, jobID string) error {
@@ -317,15 +303,11 @@ func (remote *remoteTransport) FindImageBySubmitKey(ctx context.Context, key str
 }
 
 func (remote *remoteTransport) SubmitTTS(ctx context.Context, input TTSRequest) (SubmittedJob, error) {
-	var output SubmittedJob
-	err := remote.call(ctx, "tts_submit", input, &output)
-	return output, err
+	return callRemote[SubmittedJob](ctx, remote, "tts_submit", input)
 }
 
 func (remote *remoteTransport) GetTTS(ctx context.Context, jobID string) (JobStatus, error) {
-	var output JobStatus
-	err := remote.call(ctx, "tts_status", map[string]string{"job_id": jobID}, &output)
-	return output, err
+	return callRemote[JobStatus](ctx, remote, "tts_status", map[string]string{"job_id": jobID})
 }
 
 func (remote *remoteTransport) CancelTTS(ctx context.Context, jobID string) error {
@@ -337,15 +319,11 @@ func (remote *remoteTransport) FindTTSBySubmitKey(ctx context.Context, key strin
 }
 
 func (remote *remoteTransport) SubmitPreview(ctx context.Context, input VideoRequest) (SubmittedJob, error) {
-	var output SubmittedJob
-	err := remote.call(ctx, "preview_submit", input, &output)
-	return output, err
+	return callRemote[SubmittedJob](ctx, remote, "preview_submit", input)
 }
 
 func (remote *remoteTransport) GetPreview(ctx context.Context, jobID string) (JobStatus, error) {
-	var output JobStatus
-	err := remote.call(ctx, "preview_status", map[string]string{"job_id": jobID}, &output)
-	return output, err
+	return callRemote[JobStatus](ctx, remote, "preview_status", map[string]string{"job_id": jobID})
 }
 
 func (remote *remoteTransport) CancelVideo(ctx context.Context, jobID string) error {
@@ -357,15 +335,11 @@ func (remote *remoteTransport) FindPreviewBySubmitKey(ctx context.Context, key s
 }
 
 func (remote *remoteTransport) SubmitFinalVideo(ctx context.Context, input VideoRequest) (SubmittedJob, error) {
-	var output SubmittedJob
-	err := remote.call(ctx, "finalvideo_submit", input, &output)
-	return output, err
+	return callRemote[SubmittedJob](ctx, remote, "finalvideo_submit", input)
 }
 
 func (remote *remoteTransport) GetFinalVideo(ctx context.Context, jobID string) (JobStatus, error) {
-	var output JobStatus
-	err := remote.call(ctx, "finalvideo_status", map[string]string{"job_id": jobID}, &output)
-	return output, err
+	return callRemote[JobStatus](ctx, remote, "finalvideo_status", map[string]string{"job_id": jobID})
 }
 
 func (remote *remoteTransport) FindFinalVideoBySubmitKey(ctx context.Context, key string) (SubmittedJob, bool, error) {
@@ -432,6 +406,11 @@ func (remote *remoteTransport) find(ctx context.Context, name, key string) (Subm
 	}
 	err := remote.call(ctx, name, map[string]string{"submit_key": key}, &output)
 	return output.SubmittedJob, output.Found, err
+}
+
+func callRemote[T any](ctx context.Context, remote *remoteTransport, name string, input any) (output T, err error) {
+	err = remote.call(ctx, name, input, &output)
+	return
 }
 
 func (remote *remoteTransport) call(ctx context.Context, name string, input, output any) error {

@@ -5,14 +5,15 @@ import (
 	"encoding/json"
 	"testing"
 
+	"eino-cli/videoagent/backend/contract"
 	"eino-cli/videoagent/backend/media"
 )
 
 type recordingVideoRenderer struct {
-	plan RenderPlan
+	plan contract.RenderPlan
 }
 
-func (renderer *recordingVideoRenderer) StartRender(_ context.Context, plan RenderPlan) (string, error) {
+func (renderer *recordingVideoRenderer) StartRender(_ context.Context, plan contract.RenderPlan) (string, error) {
 	renderer.plan = plan
 	return "render-1", nil
 }
@@ -185,8 +186,7 @@ func TestMetaFinalVideoClientUsesCutOrderAndSupplementCandidates(t *testing.T) {
 }
 
 func TestPreviewArtifactKeepsClipMixLineage(t *testing.T) {
-	handler := nodeHandler{}
-	result, err := handler.videoResult(
+	result, err := completeVideo(
 		Command{NodeRun: NodeRun{NodeID: "preview", Kind: PreviewNode}},
 		ResourcePlan{
 			ID:                   "candidate-1",
@@ -196,11 +196,10 @@ func TestPreviewArtifactKeepsClipMixLineage(t *testing.T) {
 			Duration:             8,
 			Strategy:             PreviewStrategyR2V,
 		},
-		SubmittedJob{Provider: "seedance", JobID: "job-1"},
 		JobStatus{State: JobSucceeded, URI: "vid://preview"},
 	)
 	if err != nil {
-		t.Fatalf("videoResult() error = %v", err)
+		t.Fatalf("completeVideo() error = %v", err)
 	}
 	if len(result.Artifacts) != 1 {
 		t.Fatalf("artifacts = %#v", result.Artifacts)
@@ -234,9 +233,9 @@ func TestMaterialPreviewCompletesWithoutVideoGeneration(t *testing.T) {
 	if result.State != Succeeded || result.Provider != "material" || len(result.Artifacts) != 1 {
 		t.Fatalf("result = %#v", result)
 	}
-	if firstArtifactValue(result.Artifacts[0], "uri") != "vid://source" || firstArtifactInt(result.Artifacts[0], "clip_start_ms") != 1000 {
+	if result.Artifacts[0].Text("uri") != "vid://source" || result.Artifacts[0].PositiveInt("clip_start_ms") != 1000 {
 		t.Fatalf("artifact = %#v", result.Artifacts[0])
 	}
 }
 
-var _ VideoRenderer = (*recordingVideoRenderer)(nil)
+var _ contract.VideoRenderer = (*recordingVideoRenderer)(nil)

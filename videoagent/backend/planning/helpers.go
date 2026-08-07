@@ -1,11 +1,6 @@
 package planning
 
-import (
-	"encoding/json"
-	"strings"
-
-	"eino-cli/videoagent/backend/contract"
-)
+import "strings"
 
 const defaultPromptTTSCPM = 280
 
@@ -14,19 +9,6 @@ func firstNonEmpty(value, fallback string) string {
 		return value
 	}
 	return fallback
-}
-
-func firstArtifactValue(artifact contract.Artifact, keys ...string) string {
-	var fields map[string]any
-	if err := json.Unmarshal(artifact.Data, &fields); err != nil {
-		return ""
-	}
-	for _, key := range keys {
-		if value, ok := fields[key].(string); ok && strings.TrimSpace(value) != "" {
-			return value
-		}
-	}
-	return ""
 }
 
 func normalizedDurationMS(duration int) int {

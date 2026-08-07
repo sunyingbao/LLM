@@ -64,8 +64,7 @@ func TestRemoteVideoAgentEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create remote application: %v", err)
 	}
-	application.SetMessagePublisher(bus)
-	application.SetMessageConsumer(bus)
+	application.SetMessageQueue(bus, bus)
 	defer application.Close()
 	if err := application.Start(ctx); err != nil {
 		t.Fatalf("start remote application: %v", err)

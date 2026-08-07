@@ -5,23 +5,13 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"time"
 
 	"eino-cli/videoagent/backend/messaging"
 	canvasweb "eino-cli/videoagent/web"
 )
 
-// NewHTTPHandler exposes the local video workflow for manual end-to-end checks.
-func NewHTTPHandler(application *LocalApplication) http.Handler {
-	return newHTTPHandler(application.Application)
-}
-
-// NewApplicationHTTPHandler exposes the same API for injected production dependencies.
-func NewApplicationHTTPHandler(application *Application) http.Handler {
-	return newHTTPHandler(application)
-}
-
-func newHTTPHandler(application *Application) http.Handler {
+// NewHTTPHandler exposes the video workflow over HTTP.
+func NewHTTPHandler(application *Application) http.Handler {
 	if application == nil {
 		panic("video agent application is nil")
 	}
@@ -106,18 +96,12 @@ func newHTTPHandler(application *Application) http.Handler {
 			writeError(writer, http.StatusBadRequest, fmt.Errorf("unsupported canvas operation: %s", operation.Type))
 			return
 		}
-		operation.ID = newID("operation")
 		operation.ProjectID = projectID
 		operation.IdempotencyKey = request.Header.Get("Idempotency-Key")
-		operation.Status = OperationPending
-		operation.CreatedAt = now()
-		stored, reused, err := application.Store.CreateOrGetOperation(request.Context(), operation)
+		operation, reused, err := proposeOperation(request.Context(), application.Store, operation)
 		if err != nil {
 			writeError(writer, http.StatusBadRequest, err)
 			return
-		}
-		if reused {
-			operation = stored
 		}
 		status := http.StatusCreated
 		if reused {
@@ -171,21 +155,15 @@ func newHTTPHandler(application *Application) http.Handler {
 			return
 		}
 		operation := CanvasOperation{
-			ID:             newID("operation"),
 			ProjectID:      input.ProjectID,
 			Type:           OperationRun,
 			Payload:        payload,
-			Status:         OperationPending,
-			CreatedAt:      now(),
 			IdempotencyKey: request.Header.Get("Idempotency-Key"),
 		}
-		stored, reused, err := application.Store.CreateOrGetOperation(request.Context(), operation)
+		operation, reused, err := proposeOperation(request.Context(), application.Store, operation)
 		if err != nil {
 			writeError(writer, http.StatusBadRequest, err)
 			return
-		}
-		if reused {
-			operation = stored
 		}
 		status := http.StatusAccepted
 		if reused {
@@ -232,8 +210,6 @@ func newHTTPHandler(application *Application) http.Handler {
 	})
 	return mux
 }
-
-func now() time.Time { return time.Now().UTC() }
 
 func writeJSON(writer http.ResponseWriter, status int, value any) {
 	writer.Header().Set("Content-Type", "application/json")

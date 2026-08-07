@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"eino-cli/videoagent/backend/contract"
 	"eino-cli/videoagent/backend/media"
 )
 
@@ -91,4 +92,4 @@ func TestHTTPVideoImporterDownloadsUploadsAndPublishesVideo(t *testing.T) {
 	}
 }
 
-var _ VideoUploader = (*recordingVideoUploader)(nil)
+var _ contract.VideoUploader = (*recordingVideoUploader)(nil)

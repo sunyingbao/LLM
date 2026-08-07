@@ -43,7 +43,7 @@ func (*LocalClients) PlanCharacterReferences(_ context.Context, clipScript ClipS
 }
 
 func (clients *LocalClients) SubmitImage(_ context.Context, request ImageRequest) (SubmittedJob, error) {
-	return clients.submit("image", CompetitionReferenceNode, request.SubmitKey)
+	return clients.submit(CompetitionReferenceNode, request.SubmitKey)
 }
 
 func (clients *LocalClients) GetImage(_ context.Context, jobID string) (JobStatus, error) {
@@ -59,7 +59,7 @@ func (clients *LocalClients) FindImageBySubmitKey(_ context.Context, key string)
 }
 
 func (clients *LocalClients) SubmitTTS(_ context.Context, request TTSRequest) (SubmittedJob, error) {
-	return clients.submit("tts", PromptTTSNode, request.SubmitKey)
+	return clients.submit(PromptTTSNode, request.SubmitKey)
 }
 
 func (clients *LocalClients) GetTTS(_ context.Context, jobID string) (JobStatus, error) {
@@ -75,7 +75,7 @@ func (clients *LocalClients) FindTTSBySubmitKey(_ context.Context, key string) (
 }
 
 func (clients *LocalClients) SubmitPreview(_ context.Context, request VideoRequest) (SubmittedJob, error) {
-	return clients.submit("video", PreviewNode, request.SubmitKey)
+	return clients.submit(PreviewNode, request.SubmitKey)
 }
 
 func (clients *LocalClients) GetPreview(_ context.Context, jobID string) (JobStatus, error) {
@@ -91,7 +91,7 @@ func (clients *LocalClients) FindPreviewBySubmitKey(_ context.Context, key strin
 }
 
 func (clients *LocalClients) SubmitFinalVideo(_ context.Context, request VideoRequest) (SubmittedJob, error) {
-	return clients.submit("video", FinalVideoNode, request.SubmitKey)
+	return clients.submit(FinalVideoNode, request.SubmitKey)
 }
 
 func (clients *LocalClients) GetFinalVideo(_ context.Context, jobID string) (JobStatus, error) {
@@ -106,8 +106,8 @@ func (*LocalClients) CheckImage(context.Context, string) error { return nil }
 
 func (*LocalClients) CheckPrompt(context.Context, string) error { return nil }
 
-func (clients *LocalClients) submit(provider string, kind NodeKind, submitKey string) (SubmittedJob, error) {
-	job, created, err := clients.jobs.Submit(provider, kind, submitKey)
+func (clients *LocalClients) submit(kind NodeKind, submitKey string) (SubmittedJob, error) {
+	job, created, err := clients.jobs.Submit(kind, submitKey)
 	if err != nil {
 		return SubmittedJob{}, err
 	}
