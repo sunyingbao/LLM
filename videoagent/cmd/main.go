@@ -2,29 +2,13 @@ package main
 
 import (
 	"context"
-	"encoding/json"
-	"errors"
-	"flag"
 	"log"
-	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
-	"time"
 
 	app "eino-cli/videoagent/backend/application"
-	"eino-cli/videoagent/backend/contract"
-	"eino-cli/videoagent/backend/media"
-	"eino-cli/videoagent/backend/messaging"
-	videomodel "eino-cli/videoagent/backend/model"
-	"eino-cli/videoagent/backend/planning"
-	"github.com/cloudwego/eino/components/model"
-	"go.mongodb.org/mongo-driver/v2/mongo"
-	"go.mongodb.org/mongo-driver/v2/mongo/options"
-	"go.mongodb.org/mongo-driver/v2/mongo/readpref"
 )
-
-const defaultCanvasAgentModelKey = "aic.aic_tool.user_req_analysis"
 
 func main() {
 	if err := run(); err != nil {
@@ -33,267 +17,31 @@ func main() {
 }
 
 func run() error {
-	address := flag.String("addr", "127.0.0.1:18080", "HTTP listen address")
-	dataDir := flag.String("data", ".video-agent", "local workflow data directory")
-	remoteConfigPath := flag.String("remote-config", "", "JSON config for direct image/TTS/video clients")
-	modelConfigPath := flag.String("model-config", "", "JSON config for the optional ReAct chat model")
-	promptConfigPath := flag.String("prompt-config", "", "JSON config for managed workflow prompts")
-	credentialsConfigPath := flag.String("credentials-config", "", "untracked JSON credentials for Fornax and MaaS models")
-	chatModelKey := flag.String("chat-model-key", defaultCanvasAgentModelKey, "prompt key selecting the ReAct chat model credentials")
-	mongoURI := flag.String("mongo-uri", "mongodb://127.0.0.1:27017", "MongoDB URI; empty disables MongoDB state")
-	mongoDatabase := flag.String("mongo-database", "video_agent", "MongoDB database name")
-	mongoCollection := flag.String("mongo-collection", "workflow_state", "MongoDB state collection name")
-	natsURL := flag.String("nats-url", messaging.DefaultNATSURL, "NATS server URL")
-	natsStream := flag.String("nats-stream", messaging.DefaultNATSStream, "JetStream stream name")
-	natsSubject := flag.String("nats-subject", messaging.DefaultNATSSubject, "callback subject")
-	natsConsumer := flag.String("nats-consumer", messaging.DefaultNATSConsumer, "durable callback consumer")
-	flag.Parse()
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
-	var credentials *videomodel.CredentialsConfig
-	if *credentialsConfigPath != "" {
-		loaded, err := readJSON[videomodel.CredentialsConfig](*credentialsConfigPath)
-		if err != nil {
-			return err
-		}
-		credentials = &loaded
+	options, err := parseRunOptions(os.Args[1:])
+	if err != nil {
+		return err
 	}
 
-	messageBus, err := messaging.NewNATSMessageBus(ctx, messaging.NATSConfig{
-		URL:      *natsURL,
-		Stream:   *natsStream,
-		Subject:  *natsSubject,
-		Consumer: *natsConsumer,
-	})
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	credentials, err := loadCredentials(options.credentialsPath)
+	if err != nil {
+		return err
+	}
+	messageBus, err := newMessageBus(ctx, options)
 	if err != nil {
 		return err
 	}
 	defer logCloseError("NATS message bus", messageBus.Close)
 
-	if *remoteConfigPath != "" {
-		application, err := newRemoteApplication(ctx, *dataDir, *remoteConfigPath, *modelConfigPath, *promptConfigPath, *mongoURI, *mongoDatabase, *mongoCollection, *chatModelKey, credentials)
-		if err != nil {
-			return err
-		}
-		application.SetMessageQueue(messageBus, messageBus)
-		defer logCloseError("application", application.Close)
-		if err := application.Start(ctx); err != nil {
-			return err
-		}
-		return serve(ctx, *address, app.NewHTTPHandler(application))
-	}
-
-	var application *app.Application
-	if *mongoURI != "" {
-		application, err = app.NewMongoLocalApplication(*mongoURI, *mongoDatabase, *mongoCollection)
-	} else {
-		application, err = app.NewLocalApplication(*dataDir)
-	}
+	application, err := newApplication(ctx, options, credentials)
 	if err != nil {
 		return err
 	}
 	defer application.Close()
-	var chatModel model.BaseChatModel
-	if *modelConfigPath != "" || credentials != nil {
-		chatModel, err = loadChatModel(*modelConfigPath, *chatModelKey, credentials)
-		if err != nil {
-			return err
-		}
-	}
-	var planner contract.Planner
-	if credentials != nil || *promptConfigPath != "" {
-		planner, err = loadWorkflowPlanner(ctx, *promptConfigPath, credentials, chatModel)
-		if err != nil {
-			return err
-		}
-	}
-	if err := application.ConfigureModels(chatModel, planner); err != nil {
-		return err
-	}
 	application.SetMessageQueue(messageBus, messageBus)
 	if err := application.Start(ctx); err != nil {
 		return err
 	}
-	return serve(ctx, *address, app.NewHTTPHandler(application))
-}
-
-func logCloseError(name string, close func() error) {
-	if err := close(); err != nil {
-		log.Printf("close %s: %v", name, err)
-	}
-}
-
-func serve(ctx context.Context, address string, handler http.Handler) error {
-	server := &http.Server{Addr: address, Handler: handler, ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 60 * time.Second}
-	serverDone := make(chan error, 1)
-	go func() { serverDone <- server.ListenAndServe() }()
-	log.Printf("video agent listening on http://%s", address)
-
-	select {
-	case err := <-serverDone:
-		if errors.Is(err, http.ErrServerClosed) {
-			return nil
-		}
-		return err
-	case <-ctx.Done():
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		if err := server.Shutdown(shutdownCtx); err != nil {
-			return err
-		}
-		err := <-serverDone
-		if errors.Is(err, http.ErrServerClosed) {
-			return nil
-		}
-		return err
-	}
-}
-
-func loadChatModel(path, promptKey string, credentials *videomodel.CredentialsConfig) (model.BaseChatModel, error) {
-	if credentials != nil {
-		config, err := credentials.ChatModelConfig(promptKey)
-		if err != nil {
-			return nil, err
-		}
-		return videomodel.NewChatModel(context.Background(), config)
-	}
-	config, err := readJSON[videomodel.ChatModelConfig](path)
-	if err != nil {
-		return nil, err
-	}
-	return videomodel.NewChatModel(context.Background(), config)
-}
-
-func loadCredentialPlanner(ctx context.Context, credentials videomodel.CredentialsConfig) (contract.Planner, error) {
-	requirementModel, err := loadCredentialModel(ctx, credentials, "aic.aic_tool.user_req_analysis")
-	if err != nil {
-		return nil, err
-	}
-	clipScriptModel, err := loadCredentialModel(ctx, credentials, "jichuang.creative.dr_script_e2e")
-	if err != nil {
-		return nil, err
-	}
-	return planning.NewStageModelPlanner(requirementModel, clipScriptModel, requirementModel)
-}
-
-func loadCredentialModel(ctx context.Context, credentials videomodel.CredentialsConfig, promptKey string) (model.BaseChatModel, error) {
-	config, err := credentials.ChatModelConfig(promptKey)
-	if err != nil {
-		return nil, err
-	}
-	return videomodel.NewChatModel(ctx, config)
-}
-
-func loadPromptPlanner(path string, credentials *videomodel.CredentialsConfig) (contract.Planner, error) {
-	config := planning.PromptRuntimeConfig{Planner: planning.DefaultPromptPlannerConfig()}
-	if path != "" {
-		loaded, err := readJSON[planning.PromptRuntimeConfig](path)
-		if err != nil {
-			return nil, err
-		}
-		config = loaded
-	}
-	if credentials != nil {
-		config.Fornax = credentials.Fornax
-	}
-	executor, err := videomodel.NewFornaxPromptExecutor(config.Fornax)
-	if err != nil {
-		return nil, err
-	}
-	return planning.NewPromptPlanner(executor, config.Planner)
-}
-
-func loadWorkflowPlanner(ctx context.Context, promptConfigPath string, credentials *videomodel.CredentialsConfig, chatModel model.BaseChatModel) (contract.Planner, error) {
-	if promptConfigPath != "" {
-		return loadPromptPlanner(promptConfigPath, credentials)
-	}
-	if credentials != nil {
-		return loadCredentialPlanner(ctx, *credentials)
-	}
-	return planning.NewModelPlanner(chatModel)
-}
-
-func newRemoteApplication(ctx context.Context, dataDir, remoteConfigPath, modelConfigPath, promptConfigPath, mongoURI, mongoDatabase, mongoCollection, chatModelKey string, credentials *videomodel.CredentialsConfig) (application *app.Application, err error) {
-	if modelConfigPath == "" && credentials == nil {
-		return nil, errors.New("model config is required in remote mode")
-	}
-	if promptConfigPath == "" && credentials == nil {
-		return nil, errors.New("prompt config is required in remote mode")
-	}
-	remoteConfig, err := readJSON[media.RemoteConfig](remoteConfigPath)
-	if err != nil {
-		return nil, err
-	}
-	if err := media.ValidateCanvasRemoteConfig(remoteConfig); err != nil {
-		return nil, err
-	}
-	store := app.NewStore(dataDir + "/workflow.json")
-	var mongoClient *mongo.Client
-	defer func() {
-		if err != nil && mongoClient != nil {
-			_ = mongoClient.Disconnect(context.Background())
-		}
-	}()
-	if mongoURI != "" {
-		mongoClient, err = mongo.Connect(options.Client().ApplyURI(mongoURI))
-		if err != nil {
-			return nil, err
-		}
-		pingContext, cancel := context.WithTimeout(ctx, 5*time.Second)
-		err = mongoClient.Ping(pingContext, readpref.Primary())
-		cancel()
-		if err != nil {
-			return nil, err
-		}
-		store, err = app.NewMongoStore(mongoClient, mongoDatabase, mongoCollection)
-		if err != nil {
-			return nil, err
-		}
-	}
-	clients, err := media.NewRemoteClients(remoteConfig, store)
-	if err != nil {
-		return nil, err
-	}
-	chatModel, err := loadChatModel(modelConfigPath, chatModelKey, credentials)
-	if err != nil {
-		return nil, err
-	}
-	clients.Planner, err = loadWorkflowPlanner(ctx, promptConfigPath, credentials, chatModel)
-	if err != nil {
-		return nil, err
-	}
-	if err := app.EnsureProject(ctx, store, "demo"); err != nil {
-		return nil, err
-	}
-	application, err = app.NewApplication(store, clients)
-	if err != nil {
-		return nil, err
-	}
-	if err = application.ConfigureModels(chatModel, clients.Planner); err != nil {
-		return nil, err
-	}
-	application.Runner.SetMonitor(app.MonitorFunc(func(_ context.Context, event app.RunEvent) {
-		log.Printf("video_agent action=%s run_id=%s node_id=%s kind=%s state=%s provider=%s duration_ms=%d message=%q",
-			event.Action, event.RunID, event.NodeID, event.Kind, event.State, event.Provider, event.DurationMS, event.Message)
-	}))
-	var closeResources func() error
-	if mongoClient != nil {
-		closeResources = func() error { return mongoClient.Disconnect(context.Background()) }
-	}
-	application.SetCallbackVerifier(messaging.HMACCallbackVerifier{Secret: remoteConfig.CallbackSecret})
-	application.SetJobPollInterval(2 * time.Second)
-	application.SetClose(closeResources)
-	return application, nil
-}
-
-func readJSON[T any](path string) (T, error) {
-	var value T
-	payload, err := os.ReadFile(path)
-	if err != nil {
-		return value, err
-	}
-	if err := json.Unmarshal(payload, &value); err != nil {
-		return value, err
-	}
-	return value, nil
+	return serve(ctx, options.address, app.NewHTTPHandler(application))
 }
