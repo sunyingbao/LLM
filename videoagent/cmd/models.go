@@ -9,6 +9,8 @@ import (
 	"github.com/cloudwego/eino/components/model"
 )
 
+const defaultCanvasAgentModelKey = "aic.aic_tool.user_req_analysis"
+
 func loadModels(ctx context.Context, options runOptions, credentials *videomodel.CredentialsConfig) (model.BaseChatModel, contract.Planner, error) {
 	var chatModel model.BaseChatModel
 	if options.modelConfigPath != "" || credentials != nil {

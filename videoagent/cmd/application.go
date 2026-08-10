@@ -16,55 +16,26 @@ import (
 )
 
 const (
+	defaultMongoURI        = "mongodb://127.0.0.1:27017"
 	defaultMongoDatabase   = "video_agent"
 	defaultMongoCollection = "workflow_state"
 )
 
-func newMessageBus(ctx context.Context, options runOptions) (*messaging.NATSMessageBus, error) {
+func newMessageBus(ctx context.Context) (*messaging.NATSMessageBus, error) {
 	return messaging.NewNATSMessageBus(ctx, messaging.NATSConfig{
-		URL: options.natsURL,
+		URL: messaging.DefaultNATSURL,
 	})
 }
 
-func newApplication(ctx context.Context, options runOptions, credentials *videomodel.CredentialsConfig) (*app.Application, error) {
-	if options.remoteConfigPath != "" {
-		return newRemoteApplication(ctx, options, credentials)
+func newApplication(ctx context.Context, settings runOptions, credentials *videomodel.CredentialsConfig) (application *app.Application, err error) {
+	if settings.remoteConfigPath == "" {
+		return nil, errors.New("remote config is required")
 	}
-	return newLocalApplication(ctx, options, credentials)
-}
-
-func newLocalApplication(ctx context.Context, options runOptions, credentials *videomodel.CredentialsConfig) (*app.Application, error) {
-	var (
-		application *app.Application
-		err         error
-	)
-	if options.mongoURI != "" {
-		application, err = app.NewMongoLocalApplication(options.mongoURI, defaultMongoDatabase, defaultMongoCollection)
-	} else {
-		application, err = app.NewLocalApplication(options.dataDir)
-	}
-	if err != nil {
-		return nil, err
-	}
-
-	chatModel, planner, err := loadModels(ctx, options, credentials)
-	if err != nil {
-		_ = application.Close()
-		return nil, err
-	}
-	if err := application.ConfigureModels(chatModel, planner); err != nil {
-		_ = application.Close()
-		return nil, err
-	}
-	return application, nil
-}
-
-func newRemoteApplication(ctx context.Context, settings runOptions, credentials *videomodel.CredentialsConfig) (application *app.Application, err error) {
 	if settings.modelConfigPath == "" && credentials == nil {
-		return nil, errors.New("model config is required in remote mode")
+		return nil, errors.New("model config is required")
 	}
 	if settings.promptConfigPath == "" && credentials == nil {
-		return nil, errors.New("prompt config is required in remote mode")
+		return nil, errors.New("prompt config is required")
 	}
 	remoteConfig, err := readJSON[media.RemoteConfig](settings.remoteConfigPath)
 	if err != nil {
@@ -74,28 +45,24 @@ func newRemoteApplication(ctx context.Context, settings runOptions, credentials 
 		return nil, err
 	}
 
-	store := app.NewStore(settings.dataDir + "/workflow.json")
-	var mongoClient *mongo.Client
+	mongoClient, err := mongo.Connect(options.Client().ApplyURI(defaultMongoURI))
+	if err != nil {
+		return nil, err
+	}
 	defer func() {
-		if err != nil && mongoClient != nil {
+		if err != nil {
 			_ = mongoClient.Disconnect(context.Background())
 		}
 	}()
-	if settings.mongoURI != "" {
-		mongoClient, err = mongo.Connect(options.Client().ApplyURI(settings.mongoURI))
-		if err != nil {
-			return nil, err
-		}
-		pingContext, cancel := context.WithTimeout(ctx, 5*time.Second)
-		err = mongoClient.Ping(pingContext, readpref.Primary())
-		cancel()
-		if err != nil {
-			return nil, err
-		}
-		store, err = app.NewMongoStore(mongoClient, defaultMongoDatabase, defaultMongoCollection)
-		if err != nil {
-			return nil, err
-		}
+	pingContext, cancel := context.WithTimeout(ctx, 5*time.Second)
+	err = mongoClient.Ping(pingContext, readpref.Primary())
+	cancel()
+	if err != nil {
+		return nil, err
+	}
+	store, err := app.NewMongoStore(mongoClient, defaultMongoDatabase, defaultMongoCollection)
+	if err != nil {
+		return nil, err
 	}
 
 	clients, err := media.NewRemoteClients(remoteConfig, store)

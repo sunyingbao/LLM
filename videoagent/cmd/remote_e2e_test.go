@@ -49,7 +49,7 @@ func TestRemoteVideoAgentEndToEnd(t *testing.T) {
 	}
 	defer bus.Close()
 
-	application, err := newRemoteApplication(
+	application, err := newApplication(
 		ctx,
 		t.TempDir(),
 		remoteConfig,

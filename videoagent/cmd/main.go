@@ -10,6 +10,8 @@ import (
 	app "eino-cli/videoagent/backend/application"
 )
 
+const defaultHTTPAddress = "127.0.0.1:18080"
+
 func main() {
 	if err := run(); err != nil {
 		log.Fatal(err)
@@ -28,7 +30,7 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	messageBus, err := newMessageBus(ctx, options)
+	messageBus, err := newMessageBus(ctx)
 	if err != nil {
 		return err
 	}
@@ -43,5 +45,5 @@ func run() error {
 	if err := application.Start(ctx); err != nil {
 		return err
 	}
-	return serve(ctx, options.address, app.NewHTTPHandler(application))
+	return serve(ctx, defaultHTTPAddress, app.NewHTTPHandler(application))
 }

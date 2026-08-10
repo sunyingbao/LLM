@@ -25,37 +25,34 @@ func TestExampleConfigsDecode(t *testing.T) {
 	}
 }
 
-func TestRemoteApplicationRequiresModelAndPromptConfig(t *testing.T) {
-	_, err := newRemoteApplication(context.Background(), runOptions{
-		dataDir:          t.TempDir(),
+func TestApplicationRequiresModelAndPromptConfig(t *testing.T) {
+	_, err := newApplication(context.Background(), runOptions{
 		remoteConfigPath: "unused",
 		promptConfigPath: "unused",
 	}, nil)
 	if err == nil || !strings.Contains(err.Error(), "model config is required") {
-		t.Fatalf("newRemoteApplication() error = %v, want missing model config", err)
+		t.Fatalf("newApplication() error = %v, want missing model config", err)
 	}
-	_, err = newRemoteApplication(context.Background(), runOptions{
-		dataDir:          t.TempDir(),
+	_, err = newApplication(context.Background(), runOptions{
 		remoteConfigPath: "unused",
 		modelConfigPath:  "unused",
 	}, nil)
 	if err == nil || !strings.Contains(err.Error(), "prompt config is required") {
-		t.Fatalf("newRemoteApplication() error = %v, want missing prompt config", err)
+		t.Fatalf("newApplication() error = %v, want missing prompt config", err)
 	}
 }
 
-func TestRemoteApplicationRejectsIncompleteMediaConfig(t *testing.T) {
+func TestApplicationRejectsIncompleteMediaConfig(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "remote.json")
 	if err := os.WriteFile(path, []byte(`{}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	_, err := newRemoteApplication(context.Background(), runOptions{
-		dataDir:          t.TempDir(),
+	_, err := newApplication(context.Background(), runOptions{
 		remoteConfigPath: path,
 		modelConfigPath:  "model",
 		promptConfigPath: "prompt",
 	}, nil)
 	if err == nil || !strings.Contains(err.Error(), "remote canvas config is incomplete") {
-		t.Fatalf("newRemoteApplication() error = %v, want incomplete remote config", err)
+		t.Fatalf("newApplication() error = %v, want incomplete remote config", err)
 	}
 }
