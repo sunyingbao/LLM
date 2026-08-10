@@ -334,20 +334,20 @@ HTTP 回调只负责读取原始 body、验签并发布 `CallbackMessage`；它�
 | `videoagent/monitor.go` | 节点执行、回调和错误的观测事件及本地计数器 |
 | `videoagent/http.go` | Canvas、Agent、Operation、Run、回调 HTTP API |
 | `videoagent/workflow_test.go` | 非法端口、环路和自定义 Workflow 快照测试 |
-| `cmd/videoagent/main.go` | 可启动入口 |
+| `videoagent/cmd/main.go` | 可启动入口 |
 
 ```bash
 brew install nats-server
 nats-server -js -sd /opt/homebrew/var/video-agent-nats -a 127.0.0.1 -p 4222
 
-GOTOOLCHAIN=go1.25.0 go run ./cmd/videoagent \
+GOTOOLCHAIN=go1.25.0 go run ./videoagent/cmd \
   -addr 127.0.0.1:18080 -data /tmp/video-agent
 ```
 
 本机已经安装 MongoDB 时，使用 Mongo 状态启动：
 
 ```bash
-GOTOOLCHAIN=go1.25.0 go run ./cmd/videoagent \
+GOTOOLCHAIN=go1.25.0 go run ./videoagent/cmd \
   -addr 127.0.0.1:18080 -data /tmp/video-agent \
   -mongo-uri mongodb://127.0.0.1:27017
 ```
@@ -378,7 +378,7 @@ GET  /metrics
 远端启动方式：
 
 ```bash
-GOTOOLCHAIN=auto go run ./cmd/videoagent \
+GOTOOLCHAIN=auto go run ./videoagent/cmd \
   -addr 127.0.0.1:18080 -data /tmp/video-agent \
   -remote-config ./configs/videoagent/remote.example.json \
   -model-config ./configs/videoagent/model.example.json \
@@ -388,7 +388,7 @@ GOTOOLCHAIN=auto go run ./cmd/videoagent \
 带 MongoDB 的远端启动方式：
 
 ```bash
-GOTOOLCHAIN=auto go run ./cmd/videoagent \
+GOTOOLCHAIN=auto go run ./videoagent/cmd \
   -remote-config ./configs/videoagent/remote.example.json \
   -model-config ./configs/videoagent/model.example.json \
   -prompt-config ./configs/videoagent/prompt.example.json \
@@ -565,7 +565,7 @@ GOTOOLCHAIN=go1.25.0 go vet ./videoagent
 make videoagent-build
 ```
 
-本地回滚时先停止 `cmd/videoagent`，保留 MongoDB 和 JetStream 数据，再切回上一二进制。远端发布必须以 Client 配置区分 Local 与真实能力；关闭真实 Client 后，不再提交新 Job，已持久化的 Run 仍可以由轮询或回调收敛。
+本地回滚时先停止 `videoagent/cmd`，保留 MongoDB 和 JetStream 数据，再切回上一二进制。远端发布必须以 Client 配置区分 Local 与真实能力；关闭真实 Client 后，不再提交新 Job，已持久化的 Run 仍可以由轮询或回调收敛。
 
 项目固定使用 Go 1.25：普通和生产标签命令都应显式设置 `GOTOOLCHAIN=go1.25.0`。当前 `dynamicgo` 版本与 Go 1.26 的 `encoding/json` 内部符号不兼容，不能使用自动选择到的 Go 1.26 执行生产标签构建。
 

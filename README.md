@@ -73,13 +73,13 @@ SGADK CLI 是一个面向本地开发的终端智能体客户端。它基于 **E
 在仓库根目录运行：
 
 ```bash
-go run .
+go run ./agent/cmd
 ```
 
 也可以显式指定仓库根目录：
 
 ```bash
-go run . --root /Users/bytedance/go/src/content/LLM
+go run ./agent/cmd --root /Users/bytedance/go/src/content/LLM
 ```
 
 启动时 root 的解析优先级是：
@@ -146,18 +146,20 @@ SGADK CLI 提供一个常驻终端界面，用来和 Deep Agent runtime 对话�
 
 ```text
 .
-├── backend/
-│   ├── agent/          # agent、prompt、middleware、tools
-│   ├── cli/            # TUI
-│   ├── config/         # yaml config schema 和 loader
-│   ├── memory/         # 长期记忆存储
-│   └── runtime/        # Eino runtime 封装
+├── agent/
+│   ├── cmd/            # 普通 Agent 入口
+│   └── backend/        # 普通 Agent 的 runtime、tools、memory、sandbox、TUI
+├── videoagent/
+│   ├── cmd/            # Video Agent HTTP 入口
+│   ├── backend/        # 画布、工作流、媒体、模型、Mongo、MQ
+│   └── web/            # Video Agent 画布前端
 ├── scripts/            # 本地安装脚本
 ├── specs/              # 功能设计文档
 ├── yaml/               # 本地配置目录和 config shape changelog
-├── main.go             # CLI 入口
 └── go.mod
 ```
+
+普通 Agent 和 Video Agent 是两个独立的代码边界：它们不互相 import；只有确实属于日志、HTTP、ID 等技术基础设施的代码，未来才可以放入 `internal/`。
 
 ## 开发
 
@@ -170,7 +172,7 @@ go test ./...
 构建：
 
 ```bash
-go build -o /tmp/sgadk .
+go build -o /tmp/sgadk ./agent/cmd
 ```
 
 真实 TUI 交互验证可以直接运行二进制后手工输入命令：
