@@ -12,7 +12,7 @@ import (
 func loadModels(ctx context.Context, options runOptions, credentials *videomodel.CredentialsConfig) (model.BaseChatModel, contract.Planner, error) {
 	var chatModel model.BaseChatModel
 	if options.modelConfigPath != "" || credentials != nil {
-		loaded, err := loadChatModel(ctx, options.modelConfigPath, options.chatModelKey, credentials)
+		loaded, err := loadChatModel(ctx, options.modelConfigPath, credentials)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -28,9 +28,9 @@ func loadModels(ctx context.Context, options runOptions, credentials *videomodel
 	return chatModel, planner, nil
 }
 
-func loadChatModel(ctx context.Context, path, promptKey string, credentials *videomodel.CredentialsConfig) (model.BaseChatModel, error) {
+func loadChatModel(ctx context.Context, path string, credentials *videomodel.CredentialsConfig) (model.BaseChatModel, error) {
 	if credentials != nil {
-		config, err := credentials.ChatModelConfig(promptKey)
+		config, err := credentials.ChatModelConfig(defaultCanvasAgentModelKey)
 		if err != nil {
 			return nil, err
 		}

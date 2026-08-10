@@ -15,12 +15,14 @@ import (
 	"go.mongodb.org/mongo-driver/v2/mongo/readpref"
 )
 
+const (
+	defaultMongoDatabase   = "video_agent"
+	defaultMongoCollection = "workflow_state"
+)
+
 func newMessageBus(ctx context.Context, options runOptions) (*messaging.NATSMessageBus, error) {
 	return messaging.NewNATSMessageBus(ctx, messaging.NATSConfig{
-		URL:      options.natsURL,
-		Stream:   options.natsStream,
-		Subject:  options.natsSubject,
-		Consumer: options.natsConsumer,
+		URL: options.natsURL,
 	})
 }
 
@@ -37,7 +39,7 @@ func newLocalApplication(ctx context.Context, options runOptions, credentials *v
 		err         error
 	)
 	if options.mongoURI != "" {
-		application, err = app.NewMongoLocalApplication(options.mongoURI, options.mongoDatabase, options.mongoCollection)
+		application, err = app.NewMongoLocalApplication(options.mongoURI, defaultMongoDatabase, defaultMongoCollection)
 	} else {
 		application, err = app.NewLocalApplication(options.dataDir)
 	}
@@ -90,7 +92,7 @@ func newRemoteApplication(ctx context.Context, settings runOptions, credentials 
 		if err != nil {
 			return nil, err
 		}
-		store, err = app.NewMongoStore(mongoClient, settings.mongoDatabase, settings.mongoCollection)
+		store, err = app.NewMongoStore(mongoClient, defaultMongoDatabase, defaultMongoCollection)
 		if err != nil {
 			return nil, err
 		}

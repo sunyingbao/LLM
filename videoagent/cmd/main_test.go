@@ -54,7 +54,6 @@ func TestRemoteApplicationRejectsIncompleteMediaConfig(t *testing.T) {
 		remoteConfigPath: path,
 		modelConfigPath:  "model",
 		promptConfigPath: "prompt",
-		chatModelKey:     "main",
 	}, nil)
 	if err == nil || !strings.Contains(err.Error(), "remote canvas config is incomplete") {
 		t.Fatalf("newRemoteApplication() error = %v, want incomplete remote config", err)

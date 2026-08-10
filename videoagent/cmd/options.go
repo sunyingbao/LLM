@@ -19,28 +19,16 @@ type runOptions struct {
 	modelConfigPath  string
 	promptConfigPath string
 	credentialsPath  string
-	chatModelKey     string
 	mongoURI         string
-	mongoDatabase    string
-	mongoCollection  string
 	natsURL          string
-	natsStream       string
-	natsSubject      string
-	natsConsumer     string
 }
 
 func parseRunOptions(args []string) (runOptions, error) {
 	options := runOptions{
-		address:         "127.0.0.1:18080",
-		dataDir:         ".video-agent",
-		chatModelKey:    defaultCanvasAgentModelKey,
-		mongoURI:        "mongodb://127.0.0.1:27017",
-		mongoDatabase:   "video_agent",
-		mongoCollection: "workflow_state",
-		natsURL:         messaging.DefaultNATSURL,
-		natsStream:      messaging.DefaultNATSStream,
-		natsSubject:     messaging.DefaultNATSSubject,
-		natsConsumer:    messaging.DefaultNATSConsumer,
+		address:  "127.0.0.1:18080",
+		dataDir:  ".video-agent",
+		mongoURI: "mongodb://127.0.0.1:27017",
+		natsURL:  messaging.DefaultNATSURL,
 	}
 	flags := flag.NewFlagSet("videoagent", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
@@ -50,14 +38,8 @@ func parseRunOptions(args []string) (runOptions, error) {
 	flags.StringVar(&options.modelConfigPath, "model-config", "", "JSON config for the optional ReAct chat model")
 	flags.StringVar(&options.promptConfigPath, "prompt-config", "", "JSON config for managed workflow prompts")
 	flags.StringVar(&options.credentialsPath, "credentials-config", "", "untracked JSON credentials for Fornax and MaaS models")
-	flags.StringVar(&options.chatModelKey, "chat-model-key", options.chatModelKey, "prompt key selecting the ReAct chat model credentials")
 	flags.StringVar(&options.mongoURI, "mongo-uri", options.mongoURI, "MongoDB URI; empty disables MongoDB state")
-	flags.StringVar(&options.mongoDatabase, "mongo-database", options.mongoDatabase, "MongoDB database name")
-	flags.StringVar(&options.mongoCollection, "mongo-collection", options.mongoCollection, "MongoDB state collection name")
 	flags.StringVar(&options.natsURL, "nats-url", options.natsURL, "NATS server URL")
-	flags.StringVar(&options.natsStream, "nats-stream", options.natsStream, "JetStream stream name")
-	flags.StringVar(&options.natsSubject, "nats-subject", options.natsSubject, "callback subject")
-	flags.StringVar(&options.natsConsumer, "nats-consumer", options.natsConsumer, "durable callback consumer")
 	if err := flags.Parse(args); err != nil {
 		return runOptions{}, err
 	}
