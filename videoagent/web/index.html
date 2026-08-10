@@ -4,127 +4,132 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Video Agent Canvas</title>
-  <link rel="stylesheet" href="/styles.css?v=20260806-3">
+  <link rel="stylesheet" href="/styles.css?v=20260807-2">
 </head>
 <body>
   <main class="app-shell">
     <header class="topbar">
-      <div class="brand-lockup">
+      <div class="brand-area">
         <div class="brand-mark" aria-hidden="true">▶</div>
-        <div class="project-title">
+        <div class="project-title-wrap">
           <div id="project-name" class="project-name">春季女鞋视频方案</div>
-          <span id="save-status" class="save-status">◉ 已保存</span>
+          <button class="rename-button" type="button" title="编辑项目名称" aria-label="编辑项目名称">✎</button>
         </div>
+        <span id="save-status" class="save-status">● 已保存</span>
       </div>
-
-      <div class="topbar-center">
-        <div class="history-actions" aria-label="历史操作">
-          <button id="undo-button" class="icon-button" title="撤销" disabled>↶</button>
-          <button id="redo-button" class="icon-button" title="重做" disabled>↷</button>
+      <div class="topbar-tools">
+        <div class="history-actions">
+          <button id="undo-button" class="chrome-button" type="button" title="撤销" disabled>↶</button>
+          <button id="redo-button" class="chrome-button" type="button" title="重做" disabled>↷</button>
         </div>
-        <div class="zoom-actions" aria-label="缩放画布">
-          <button id="zoom-out" class="icon-button" title="缩小">−</button>
+        <div class="zoom-control" aria-label="缩放">
+          <button id="zoom-out" type="button" title="缩小">−</button>
           <span id="zoom-value">100%</span>
-          <button id="zoom-in" class="icon-button" title="放大">＋</button>
+          <button id="zoom-in" type="button" title="放大">＋</button>
         </div>
-        <button id="fit-canvas" class="icon-button framed-icon" title="适应画布">⌗</button>
-        <button id="fullscreen-button" class="icon-button framed-icon" title="全屏">⛶</button>
+        <button id="fit-canvas" class="chrome-button square" type="button" title="适应画布">⌗</button>
+        <button id="fullscreen-button" class="chrome-button square" type="button" title="全屏">⛶</button>
       </div>
-
-      <div class="topbar-actions">
-        <span id="runtime-mode" class="runtime-mode">运行环境：加载中</span>
+      <div class="topbar-right">
+        <span id="runtime-mode" class="runtime-mode">本地模拟</span>
         <span id="run-status" class="status-pill">未运行</span>
-        <button id="run-button" class="run-button"><span aria-hidden="true">▶</span><span id="run-primary-label">运行</span></button>
-        <button id="export-button" class="export-button" title="导出工作流">导出</button>
-        <button id="retry-button" class="quiet-button" disabled>重试</button>
-        <button id="cancel-button" class="quiet-button" disabled>取消</button>
+        <button id="run-button" class="run-button" type="button">
+          <span aria-hidden="true">▶</span>
+          <span id="run-primary-label">运行</span>
+          <span class="run-arrow" aria-hidden="true">⌄</span>
+        </button>
+        <button id="export-button" class="text-button" type="button">导出</button>
+        <button id="retry-button" class="text-button subtle" type="button" disabled>重试</button>
+        <button id="cancel-button" class="text-button subtle" type="button" disabled>取消</button>
       </div>
     </header>
 
     <section class="workspace">
-      <aside class="left-rail" aria-label="画布工具">
-        <button data-tool="select" class="rail-tool active"><span class="rail-icon">↖</span><span>选择</span></button>
-        <button data-tool="pan" class="rail-tool"><span class="rail-icon">✋</span><span>拖拽</span></button>
-        <button data-tool="palette" class="rail-tool"><span class="rail-icon">⌘</span><span>节点</span></button>
-        <button data-tool="connect" class="rail-tool"><span class="rail-icon">⌁</span><span>连线</span></button>
-      </aside>
-
       <section class="canvas-panel">
-        <div class="canvas-toolbar">
-          <div id="node-palette" class="node-palette" aria-label="节点面板" hidden></div>
-          <div class="canvas-toolbar-actions">
-            <select id="node-kind" aria-label="新增节点"></select>
-            <button id="add-node" class="canvas-action">新增节点</button>
-            <button id="delete-node" class="canvas-action">删除所选</button>
-            <button id="save-workflow" class="canvas-action">保存画布</button>
+        <aside class="left-rail" aria-label="创建工具">
+          <button data-tool="palette" class="rail-add" type="button" title="添加节点" aria-label="添加节点">＋</button>
+          <span class="rail-rule"></span>
+          <button data-tool="image" class="rail-action" type="button" title="图片创作" aria-label="图片创作"><span class="tool-glyph image-glyph">▧</span></button>
+          <button data-tool="video" class="rail-action" type="button" title="视频创作" aria-label="视频创作"><span class="tool-glyph video-glyph">▷</span></button>
+          <button data-tool="audio" class="rail-action" type="button" title="音频创作" aria-label="音频创作"><span class="tool-glyph audio-glyph">♪</span></button>
+          <span class="rail-rule"></span>
+          <button data-tool="editor" class="rail-action" type="button" title="视频编辑器" aria-label="视频编辑器"><span class="tool-glyph editor-glyph">▤</span></button>
+          <button data-tool="group" class="rail-action" type="button" title="添加组" aria-label="添加组"><span class="tool-glyph group-glyph">⊙</span></button>
+        </aside>
+        <aside class="history-rail" aria-label="历史操作">
+          <button data-history="undo" type="button" title="撤销" aria-label="撤销">↶</button>
+          <button data-history="redo" type="button" title="重做" aria-label="重做">↷</button>
+        </aside>
+        <div class="canvas-header">
+          <div class="canvas-breadcrumb">我的画布 <span>/</span> <strong id="canvas-project-label">春季女鞋视频方案</strong></div>
+          <div id="node-palette" class="node-palette" hidden></div>
+          <div class="canvas-header-actions">
+            <button id="save-workflow" class="outline-button" type="button">保存画布</button>
+            <button id="reset-workflow" class="outline-button" type="button">恢复默认</button>
           </div>
-          <div id="toolbar-help" class="toolbar-help">拖拽节点调整布局，使用连线工具连接端口</div>
         </div>
         <div id="canvas" class="canvas" aria-label="工作流画布">
           <div id="canvas-stage" class="canvas-stage">
             <svg id="edges" class="edges" aria-hidden="true"></svg>
             <div id="nodes" class="nodes"></div>
           </div>
+          <div class="canvas-hint">拖动节点调整布局，使用连线工具连接端口</div>
         </div>
-        <div class="canvas-legend">
+        <div class="canvas-view-rail" aria-label="画布视图">
+          <button data-tool="pan" type="button" title="拖动画布" aria-label="拖动画布">✋</button>
+          <button data-tool="connect" type="button" title="连接节点" aria-label="连接节点">⌁</button>
+          <button type="button" title="画布概览" aria-label="画布概览">▣</button>
+        </div>
+        <div class="canvas-legend" hidden>
           <span><i class="legend-line dependency"></i>依赖关系</span>
           <span><i class="legend-line lineage"></i>产物来源</span>
         </div>
       </section>
 
-      <aside class="side-panel">
+      <aside class="assistant-panel">
         <div class="assistant-header">
+          <div class="assistant-avatar" aria-hidden="true">✦</div>
           <div>
-            <span class="assistant-kicker">AI WORKSPACE</span>
             <h1>创作助手</h1>
+            <p>让创意从想法变成视频</p>
           </div>
+          <button class="panel-icon" type="button" title="固定助手" aria-label="固定助手">⌖</button>
+          <button class="panel-icon" type="button" title="关闭助手" aria-label="关闭助手">×</button>
         </div>
-
-        <div class="assistant-body">
-          <details id="task-input" class="input-drawer" open>
-            <summary><span>任务输入</span><span class="summary-hint">商品、原料与需求</span></summary>
-            <div class="input-fields">
+        <div class="assistant-content">
+          <details id="task-input" class="task-drawer">
+            <summary><span>任务输入</span><span class="summary-meta">商品与需求</span></summary>
+            <div class="task-fields">
               <label>商品名称<input id="product-name" value="软底厚底休闲鞋"></label>
-              <label>商品图片 URL（每行一条）<textarea id="product-images" placeholder="https://example.com/product.png"></textarea></label>
+              <label>商品图片 URL<textarea id="product-images" placeholder="每行填写一个图片 URL"></textarea></label>
               <label>需求描述<textarea id="brief">请结合商品卖点生成一条短视频广告</textarea></label>
-              <div class="input-actions"><button id="reset-workflow" class="secondary">恢复默认流程</button><span id="project-id" class="muted">project: demo</span></div>
+              <div class="task-footer"><span id="project-id" class="muted">project: demo</span><button id="reset-input" type="button">清空输入</button></div>
             </div>
           </details>
-
-          <section class="conversation-card">
-            <div class="section-heading"><h2>对话</h2><span class="muted">运行观察</span></div>
+          <section class="conversation-section">
+            <div class="section-title"><span>对话</span><span class="muted">智能协作</span></div>
             <div id="messages" class="messages" aria-live="polite"></div>
             <section id="agent-action" class="agent-action" aria-live="polite" hidden></section>
           </section>
         </div>
-
-        <div class="chat-composer">
+        <div class="composer">
           <textarea id="agent-message" placeholder="告诉我你想生成或修改什么"></textarea>
-          <button id="send-agent" class="send-button"><span>发送给 Agent</span><span aria-hidden="true">↑</span></button>
+          <button id="send-agent" class="send-button" type="button"><span>发送给 Agent</span><span aria-hidden="true">↑</span></button>
         </div>
-
         <details id="artifacts-panel" class="artifacts-panel">
-          <summary><span>本次产物</span><span class="artifact-summary-meta"><span id="artifact-scope">全部</span><span id="artifact-count" class="muted">0 个</span></span></summary>
+          <summary><span>产物</span><span class="artifact-summary-meta"><span id="artifact-scope">全部</span><span id="artifact-count" class="muted">0 个</span></span></summary>
           <div id="artifacts" class="artifacts"></div>
         </details>
       </aside>
     </section>
 
     <section id="run-inspector" class="run-inspector" aria-live="polite" hidden>
-      <div class="run-summary">
-        <div><strong id="run-number">Run —</strong><span id="run-summary-status" class="status-pill">未运行</span></div>
-        <span id="run-start-time" class="muted"></span>
-      </div>
+      <div class="run-summary"><div><strong id="run-number">Run —</strong><span id="run-summary-status" class="status-pill">未运行</span></div><span id="run-start-time" class="muted"></span></div>
       <div id="run-steps" class="run-steps"></div>
-      <div class="run-event-bar">
-        <span class="muted">最新事件</span>
-        <strong id="run-latest-event">—</strong>
-        <button id="view-logs" class="secondary">查看日志</button>
-        <button id="run-log-toggle" class="run-log-toggle" title="展开日志">⌃</button>
-      </div>
+      <div id="run-event-bar" class="run-event-bar"><span class="muted">最新事件</span><strong id="run-latest-event">—</strong><button id="view-logs" class="outline-button" type="button">查看日志</button><button id="run-log-toggle" class="log-toggle" type="button" title="展开日志">⌃</button></div>
       <pre id="run-log" class="run-log" hidden></pre>
     </section>
   </main>
-  <script src="/app.js?v=20260806-3"></script>
+  <script src="/app.js?v=20260807-2"></script>
 </body>
 </html>
