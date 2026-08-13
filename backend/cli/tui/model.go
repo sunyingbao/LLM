@@ -2,9 +2,12 @@ package tui
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"strings"
 	"time"
+
+	sdkruntime "eino-cli/deepagent/runtime"
 
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textinput"
@@ -19,10 +22,10 @@ import (
 	"github.com/cloudwego/eino/adk/prebuilt/deep"
 
 	"eino-cli/backend/config"
-	rt "eino-cli/backend/runtime"
-	runtimeRun "eino-cli/backend/runtime/run"
 	"eino-cli/backend/session/rollback"
 	"eino-cli/backend/session/runs"
+	runtimeRun "eino-cli/deepagent/host/run"
+	clientruntime "eino-cli/deepagent/host/runtime"
 )
 
 const (
@@ -37,12 +40,13 @@ type chatMessage struct {
 }
 
 type Model struct {
-	rt        rt.Runtime
-	cfg       *config.Config
-	sessionID string
-	cwd       string
-	modelName string
-	runs      *runtimeRun.Manager
+	rt          clientruntime.InteractiveRuntime
+	cfg         *config.Config
+	sessionID   string
+	cwd         string
+	modelName   string
+	runtimeKind string
+	runs        *runtimeRun.Manager
 
 	input    textinput.Model
 	viewport viewport.Model
@@ -79,6 +83,7 @@ type Model struct {
 	toolBlocksEnabled bool
 	lastSeenMsgCount  int
 	toolBlockSeq      int
+	toolBlocksByCall  map[string]*toolBlock
 	toolPreviewLines  int
 	toolArgsMaxChars  int
 	footerHint        string
@@ -93,7 +98,7 @@ type Model struct {
 	prog              *tea.Program
 }
 
-func New(runtime rt.Runtime, sessionID string, cfgs ...*config.Config) (*Model, error) {
+func New(runtime clientruntime.InteractiveRuntime, sessionID string, cfgs ...*config.Config) (model *Model, err error) {
 	cwd, err := os.Getwd()
 	if err != nil {
 		cwd = "."
@@ -120,12 +125,14 @@ func New(runtime rt.Runtime, sessionID string, cfgs ...*config.Config) (*Model, 
 		style = "light"
 	}
 
-	return &Model{
-		rt:        runtime,
-		cfg:       cfg,
-		sessionID: sessionID,
-		cwd:       cwd,
-		modelName: runtime.Name(),
+	runtimeName := runtimeDisplayName(runtime.Name(), runtime.RuntimeKind())
+	model = &Model{
+		rt:          runtime,
+		cfg:         cfg,
+		sessionID:   sessionID,
+		cwd:         cwd,
+		modelName:   runtimeName,
+		runtimeKind: string(runtime.RuntimeKind()),
 		runs: runtimeRun.NewManagerWithStore(
 			runs.NewStore(config.SessionRunsDir(sessionID)),
 			rollback.NewStore(config.RootDir(), sessionID),
@@ -133,13 +140,23 @@ func New(runtime rt.Runtime, sessionID string, cfgs ...*config.Config) (*Model, 
 		input:             ti,
 		viewport:          vp,
 		spin:              sp,
-		messages:          freshMessages(0, runtime.Name(), cwd),
+		messages:          freshMessages(0, runtimeName, cwd),
 		mdStyle:           style,
 		toolBlocksEnabled: true,
+		toolBlocksByCall:  make(map[string]*toolBlock),
 		toolPreviewLines:  defaultToolPreviewLines,
 		toolArgsMaxChars:  defaultToolArgsMaxChars,
 		commands:          buildSlashCommands(cfg),
-	}, nil
+	}
+	return model, nil
+}
+
+func runtimeDisplayName(name string, kind sdkruntime.RuntimeKind) (displayName string) {
+	displayName = strings.TrimSpace(name)
+	if displayName == "" {
+		displayName = "agent"
+	}
+	return fmt.Sprintf("%s [%s]", displayName, kind)
 }
 
 func (m *Model) Init() tea.Cmd {

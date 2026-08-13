@@ -19,16 +19,15 @@ type Store struct {
 }
 
 type Snapshot struct {
-	RunID     string          `json:"run_id"`
-	CreatedAt time.Time       `json:"created_at"`
-	History   json.RawMessage `json:"history,omitempty"`
+	RunID     string    `json:"run_id"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
 func NewStore(projectRoot, sessionID string) *Store {
 	return &Store{projectRoot: projectRoot, sessionID: sessionID}
 }
 
-func (s *Store) SavePost(ctx context.Context, runID string, history []byte) (string, error) {
+func (s *Store) SaveWorkspacePost(ctx context.Context, runID string) (path string, err error) {
 	base := s.snapshotDir(runID)
 	tmp := base + ".tmp"
 	final := filepath.Join(base, "post")
@@ -38,7 +37,7 @@ func (s *Store) SavePost(ctx context.Context, runID string, history []byte) (str
 	if err := os.MkdirAll(tmp, 0o755); err != nil {
 		return "", fmt.Errorf("create rollback snapshot: %w", err)
 	}
-	if err := writeSnapshotMeta(tmp, runID, history); err != nil {
+	if err = writeSnapshotMeta(tmp, runID); err != nil {
 		return "", err
 	}
 	if err := s.copyControlledRoots(ctx, tmp); err != nil {
@@ -56,28 +55,24 @@ func (s *Store) SavePost(ctx context.Context, runID string, history []byte) (str
 	return final, nil
 }
 
-func (s *Store) RestorePost(ctx context.Context, runID string) ([]byte, error) {
+// RestoreWorkspacePost restores only user-controlled workspace state. It does
+// not return or load Agent history/checkpoints; the next submission is a new
+// turn on the current runtime thread.
+func (s *Store) RestoreWorkspacePost(ctx context.Context, runID string) (err error) {
 	dir := filepath.Join(s.snapshotDir(runID), "post")
-	payload, err := os.ReadFile(filepath.Join(dir, "snapshot.json"))
-	if err != nil {
-		return nil, fmt.Errorf("read rollback snapshot: %w", err)
+	if _, err = os.Stat(filepath.Join(dir, "snapshot.json")); err != nil {
+		return fmt.Errorf("read workspace snapshot: %w", err)
 	}
-	var snap Snapshot
-	if err := json.Unmarshal(payload, &snap); err != nil {
-		return nil, fmt.Errorf("decode rollback snapshot: %w", err)
-	}
-	if err := s.restoreControlledRoots(ctx, dir); err != nil {
-		return nil, err
-	}
-	return append([]byte(nil), snap.History...), nil
+	err = s.restoreControlledRoots(ctx, dir)
+	return err
 }
 
 func (s *Store) snapshotDir(runID string) string {
 	return filepath.Join(config.SessionRollbackDir(s.sessionID), runID)
 }
 
-func writeSnapshotMeta(dir, runID string, history []byte) error {
-	snap := Snapshot{RunID: runID, CreatedAt: time.Now(), History: append([]byte(nil), history...)}
+func writeSnapshotMeta(dir, runID string) (err error) {
+	snap := Snapshot{RunID: runID, CreatedAt: time.Now()}
 	payload, err := json.MarshalIndent(snap, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshal rollback snapshot: %w", err)
@@ -135,7 +130,6 @@ type rootPair struct {
 
 func (s *Store) fixedRoots() []rootPair {
 	return []rootPair{
-		{name: "checkpoints", host: config.SessionCheckpointsDir(s.sessionID)},
 		{name: "workspace", host: config.SandboxWorkDir(s.sessionID)},
 		{name: "uploads", host: config.SandboxUploadsDir(s.sessionID)},
 		{name: "outputs", host: config.SandboxOutputsDir(s.sessionID)},

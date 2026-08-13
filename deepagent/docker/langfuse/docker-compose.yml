@@ -1,0 +1,36 @@
+# Langfuse 自托管部署配置
+# 文档: https://langfuse.com/self-hosting/deployment/docker-compose
+
+services:
+  langfuse-web:
+    image: langfuse/langfuse:2
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "0.0.0.0:13000:3000"
+    environment:
+      - DATABASE_URL=postgresql://postgres:postgres@db:5432/postgres
+      - NEXTAUTH_SECRET=mysecret
+      - SALT=mysalt
+      - NEXTAUTH_URL=http://localhost:13000
+      - TELEMETRY_ENABLED=false
+    restart: unless-stopped
+
+  db:
+    image: postgres:15-alpine
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=postgres
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+volumes:
+  postgres_data:

@@ -1,0 +1,129 @@
+base_prompt: conf/prompt/base.md
+
+worker:
+  namespace: cloud_agent
+  concurrency: 8
+  scan_limit: 20
+  message_limit: 50
+  lease_ms: 60000
+  scan_interval_ms: 1000
+  message_poll_interval_ms: 500
+  idle_timeout_ms: 10000
+  shutdown_drain_timeout_ms: 120000
+  shutdown_interrupt_drain_timeout_ms: 120000
+  interrupt_drain_timeout_ms: 30000
+
+coordinator:
+  psm: ad.creative.aic_agent_coordinator
+  cluster: dreamina
+  direct_hostports: ""
+
+mysql:
+  psm: toutiao.mysql.cc_family_agent_coordinator
+  db_name: cc_family_agent_coordinator
+  dsn: ""
+  read_dsn: ""
+  read_timeout_ms: 5000
+
+abase:
+  psm: bytedance.abase2.cc_family_agent_coordinator
+  primary_psm: bytedance.abase2.cc_family_agent_coordinator_primary
+  table: aic_agent_sdk
+  addr: ""
+  password: ""
+  db: 0
+  read_timeout_ms: 500
+  write_timeout_ms: 500
+
+idgen:
+  namespace: videocut_aigc_agent_coordinator
+
+features:
+  thread_refs:
+    enabled: false
+
+tables:
+  history: t_agentthread_history
+  thread_ref: ""
+  memory_source: t_memory_source
+  memory_stage1_output: t_memory_stage1_output
+  memory_stage2_job: t_memory_stage2_job
+  memory_baseline: t_memory_baseline
+
+checkpoint:
+  store: redis://cloud_agent
+
+memory:
+  enabled: true
+  workspace_root: /workspace
+  scan_interval_ms: 60000
+  wakeup_debounce_ms: 10000
+  stage1_idle_window_ms: 600000
+  stage1_lease_ttl_ms: 600000
+  stage1_max_claimed_per_scan: 2
+  stage2_lease_ttl_ms: 3600000
+  stage2_success_cooldown_ms: 21600000
+  stage2_scan_interval_ms: 300000
+  stage2_max_users_per_scan: 2
+  stage2_output_limit_per_user: 100
+
+models:
+  default:
+    sdk_type: openai
+    model_name: experimental_0630
+    model_base_url: ${OPENAI_BASE_URL}
+    model_endpoint_id: ${OPENAI_MODEL}
+    model_api_key: ${DEEPSEEK_API_KEY}
+    max_tokens: 32768
+    disable_by_azure: true
+
+roles:
+  main:
+    models: [default]
+    default_model: default
+    approval_policy: normal
+  explorer:
+    models: [default]
+    default_model: default
+    approval_policy: readonly
+  worker:
+    models: [default]
+    default_model: default
+    approval_policy: permissive
+
+runtime:
+  workdir: /workspace
+  skills_dir: /opt/skills
+  spawn_metadata_description: ""
+  auto_compact_limit_tokens: 0
+  compact_kept_user_tokens: 4000
+  max_steps: 0
+  compact_prompt_append: ""
+
+backend:
+  type: ai_infra
+  ai_infra:
+    psm: pippit.sandbox.gateway
+    biz_type: test
+    biz_id_template: "user_{uid}"
+    workdir_template: "/workspace/{project_name}"
+    action: SandboxToolCall
+
+mcp:
+  enabled: false
+  request_timeout_ms: 300000
+  region: ""
+  servers: []
+
+fornax:
+  enabled: false
+  ak: ""
+  sk: ""
+  region: ""
+  http_timeout_ms: 3000
+
+log:
+  dir: /opt/tiger/log/cloud_agent/aic_agent_sdk_worker
+  retention_days: 7
+  enable_agent: true
+  enable_console: false

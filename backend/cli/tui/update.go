@@ -7,8 +7,6 @@ import (
 
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
-
-	"eino-cli/backend/agent/middlewares"
 )
 
 func (m *Model) Update(msg tea.Msg) (model tea.Model, cmd tea.Cmd) {
@@ -30,16 +28,16 @@ func (m *Model) Update(msg tea.Msg) (model tea.Model, cmd tea.Cmd) {
 		return m, waitForStreamMsg(m.streamCh)
 	case doneMsg:
 		return applyDone(m, msg)
-	case dreamDoneMsg:
-		return applyDreamDone(m, msg)
-	case approvalRequest:
-		return applyApprovalRequest(m, msg)
-	case middlewares.TraceEvent:
-		model, cmd = applyTraceEvent(m, msg)
+	case timelineMsg:
+		model, cmd = applyTimelineEvent(m, msg.event)
 		if m.streaming {
 			cmd = tea.Batch(cmd, waitForStreamMsg(m.streamCh))
 		}
 		return model, cmd
+	case dreamDoneMsg:
+		return applyDreamDone(m, msg)
+	case approvalRequest:
+		return applyApprovalRequest(m, msg)
 	case footerHintExpiredMsg:
 		m.footerHint = ""
 		return m, nil
@@ -333,31 +331,6 @@ func submit(m *Model, text string) (tea.Model, tea.Cmd) {
 	return m, tea.Batch(waitForStreamMsg(ch), m.spin.Tick)
 }
 
-func applyTraceEvent(m *Model, ev middlewares.TraceEvent) (tea.Model, tea.Cmd) {
-	switch ev.Phase {
-	case middlewares.TracePhaseBefore:
-		if m.toolBlocksEnabled {
-			blocks := extractNewToolBlocks(ev.Messages, m.lastSeenMsgCount, &m.toolBlockSeq, m.toolArgsMaxChars)
-			for _, block := range blocks {
-				m.toolBlocks = append(m.toolBlocks, block)
-				pushToolBlockMessage(m, fmt.Sprintf("%s%d]", toolPlaceholderPrefix, block.id))
-			}
-		}
-		m.lastSeenMsgCount = len(ev.Messages)
-	case middlewares.TracePhaseTodos:
-		prevH := getTodoPanelHeight(m)
-		m.todos = ev.Todos
-		if getTodoPanelHeight(m) != prevH {
-			recomputeLayout(m)
-		}
-	case middlewares.TracePhaseTokens:
-		if ev.Tokens != nil {
-			m.tokenTotal = ev.Tokens.TotalTokens
-		}
-	}
-	return m, nil
-}
-
 func pushToolBlockMessage(m *Model, content string) {
 	if n := len(m.messages); n > 0 && m.messages[n-1].Role == "assistant" {
 		m.messages = append(m.messages, chatMessage{})
@@ -441,11 +414,11 @@ func drainQueuedStreamMessages(m *Model) tea.Cmd {
 				return tea.Batch(cmds...)
 			}
 			switch v := queued.(type) {
-			case middlewares.TraceEvent:
-				_, cmd := applyTraceEvent(m, v)
-				cmds = append(cmds, cmd)
 			case chunkMsg:
 				m.streamBuf.WriteString(string(v))
+			case timelineMsg:
+				_, cmd := applyTimelineEvent(m, v.event)
+				cmds = append(cmds, cmd)
 			}
 		default:
 			return tea.Batch(cmds...)

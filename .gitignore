@@ -1,8 +1,13 @@
 .eino-cli/
 .claude/worktrees/
+.worktrees/
 .idea/
 /yaml/extensions_config.example.json
 # config.yaml 本地化(API key / 临时调试值),不入 git。
 # 形状改动必须同步记到 yaml/CHANGELOG.md,见 AGENTS.md "yaml/config.yaml 改动" 段。
 /yaml/config.yaml
 /yaml/soul.md
+
+# VideoAgent 本地凭证和远端服务配置，不入 Git。
+/configs/videoagent/credentials.local.json
+/configs/videoagent/remote.local.json

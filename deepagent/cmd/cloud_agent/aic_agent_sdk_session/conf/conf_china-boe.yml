@@ -1,0 +1,19 @@
+mysql:
+  psm: toutiao.mysql.cc_family_agent_coordinator
+  db_name: cc_family_agent_coordinator
+  dsn: ""
+  read_dsn: ""
+  read_timeout_ms: 5000
+
+tables:
+  agent_session: t_agent_session
+
+coordinator:
+  psm: ad.creative.aic_agent_coordinator
+  cluster: dreamina
+  direct_hostports: ""
+  namespace: cloud_agent
+  disabled: false
+
+idgen:
+  namespace: videocut_aigc_agent_coordinator

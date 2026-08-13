@@ -1,0 +1,22 @@
+{
+  "name": "local",
+  "base_url": "http://127.0.0.1:6789",
+  "headers": {
+    "X-AIC-Agent-SDK-Test-UID": "1234"
+  },
+  "timeouts": {
+    "request_ms": 10000,
+    "turn_ms": 180000,
+    "stream_ms": 180000,
+    "file_ms": 60000
+  },
+  "features": {
+    "file_api": true,
+    "recover_queue": true,
+    "browser": false,
+    "memory": false,
+    "fornax": false
+  },
+  "project_prefix": "e2e_local",
+  "keep_artifacts": true
+}

@@ -1,0 +1,24 @@
+{
+  "name": "boe",
+  "base_url": "https://replace-with-aic-agent-sdk-api-host",
+  "headers": {
+    "x-use-boe": "1",
+    "x-tt-env": "boe_aic_agent_sdk",
+    "X-AIC-Agent-SDK-Test-UID": "1234"
+  },
+  "timeouts": {
+    "request_ms": 10000,
+    "turn_ms": 240000,
+    "stream_ms": 240000,
+    "file_ms": 90000
+  },
+  "features": {
+    "file_api": true,
+    "recover_queue": true,
+    "browser": false,
+    "memory": false,
+    "fornax": false
+  },
+  "project_prefix": "e2e_boe",
+  "keep_artifacts": true
+}

@@ -2,49 +2,46 @@ package tui
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	protoinput "eino-cli/deepagent/cloud/protocol/input"
+	sdkruntime "eino-cli/deepagent/runtime"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 
 	"eino-cli/backend/config"
 	"eino-cli/backend/consts"
-	rt "eino-cli/backend/runtime"
-	runtimeRun "eino-cli/backend/runtime/run"
 	"eino-cli/backend/session/rollback"
 	"eino-cli/backend/session/runs"
+	runtimeRun "eino-cli/deepagent/host/run"
+	clientruntime "eino-cli/deepagent/host/runtime"
 )
 
-type historyRuntime struct {
-	payload string
-}
-
-func (r *historyRuntime) ExecuteStream(context.Context, string, rt.StreamChunkHandler) (rt.Result, error) {
-	return rt.Result{}, nil
-}
-
-func (r *historyRuntime) RunDream(context.Context) (rt.Result, error) {
-	return rt.Result{Success: true}, nil
-}
-
-func (r *historyRuntime) ClearHistory() {}
-
-func (r *historyRuntime) ExportHistory() ([]byte, error) { return []byte("[]"), nil }
-
-func (r *historyRuntime) ImportHistory(payload []byte) error {
-	r.payload = string(payload)
-	return nil
-}
-
-func (r *historyRuntime) RollbackToHistory(payload []byte) error {
-	return r.ImportHistory(payload)
-}
+type historyRuntime struct{}
 
 func (r *historyRuntime) SetPlanMode(_ context.Context, on bool) (bool, error) { return on, nil }
 
 func (r *historyRuntime) Name() string { return "history-runtime" }
+
+func (r *historyRuntime) StartTurn(context.Context, string) (*clientruntime.TurnStream, error) {
+	return nil, nil
+}
+func (r *historyRuntime) Resume(context.Context, sdkruntime.GlobalThreadRef, protoinput.ResumeTurnPayload) error {
+	return nil
+}
+func (r *historyRuntime) ClearThread() {}
+func (r *historyRuntime) ConsolidateMemory(context.Context) (clientruntime.ActionResult, error) {
+	return clientruntime.ActionResult{Success: true}, nil
+}
+func (r *historyRuntime) ExportThreadRef() ([]byte, error) { return []byte("[]"), nil }
+func (r *historyRuntime) ImportThreadRef(payload []byte) error {
+	return nil
+}
+func (r *historyRuntime) RuntimeKind() sdkruntime.RuntimeKind { return sdkruntime.RuntimeLocal }
 
 func TestRunHistoryRenderAndKeys(t *testing.T) {
 	m := &Model{
@@ -73,12 +70,19 @@ func TestRunHistoryRenderAndKeys(t *testing.T) {
 	}
 }
 
-func TestRunHistoryRollbackRestoresSelectedPostRun(t *testing.T) {
+func TestRunHistoryRestoresWorkspaceWithoutChangingThreadHistory(t *testing.T) {
 	root := t.TempDir()
 	cleanup := config.SetRootDirForTest(root)
 	defer cleanup()
 	runStore := runs.NewStore(config.SessionRunsDir(consts.DefaultSessionID))
 	rollbackStore := rollback.NewStore(root, consts.DefaultSessionID)
+	workspaceFile := filepath.Join(config.SandboxWorkDir(consts.DefaultSessionID), "state.txt")
+	if err := os.MkdirAll(filepath.Dir(workspaceFile), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(workspaceFile, []byte("run-one"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	now := time.Now()
 	run1 := runs.Record{
 		ID:        "run-1",
@@ -96,11 +100,14 @@ func TestRunHistoryRollbackRestoresSelectedPostRun(t *testing.T) {
 		CreatedAt: now.Add(time.Second),
 		UpdatedAt: now.Add(time.Second),
 	}
-	saveRollbackableRecord(t, runStore, rollbackStore, &run1, []byte(`["history-one"]`))
+	saveRollbackableRecord(t, runStore, rollbackStore, &run1)
+	if err := os.WriteFile(workspaceFile, []byte("run-two"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	if err := runStore.Save(context.Background(), run2); err != nil {
 		t.Fatal(err)
 	}
-	saveRollbackableRecord(t, runStore, rollbackStore, &run2, []byte(`["history-two"]`))
+	saveRollbackableRecord(t, runStore, rollbackStore, &run2)
 
 	rt := &historyRuntime{}
 	m := &Model{
@@ -119,27 +126,22 @@ func TestRunHistoryRollbackRestoresSelectedPostRun(t *testing.T) {
 
 	rollbackSelectedRun(m)
 
-	if !strings.Contains(rt.payload, "history-one") {
-		t.Fatalf("runtime payload = %s", rt.payload)
+	workspace, err := os.ReadFile(workspaceFile)
+	if err != nil || string(workspace) != "run-one" {
+		t.Fatalf("workspace=%q error=%v", workspace, err)
 	}
 	body := historyMessageBody(m.messages)
-	if !strings.Contains(body, "prompt one") || !strings.Contains(body, "answer one") {
-		t.Fatalf("rollback did not rebuild selected history:\n%s", body)
-	}
-	if strings.Contains(body, "prompt two") || strings.Contains(body, "answer two") {
-		t.Fatalf("rollback kept later history:\n%s", body)
-	}
-	if !strings.Contains(body, "rolled back to run-1") {
-		t.Fatalf("rollback confirmation missing:\n%s", body)
+	if !strings.Contains(body, "workspace restored from run-1") || !strings.Contains(body, "next message starts a new turn") {
+		t.Fatalf("workspace restore confirmation missing:\n%s", body)
 	}
 }
 
-func saveRollbackableRecord(t *testing.T, runStore *runs.Store, rollbackStore *rollback.Store, rec *runs.Record, history []byte) {
+func saveRollbackableRecord(t *testing.T, runStore *runs.Store, rollbackStore *rollback.Store, rec *runs.Record) {
 	t.Helper()
 	if err := runStore.Save(context.Background(), *rec); err != nil {
 		t.Fatal(err)
 	}
-	path, err := rollbackStore.SavePost(context.Background(), rec.ID, history)
+	path, err := rollbackStore.SaveWorkspacePost(context.Background(), rec.ID)
 	if err != nil {
 		t.Fatal(err)
 	}

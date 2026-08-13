@@ -144,7 +144,7 @@ func handleExitCommand(_ *Model, _ string) tea.Cmd {
 
 func handleClearCommand(m *Model, _ string) tea.Cmd {
 	resetConversationView(m)
-	m.rt.ClearHistory()
+	m.rt.ClearThread()
 	return nil
 }
 
@@ -157,7 +157,7 @@ func handleDreamCommand(m *Model, text string) tea.Cmd {
 	pushMessage(m, "user", text)
 	pushMessage(m, "system", "dream: running memory consolidation")
 	return func() tea.Msg {
-		result, err := m.rt.RunDream(context.Background())
+		result, err := m.rt.ConsolidateMemory(context.Background())
 		if err != nil {
 			return dreamDoneMsg{err: err}
 		}

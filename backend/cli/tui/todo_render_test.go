@@ -5,8 +5,6 @@ import (
 	"testing"
 
 	"github.com/cloudwego/eino/adk/prebuilt/deep"
-
-	"eino-cli/backend/agent/middlewares"
 )
 
 func sampleTodos() []deep.TODO {
@@ -119,26 +117,14 @@ func TestTodoPanelHeight_MatchesRenderer(t *testing.T) {
 	}
 }
 
-func TestHandleTraceEvent_TodosUpdate(t *testing.T) {
-	m := &Model{messages: freshMessages(0, "", "")}
-	ev := middlewares.TraceEvent{
-		Phase: middlewares.TracePhaseTodos,
-		Todos: sampleTodos(),
-	}
-	_, _ = applyTraceEvent(m,ev)
-	if len(m.todos) != len(sampleTodos()) {
-		t.Errorf("m.todos must update from trace event; got len=%d", len(m.todos))
-	}
-}
-
 func TestHandleTodosCmd_Toggle(t *testing.T) {
 	m := &Model{todos: sampleTodos(), messages: freshMessages(0, "", "")}
 
-	handleTodosCommand(m,"/todos")
+	handleTodosCommand(m, "/todos")
 	if !m.todoExpanded {
 		t.Errorf("/todos must toggle from collapsed → expanded")
 	}
-	handleTodosCommand(m,"/todos")
+	handleTodosCommand(m, "/todos")
 	if m.todoExpanded {
 		t.Errorf("/todos must toggle from expanded → collapsed")
 	}
@@ -147,15 +133,15 @@ func TestHandleTodosCmd_Toggle(t *testing.T) {
 func TestHandleTodosCmd_ExplicitOpenClose(t *testing.T) {
 	m := &Model{todos: sampleTodos(), messages: freshMessages(0, "", "")}
 
-	handleTodosCommand(m,"/todos open")
+	handleTodosCommand(m, "/todos open")
 	if !m.todoExpanded {
 		t.Errorf("/todos open must expand")
 	}
-	handleTodosCommand(m,"/todos open") // idempotent
+	handleTodosCommand(m, "/todos open") // idempotent
 	if !m.todoExpanded {
 		t.Errorf("repeated /todos open must stay expanded")
 	}
-	handleTodosCommand(m,"/todos close")
+	handleTodosCommand(m, "/todos close")
 	if m.todoExpanded {
 		t.Errorf("/todos close must collapse")
 	}
@@ -163,7 +149,7 @@ func TestHandleTodosCmd_ExplicitOpenClose(t *testing.T) {
 
 func TestHandleTodosCmd_BadArg(t *testing.T) {
 	m := &Model{todos: sampleTodos(), messages: freshMessages(0, "", "")}
-	handleTodosCommand(m,"/todos banana")
+	handleTodosCommand(m, "/todos banana")
 	last := m.messages[len(m.messages)-1]
 	if last.Role != "system" || !strings.Contains(last.Content, "usage:") {
 		t.Errorf("bad arg should surface usage; got %+v", last)

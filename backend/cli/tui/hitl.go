@@ -1,14 +1,10 @@
 package tui
 
 import (
-	"context"
 	"fmt"
 	"strings"
 
-	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-
-	"eino-cli/backend/agent"
 )
 
 type approvalRequest struct {
@@ -18,27 +14,6 @@ type approvalRequest struct {
 }
 
 const approvalPromptHeight = 3
-
-func installTUIApproval(prog *tea.Program) func() {
-	previous := agent.HITLApprover
-	agent.HITLApprover = func(ctx context.Context, toolName, args string) bool {
-		reply := make(chan bool, 1)
-		prog.Send(approvalRequest{
-			toolName: toolName,
-			args:     args,
-			reply:    reply,
-		})
-		select {
-		case decision := <-reply:
-			return decision
-		case <-ctx.Done():
-			return false
-		}
-	}
-	return func() {
-		agent.HITLApprover = previous
-	}
-}
 
 func renderApprovalPrompt(req approvalRequest, width int) string {
 	const argLimit = 200

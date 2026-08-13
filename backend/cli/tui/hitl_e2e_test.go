@@ -9,48 +9,41 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/exp/teatest"
 
-	"eino-cli/backend/agent"
-	rt "eino-cli/backend/runtime"
+	protoinput "eino-cli/deepagent/cloud/protocol/input"
+	clientruntime "eino-cli/deepagent/host/runtime"
+	sdkruntime "eino-cli/deepagent/runtime"
 )
 
-// stubRuntime satisfies runtime.Runtime without touching a real LLM. Only
+// stubRuntime satisfies InteractiveRuntime without touching a real LLM. Only
 // Name() is exercised by these tests (Model.New reads it for the header
 // and welcome card); the others would only fire if /clear or a prompt
 // submission ran, which they don't.
 type stubRuntime struct{}
 
-func (stubRuntime) Execute(ctx context.Context, prompt string) (rt.Result, error) {
-	return rt.Result{}, nil
-}
-func (stubRuntime) ExecuteStream(ctx context.Context, prompt string, onChunk rt.StreamChunkHandler) (rt.Result, error) {
-	return rt.Result{}, nil
-}
-func (stubRuntime) RunDream(context.Context) (rt.Result, error) {
-	return rt.Result{Success: true}, nil
-}
-func (stubRuntime) ClearHistory()                  {}
-func (stubRuntime) ExportHistory() ([]byte, error) { return []byte("[]"), nil }
-func (stubRuntime) ImportHistory([]byte) error     { return nil }
-func (stubRuntime) RollbackToHistory([]byte) error { return nil }
 func (stubRuntime) SetPlanMode(_ context.Context, on bool) (bool, error) {
 	return on, nil
 }
 func (stubRuntime) Name() string { return "stub-model" }
+func (stubRuntime) StartTurn(context.Context, string) (*clientruntime.TurnStream, error) {
+	return nil, nil
+}
+func (stubRuntime) Resume(context.Context, sdkruntime.GlobalThreadRef, protoinput.ResumeTurnPayload) error {
+	return nil
+}
+func (stubRuntime) ClearThread() {}
+func (stubRuntime) ConsolidateMemory(context.Context) (clientruntime.ActionResult, error) {
+	return clientruntime.ActionResult{Success: true}, nil
+}
+func (stubRuntime) ExportThreadRef() ([]byte, error) { return []byte("[]"), nil }
+func (stubRuntime) ImportThreadRef([]byte) error     { return nil }
+func (stubRuntime) RuntimeKind() sdkruntime.RuntimeKind {
+	return sdkruntime.RuntimeLocal
+}
 
-// runHITLE2E spins up the TUI inside a real *tea.Program (via teatest)
-// with installTUIApproval wired to that program, kicks off a goroutine
-// that calls agent.HITLApprover (the way middlewares.HITL would), and
-// returns a channel that the caller drains for the final decision.
-//
-// Save/restore of agent.HITLApprover keeps these e2e tests from
-// polluting the rest of the suite — the unit tests in hitl_test.go
-// touch *Model directly and don't install anything, but a defensive
-// cleanup is cheaper than debugging a flake.
+// runHITLE2E sends the same approvalRequest produced by the normalized
+// Timeline consumer through a real Bubbletea program.
 func runHITLE2E(t *testing.T) (*teatest.TestModel, <-chan bool) {
 	t.Helper()
-
-	prev := agent.HITLApprover
-	t.Cleanup(func() { agent.HITLApprover = prev })
 
 	m, err := New(stubRuntime{}, "default_session_id")
 	if err != nil {
@@ -61,16 +54,11 @@ func runHITLE2E(t *testing.T) (*teatest.TestModel, <-chan bool) {
 	// would land us in the compact fallback. Either works for HITL but
 	// 120 matches what most users see.
 	tm := teatest.NewTestModel(t, m, teatest.WithInitialTermSize(120, 40))
-	t.Cleanup(installTUIApproval(tm.GetProgram()))
 
 	decisionCh := make(chan bool, 1)
-	go func() {
-		// 5s ceiling so a stuck approver doesn't leak a goroutine past
-		// the test — the test itself uses a tighter 2s WaitFor below.
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		decisionCh <- agent.HITLApprover(ctx, "execute", `{"command":"pwd"}`)
-	}()
+	reply := make(chan bool, 1)
+	tm.GetProgram().Send(approvalRequest{toolName: "execute", args: `{"command":"pwd"}`, reply: reply})
+	go func() { decisionCh <- <-reply }()
 
 	// Wait for the panel to actually render before the test sends a
 	// keystroke; otherwise tm.Type races against handleApprovalRequest
@@ -103,11 +91,11 @@ func expectDecision(t *testing.T, ch <-chan bool, want bool) {
 
 // TestHITL_E2E_ApproveYRoutesThroughTeaProgram is the integration the
 // unit tests can't cover: an actual *tea.Program receives an
-// approvalRequest sent by the installed approver, renders the panel,
+// normalized approvalRequest, renders the panel,
 // gets a real keystroke, and the approver's blocking call returns true.
 //
 // Together with the unit tests this pins down the full bubbletea path:
-//   - installTUIApproval → prog.Send routes a tea.Msg correctly
+//   - prog.Send routes the normalized approval message correctly
 //   - Update → handleApprovalRequest enqueues + relayouts
 //   - View → renderApprovalPanel actually appears on screen
 //   - keyboard → handleApprovalKey wins over input/popup at the

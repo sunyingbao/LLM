@@ -7,8 +7,6 @@ import (
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/cloudwego/eino/schema"
-
-	"eino-cli/backend/agent/middlewares"
 )
 
 func TestExtractToolBlocksSingleCall(t *testing.T) {
@@ -221,40 +219,6 @@ func TestToolBlockDefaults(t *testing.T) {
 	}
 }
 
-func TestHandleTraceEventExtractsAndPushesBlock(t *testing.T) {
-	m := &Model{
-		toolBlocksEnabled: true,
-		toolPreviewLines:  defaultToolPreviewLines,
-		toolArgsMaxChars:  defaultToolArgsMaxChars,
-		viewport:          viewport.New(80, 10),
-		width:             80,
-		height:            24,
-	}
-	ev := middlewares.TraceEvent{
-		Phase: middlewares.TracePhaseBefore,
-		Messages: []*schema.Message{
-			{
-				Role: schema.Assistant,
-				ToolCalls: []schema.ToolCall{
-					{ID: "call-1", Function: schema.FunctionCall{Name: "Bash", Arguments: `{"command":"pwd"}`}},
-				},
-			},
-			{Role: schema.Tool, ToolCallID: "call-1", Content: "ok"},
-		},
-	}
-
-	_, _ = applyTraceEvent(m, ev)
-	if len(m.toolBlocks) != 1 {
-		t.Fatalf("expected 1 block, got %d", len(m.toolBlocks))
-	}
-	if len(m.messages) != 1 || m.messages[0].Content != "[tool:#1]" {
-		t.Fatalf("unexpected messages: %#v", m.messages)
-	}
-	if m.lastSeenMsgCount != len(ev.Messages) {
-		t.Fatalf("lastSeenMsgCount not updated: %d", m.lastSeenMsgCount)
-	}
-}
-
 func TestToolBlockStaysLiveBeforeFinalAssistant(t *testing.T) {
 	m := &Model{
 		toolPreviewLines: defaultToolPreviewLines,
@@ -281,83 +245,6 @@ func TestToolBlockStaysLiveBeforeFinalAssistant(t *testing.T) {
 	}
 	if len(m.pendingScrollback) != 0 {
 		t.Fatalf("tool block should not be flushed before assistant renders, got %d pending", len(m.pendingScrollback))
-	}
-}
-
-func TestDoneDrainsQueuedToolTraceBeforeAssistant(t *testing.T) {
-	ch := make(chan tea.Msg, 1)
-	ch <- middlewares.TraceEvent{
-		Phase: middlewares.TracePhaseBefore,
-		Messages: []*schema.Message{
-			{
-				Role: schema.Assistant,
-				ToolCalls: []schema.ToolCall{
-					{ID: "call-1", Function: schema.FunctionCall{Name: "web_search", Arguments: `{"query":"x"}`}},
-				},
-			},
-			{Role: schema.Tool, ToolCallID: "call-1", Content: "result"},
-		},
-	}
-	close(ch)
-
-	m := &Model{
-		streaming:         true,
-		streamCh:          ch,
-		toolBlocksEnabled: true,
-		toolPreviewLines:  defaultToolPreviewLines,
-		toolArgsMaxChars:  defaultToolArgsMaxChars,
-		viewport:          viewport.New(80, 10),
-		width:             80,
-		height:            24,
-		messages:          []chatMessage{{Role: "user", Content: "question"}},
-		flushedMsgCount:   1,
-	}
-
-	_, _ = applyDone(m, doneMsg{output: "answer"})
-	live := getLiveMessages(m)
-	if len(live) != 0 {
-		t.Fatalf("done must flush completed turn out of live viewport, got %#v", live)
-	}
-	if len(m.pendingScrollback) != 3 {
-		t.Fatalf("done must queue tool trace and answer for scrollback, got %d pending", len(m.pendingScrollback))
-	}
-	if !strings.Contains(m.pendingScrollback[0], "Ran web_search") ||
-		!strings.Contains(m.pendingScrollback[1], "answer") ||
-		!strings.Contains(m.pendingScrollback[2], "──") {
-		t.Fatalf("scrollback order must be tool trace before answer, got %#v", m.pendingScrollback)
-	}
-}
-
-func TestLateToolTraceInsertsBeforeTrailingAssistant(t *testing.T) {
-	m := &Model{
-		toolBlocksEnabled: true,
-		toolPreviewLines:  defaultToolPreviewLines,
-		toolArgsMaxChars:  defaultToolArgsMaxChars,
-		viewport:          viewport.New(80, 10),
-		width:             80,
-		height:            24,
-		messages: []chatMessage{
-			{Role: "user", Content: "question"},
-			{Role: "assistant", Content: "answer"},
-		},
-		flushedMsgCount: 1,
-	}
-
-	_, _ = applyTraceEvent(m, middlewares.TraceEvent{
-		Phase: middlewares.TracePhaseBefore,
-		Messages: []*schema.Message{
-			{
-				Role: schema.Assistant,
-				ToolCalls: []schema.ToolCall{
-					{ID: "call-1", Function: schema.FunctionCall{Name: "web_search", Arguments: `{"query":"x"}`}},
-				},
-			},
-			{Role: schema.Tool, ToolCallID: "call-1", Content: "result"},
-		},
-	})
-	live := getLiveMessages(m)
-	if len(live) != 2 || live[0].Role != "tool-block" || live[1].Role != "assistant" {
-		t.Fatalf("late tool trace must be inserted before trailing assistant, got %#v", live)
 	}
 }
 

@@ -1,188 +1,85 @@
-# 🦌 SGADK CLI
+# Unified DeepAgent Runtime
 
-中文
+本仓库将原 SGADK 本地 Agent 与服务端 Agent SDK 融合为同一个 Agent
+Runtime。所有 Agent 执行逻辑位于 `deepagent/`；SGADK 只保留配置、TUI
+和会话展示等产品壳能力。
 
-[![Go](https://img.shields.io/badge/Go-1.24%2B-00ADD8?logo=go&logoColor=white)](./go.mod)
-[![Eino](https://img.shields.io/badge/Eino-ADK-5C7CFA)](https://github.com/cloudwego/eino)
-[![Bubble Tea](https://img.shields.io/badge/TUI-Bubble%20Tea-FF69B4)](https://github.com/charmbracelet/bubbletea)
-
-SGADK CLI 是一个面向本地开发的终端智能体客户端。它基于 **Eino ADK** 组装 Deep Agent runtime，用 **Bubble Tea** 提供 TUI，对接本仓库的工具、memory、skills 和长期偏好。
-
-它的目标不是做一个通用聊天壳，而是给这个仓库提供一个稳定的 agent 工作台：启动快、配置本地化、工具输出可见、长期偏好可持久化。
-
----
-
-## 目录
-
-- [🦌 SGADK CLI](#-sgadk-cli)
-  - [一句话交给 Coding Agent 安装](#一句话交给-coding-agent-安装)
-  - [快速开始](#快速开始)
-    - [配置](#配置)
-    - [运行 CLI](#运行-cli)
-    - [安装全局命令](#安装全局命令)
-  - [核心特性](#核心特性)
-    - [TUI Agent 工作台](#tui-agent-工作台)
-    - [工具输出折叠](#工具输出折叠)
-    - [SOUL 长期人格](#soul-长期人格)
-    - [Memory 与 Checkpoint](#memory-与-checkpoint)
-    - [运行时 Reload](#运行时-reload)
-  - [TUI 命令](#tui-命令)
-  - [项目结构](#项目结构)
-  - [开发](#开发)
-  - [安全与本地文件](#安全与本地文件)
-
-## 一句话交给 Coding Agent 安装
-
-如果你在用 Cursor、Claude Code、Codex、Windsurf 或其他 coding agent，可以直接把下面这句话发给它：
+## 架构入口
 
 ```text
-帮我在 /Users/bytedance/go/src/content/LLM 里检查配置，然后运行 scripts/install-sgadk.sh 安装 sgadk 命令；如果缺少 yaml/config.yaml 或 PATH 没配好，请告诉我下一步要补什么。
+deepagent/
+  definition/       AgentDefinition 与能力解析
+  runtime/          RuntimeClient、local/remote client 和路由
+  worker/           in-process 与 Agent Coordinator worker
+  cloud/            Cloud API、协议与服务端适配
+  core/             模型循环、AgentThread、middleware、workspace backend
+  host/             SGADK provider、配置和运行时绑定
+  tools/            共享工具及 SGADK 工具绑定
+  memory/           structured memory、dream memory 与 consolidation
+  migration/        旧 SGADK 可读历史导入
+
+cmd/sgadk/           SGADK CLI 入口
+backend/cli/tui/     Bubble Tea 展示层
+backend/config/      SGADK 本地配置
 ```
 
-这条提示词是给 coding agent 用的。它会进入仓库，检查本地配置，安装 `sgadk` wrapper，并在结束时告诉你下一条启动命令。
+仓库只有根目录一个 Go module。历史目录 `arch/`、`agent/` 和
+`backend/agent/` 已不存在，也没有第二套 Agent loop。
 
-## 快速开始
+## 运行 SGADK
 
-### 配置
-
-1. **进入仓库**
-
-   ```bash
-   cd /Users/bytedance/go/src/content/LLM
-   ```
-
-2. **准备本地配置**
-
-   主配置文件是：
-
-   ```text
-   yaml/config.yaml
-   ```
-
-   这个文件现在只承载模型、`web_search`、`sandbox` 和 `log_level` 配置。memory、summarization、token usage、HITL、skills、tool block 等运行期开关都使用代码默认值。
-
-3. **确认本地私有文件**
-
-   常见本地文件包括：
-
-   - `yaml/config.yaml`：模型、web search、sandbox 和 log level 配置；真实 API key 建议放在环境变量里。
-   - `.eino-cli/`：checkpoint、memory、安装后的二进制等运行时状态，不入 git。
-
-### 运行 CLI
-
-在仓库根目录运行：
+准备 `yaml/config.yaml` 后：
 
 ```bash
-go run .
+go run ./cmd/sgadk --root /Users/bytedance/go/src/content/LLM
 ```
 
-也可以显式指定仓库根目录：
+本地 runtime 是默认值。也可以显式设置：
 
 ```bash
-go run . --root /Users/bytedance/go/src/content/LLM
+SGADK_RUNTIME=local go run ./cmd/sgadk
 ```
 
-启动时 root 的解析优先级是：
+远端 runtime 需要 Agent Coordinator 配置：
 
-1. `--root`
-2. `SGADK_ROOT`
-3. 当前工作目录
+```bash
+SGADK_RUNTIME=remote \
+SGADK_REMOTE_AC_PSM=<coordinator-psm> \
+SGADK_REMOTE_NAMESPACE=<worker-namespace> \
+SGADK_REMOTE_USER_ID=<user-id> \
+go run ./cmd/sgadk
+```
 
-CLI 启动后会 `chdir` 到 root，确保配置、checkpoint、memory 和工具默认工作目录都落在同一个仓库下。
+可选变量包括 `SGADK_REMOTE_AC_CLUSTER`、
+`SGADK_REMOTE_AC_HOSTPORTS` 和 `SGADK_REMOTE_ENV`。local 与 remote thread
+使用不可变 `GlobalThreadRef` 路由，不会自动互相回退。
 
-### 安装全局命令
+## 旧历史导入
 
-执行一次安装脚本：
+`SGADK_LEGACY_IMPORT` 支持：
+
+- `prompt`：默认值，不静默导入；等待产品层确认。
+- `auto`：启动 local runtime 时幂等导入旧 `.eino-cli/sessions`。
+- `off`：禁用导入。
+
+旧 checkpoint 不会恢复执行；未完成的旧 run 会作为 interrupted timeline
+导入。源文件保持只读，导入 manifest 不记录消息、memory 或凭据内容。
+
+## 安装与验证
+
+安装本地命令：
 
 ```bash
 bash scripts/install-sgadk.sh
-```
-
-脚本会构建仓库内二进制到 `.eino-cli/bin/sgadk`，并把 wrapper 写入 `${HOME}/.local/bin/sgadk`。wrapper 会固定传入当前仓库 root，所以之后可以在任意目录运行：
-
-```bash
 sgadk
 ```
 
-如果 `${HOME}/.local/bin` 不在 `PATH` 里，按脚本输出把它加进去。
-
-如需安装到其他目录：
-
-```bash
-SGADK_INSTALL_DIR=/usr/local/bin bash scripts/install-sgadk.sh
-```
-
-## 核心特性
-
-### TUI Agent 工作台
-
-SGADK CLI 提供一个常驻终端界面，用来和 Deep Agent runtime 对话。普通回复会流式返回；模型工作中会显示类似 `Moonwalking...` 的 thinking indicator；输入 `/` 会弹出内置命令列表。
-
-### 工具输出折叠
-
-工具调用结果会作为独立 block 渲染到 scrollback。长输出默认折叠，按 `Ctrl-O` 可以展开或收起最近一个可折叠 block。
-
-### Memory 与 Checkpoint
-
-运行期状态默认落在 `.eino-cli/` 下。checkpoint 用来恢复 agent 运行状态；memory 用来保存长期事实和偏好。这个目录是本地状态，不应提交。
-
-## TUI 命令
-
-| 命令 | 作用 |
-|---|---|
-| `/clear` | 清空当前内存对话历史 |
-| `/plan [on\|off\|toggle]` | 切换 plan-mode 系统消息注入 |
-| `/todos [open\|close\|toggle]` | 展开或折叠 todo 面板 |
-| `/help` | 查看内置帮助 |
-| `/exit`, `/quit` | 退出 TUI |
-
-常用快捷键：
-
-- `Ctrl-O`：展开或折叠最近一个可折叠工具输出 block。
-- `Esc`：模型回复中断当前请求；空闲时清空输入。
-- `Ctrl-C`：回复中中断；空闲时按两次退出。
-
-## 项目结构
-
-```text
-.
-├── backend/
-│   ├── agent/          # agent、prompt、middleware、tools
-│   ├── cli/            # TUI
-│   ├── config/         # yaml config schema 和 loader
-│   ├── memory/         # 长期记忆存储
-│   └── runtime/        # Eino runtime 封装
-├── scripts/            # 本地安装脚本
-├── specs/              # 功能设计文档
-├── yaml/               # 本地配置目录和 config shape changelog
-├── main.go             # CLI 入口
-└── go.mod
-```
-
-## 开发
-
-运行测试：
+常用验证：
 
 ```bash
 go test ./...
+go build ./...
+git diff --check
 ```
 
-构建：
-
-```bash
-go build -o /tmp/sgadk .
-```
-
-真实 TUI 交互验证可以直接运行二进制后手工输入命令：
-
-```bash
-go build -o /tmp/sgadk .
-/tmp/sgadk --root /Users/bytedance/go/src/content/LLM
-```
-
-## 安全与本地文件
-
-- 不要提交真实 API key 或 `.eino-cli/`。
-- 修改 `yaml/config.yaml` 的 shape 时，必须同步更新 README 和相关测试。
-- `yaml/config.yaml` 示例只应使用占位符或 `api_key_env`；提交前必须检查 `git status`。
-- `go.mod` 当前使用 `go 1.24.2`；如果 IDE linter 只支持 `go 1.23` 格式，可能会显示解析告警，但命令行 `go test ./...` 以本机 Go 版本为准。
+真实 API key 只能通过本地配置或环境变量提供，不应提交到仓库。

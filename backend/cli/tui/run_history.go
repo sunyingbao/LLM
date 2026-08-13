@@ -12,7 +12,6 @@ import (
 )
 
 const runHistoryMaxRows = 8
-const runHistorySuccessStatus = "success"
 
 func applyRunHistoryKey(m *Model, msg tea.KeyMsg) (tea.Cmd, bool) {
 	if len(m.runHistoryRows) == 0 {
@@ -63,44 +62,14 @@ func rollbackSelectedRun(m *Model) {
 		closeRunHistory(m)
 		return
 	}
-	history, err := m.runs.RestoreSnapshot(context.Background(), selected.ID)
+	err := m.runs.RestoreWorkspaceSnapshot(context.Background(), selected.ID)
 	if err != nil {
-		pushMessage(m, "system", fmt.Sprintf("rollback: %v", err))
+		pushMessage(m, "system", fmt.Sprintf("workspace restore: %v", err))
 		closeRunHistory(m)
 		return
 	}
-	if err := m.rt.RollbackToHistory(history); err != nil {
-		pushMessage(m, "system", fmt.Sprintf("rollback: %v", err))
-		closeRunHistory(m)
-		return
-	}
-	rows, _ := m.runs.ListRuns(context.Background())
-	rebuildAfterRollback(m, selected, rows)
 	closeRunHistory(m)
-	pushMessage(m, "system", fmt.Sprintf("rolled back to %s", shortRunID(selected.ID)))
-}
-
-func rebuildAfterRollback(m *Model, selected runs.Record, rows []runs.Record) {
-	resetConversationUI(m)
-	m.tokenTotal = 0
-	m.streamBuf.Reset()
-	m.streaming = false
-	m.cancel = nil
-	m.streamCh = nil
-
-	var kept []runs.Record
-	for _, row := range rows {
-		if row.CreatedAt.After(selected.CreatedAt) {
-			continue
-		}
-		if row.Status == runHistorySuccessStatus && strings.TrimSpace(row.Output) != "" {
-			kept = append(kept, row)
-		}
-	}
-	for i := len(kept) - 1; i >= 0; i-- {
-		pushMessage(m, "user", kept[i].Prompt)
-		pushMessage(m, "assistant", kept[i].Output)
-	}
+	pushMessage(m, "system", fmt.Sprintf("workspace restored from %s; the next message starts a new turn", shortRunID(selected.ID)))
 }
 
 func getRunHistoryPanelHeight(m *Model) int {
@@ -125,7 +94,7 @@ func renderRunHistoryPanel(m *Model) string {
 	if len(m.runHistoryRows) > runHistoryMaxRows {
 		lines = append(lines, dimStyle.Render(fmt.Sprintf("  showing %d-%d of %d", start+1, end, len(m.runHistoryRows))))
 	}
-	lines = append(lines, dimStyle.Render("  enter rollback · esc/q close"))
+	lines = append(lines, dimStyle.Render("  enter restore workspace · esc/q close"))
 	return strings.Join(lines, "\n")
 }
 

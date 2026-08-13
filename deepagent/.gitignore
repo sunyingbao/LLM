@@ -1,0 +1,86 @@
+# Binaries
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+/chat
+/server
+/deepagent
+/bin/
+cmd/deepagent/demo_wk/
+cmd/deepagent/deepagent
+cmd/cloud_agent/cloud_agent
+cmd/cloud_agent/aic_agent_sdk_api/aic_agent_sdk_api
+cmd/cloud_agent/aic_agent_sdk_session/aic_agent_sdk_session
+cmd/cloud_agent/aic_agent_sdk_worker/aic_agent_sdk_worker
+cmd/cloud_agent/**/log/
+# Test binary
+*.test
+cmd/sandbox_lab/sandbox_lab
+cmd/ai_infra_sandbox/ai_infra_sandbox
+# Output of go coverage tool
+*.out
+cmd/deepagent/key.txt
+cmd/deepagent/wk/
+# Dependency directories
+vendor/
+cmd/deepagent/logs/
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Node modules (for web/)
+web/node_modules/
+web/dist/
+
+# Environment files
+.env
+.env.local
+.env.*.local
+*.local.yml
+
+
+# Local docs
+.doc/
+
+# Debug logs
+*.log
+dumped_hertz_remote_config.json
+
+# Temporary files
+tmp/
+*.tmp
+
+# Output directory (generated images, videos, etc.)
+output/
+
+# Test generated files
+小猫咪森林冒险.txt
+dreamina_gen.go
+dreamina_complete.go
+如何使用_dreamina.md
+**/*.pyc
+test*
+!cmd/cloud_agent/test_dev.py
+!cmd/cloud_agent/tests/
+!cmd/cloud_agent/tests/**
+!docs/testing/
+!docs/testing/**
+logs/
+.codex
+cmd/deepagent/.deepagent
+cmd/deepagent/doubao_key.txt
+fornax_key.env
+.codegraph
+/log/
+.gdpa
+data
+docs/workbench
+skills/**/config.json

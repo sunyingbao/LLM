@@ -1,0 +1,53 @@
+flowchart LR
+    subgraph Biz["业务接入层"]
+        UI["API / Web / TUI"]
+        BizLogic["业务协议 / 权限 / 产品体验"]
+    end
+
+    subgraph CP["Agent Coordinator 控制面"]
+        Thread["Thread / Lease"]
+        Mailbox["Mailbox"]
+        EventLog["EventLog / StreamOut"]
+        Session["Session"]
+    end
+
+    subgraph Worker["Agent Worker SDK"]
+        Loop["scan / claim / renew"]
+        Msg["pull / ack message"]
+        Event["append event"]
+        Release["release / block / resume"]
+    end
+
+    subgraph Runtime["Agent Runtime"]
+        AgentThread["deepagents / agentthread"]
+        React["ReAct Loop"]
+        Context["ContextManager"]
+        Tools["Tools / HITL / Sub-Agent"]
+    end
+
+    Backend["Backend / Sandbox / Filesystem"]
+    Model["Model"]
+
+    UI --> Thread
+    BizLogic --> Mailbox
+    Thread --> Loop
+    Mailbox --> Msg
+    Loop --> AgentThread
+    Msg --> AgentThread
+    AgentThread --> React
+    React --> Model
+    React --> Tools
+    Tools --> Backend
+    Context --> AgentThread
+    AgentThread --> Event
+    Event --> EventLog
+    Release --> Thread
+    Session --> UI
+
+    classDef sdk fill:#e8f0ff,stroke:#4f80ff,stroke-width:2px,color:#111;
+    classDef biz fill:#fff3df,stroke:#f0a642,stroke-width:2px,color:#111;
+    classDef ext fill:#f4f4f4,stroke:#999,stroke-width:1px,color:#111;
+
+    class Thread,Mailbox,EventLog,Session,Loop,Msg,Event,Release,AgentThread,React,Context,Tools sdk;
+    class UI,BizLogic biz;
+    class Backend,Model ext;

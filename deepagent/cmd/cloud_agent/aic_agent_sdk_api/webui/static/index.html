@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>AIC Agent SDK Workspace</title>
+    <link rel="icon" type="image/svg+xml" href="./favicon.svg?v=ui-clean-20260623" />
+    <link rel="stylesheet" href="./styles.css?v=ui-clean-20260614b" />
+  </head>
+  <body>
+    <div class="shell">
+      <aside class="sidebar" id="sidebar">
+        <div class="brand">
+          <div>
+            <h1>AIC Agent SDK</h1>
+            <p id="serviceState">Connecting</p>
+          </div>
+          <button class="icon-button mobile-only" id="closeNavBtn" type="button" title="Close">x</button>
+        </div>
+
+        <div class="session-actions">
+          <button class="primary-list-action" id="newSessionBtn" type="button">New chat</button>
+          <button class="icon-button" id="refreshSessionsBtn" type="button" title="Refresh sessions">↻</button>
+        </div>
+
+        <div class="project-actions">
+          <button class="secondary-list-action" id="newProjectBtn" type="button">Project</button>
+        </div>
+
+        <div class="session-list" id="sessionList"></div>
+      </aside>
+
+      <button class="scrim" id="scrim" type="button" aria-label="Close navigation"></button>
+
+      <main class="workspace">
+        <header class="topbar">
+          <button class="icon-button mobile-only" id="openNavBtn" type="button" title="Sessions">☰</button>
+          <div class="title-block">
+            <h2 id="sessionTitle">New session</h2>
+            <div class="subtle" id="sessionMeta">Send a message to create a session.</div>
+          </div>
+          <div class="run-pill" id="runState">idle</div>
+          <div class="user-pill hidden" id="userInfo" title="Current user"></div>
+          <button class="icon-button" id="stopBtn" type="button" title="Stop current run">■</button>
+        </header>
+
+        <section class="timeline" id="timeline">
+          <div class="empty">
+            <h3>Start a conversation</h3>
+            <p>Choose a session on the left or type below to create one.</p>
+          </div>
+        </section>
+
+        <footer class="composer-panel">
+          <section class="thread-strip" id="threadStrip" aria-label="Threads"></section>
+          <div class="pending-bar" id="pendingBar"></div>
+          <div class="composer">
+            <textarea id="messageInput" rows="1" placeholder="Ask AIC Agent SDK to work on something"></textarea>
+            <button class="context-ring" id="contextRing" type="button" title="Context usage unavailable">
+              <span></span>
+            </button>
+            <button class="mode-button" id="planButton" type="button" title="Send as implementation request">Plan</button>
+            <button class="send-button" id="sendButton" type="button" title="Send">↑</button>
+          </div>
+          <div class="status-line" id="statusLine"></div>
+        </footer>
+      </main>
+
+      <aside class="files-panel" id="filesPanel">
+        <div class="files-head">
+          <div>
+            <h2>Files</h2>
+            <p id="filesMeta">Project files</p>
+          </div>
+          <div class="files-actions">
+            <button class="files-toggle" id="toggleFilesBtn" type="button" title="Collapse files" aria-label="Collapse files">Hide</button>
+            <button class="icon-button" id="refreshFilesBtn" type="button" title="Refresh files">↻</button>
+          </div>
+        </div>
+        <div class="file-preview hidden" id="filePreview"></div>
+        <div class="file-tree" id="fileTree"></div>
+      </aside>
+    </div>
+
+    <script type="module" src="./app.js?v=ui-clean-20260614b"></script>
+  </body>
+</html>
