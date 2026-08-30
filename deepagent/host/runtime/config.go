@@ -15,7 +15,6 @@ import (
 
 const (
 	RuntimeEnvironmentVariable         = "SGADK_RUNTIME"
-	LegacyImportEnvironmentVariable    = "SGADK_LEGACY_IMPORT"
 	RemotePSMEnvironmentVariable       = "SGADK_REMOTE_AC_PSM"
 	RemoteNamespaceEnvironmentVariable = "SGADK_REMOTE_NAMESPACE"
 	RemoteClusterEnvironmentVariable   = "SGADK_REMOTE_AC_CLUSTER"
@@ -24,17 +23,8 @@ const (
 	RemoteUserIDEnvironmentVariable    = "SGADK_REMOTE_USER_ID"
 )
 
-type LegacyImportPolicy string
-
-const (
-	LegacyImportOff    LegacyImportPolicy = "off"
-	LegacyImportPrompt LegacyImportPolicy = "prompt"
-	LegacyImportAuto   LegacyImportPolicy = "auto"
-)
-
 type Config struct {
-	DefaultRuntime     sdkruntime.RuntimeKind
-	LegacyImportPolicy LegacyImportPolicy
+	DefaultRuntime sdkruntime.RuntimeKind
 }
 
 func NewInteractiveRuntime(ctx context.Context, appConfig *config.Config, sessionID string) (runtime InteractiveRuntime, err error) {
@@ -95,23 +85,7 @@ func ConfigFromEnv() (config Config, err error) {
 	if config.DefaultRuntime, err = ParseRuntimeKind(value); err != nil {
 		return Config{}, err
 	}
-	if config.LegacyImportPolicy, err = ParseLegacyImportPolicy(os.Getenv(LegacyImportEnvironmentVariable)); err != nil {
-		return Config{}, err
-	}
 	return config, nil
-}
-
-func ParseLegacyImportPolicy(value string) (policy LegacyImportPolicy, err error) {
-	policy = LegacyImportPolicy(strings.ToLower(strings.TrimSpace(value)))
-	if policy == "" {
-		policy = LegacyImportPrompt
-	}
-	switch policy {
-	case LegacyImportOff, LegacyImportPrompt, LegacyImportAuto:
-		return policy, nil
-	default:
-		return "", fmt.Errorf("parse legacy import policy %q: expected off, prompt, or auto", value)
-	}
 }
 
 func ParseRuntimeKind(value string) (kind sdkruntime.RuntimeKind, err error) {

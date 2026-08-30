@@ -2,7 +2,6 @@
 package main
 
 import (
-	"bufio"
 	"context"
 	"flag"
 	"fmt"
@@ -36,10 +35,6 @@ func main() {
 		log.Fatalf("load config: %v", err)
 	}
 	config.SetLogLevel(cfg)
-	if err := prepareLegacyImport(root, os.Stdin, os.Stderr); err != nil {
-		log.Fatalf("prepare legacy import: %v", err)
-	}
-
 	ctx := context.Background()
 	sessionID, err := session.StartSession(ctx)
 	if err != nil {
@@ -54,49 +49,6 @@ func main() {
 	defer sandbox.ShutdownDefault()
 
 	runCLI(cfg, sessionID)
-}
-
-func prepareLegacyImport(root string, input io.Reader, output io.Writer) (err error) {
-	runtimeConfig, err := clientruntime.ConfigFromEnv()
-	if err != nil {
-		return err
-	}
-	if string(runtimeConfig.DefaultRuntime) != "local" || runtimeConfig.LegacyImportPolicy != clientruntime.LegacyImportPrompt {
-		return nil
-	}
-	sessionsPath := filepath.Join(root, ".eino-cli", "sessions")
-	entries, err := os.ReadDir(sessionsPath)
-	if os.IsNotExist(err) {
-		return nil
-	}
-	if err != nil {
-		return fmt.Errorf("inspect %s: %w", sessionsPath, err)
-	}
-	count := 0
-	for _, entry := range entries {
-		if entry.IsDir() {
-			count++
-		}
-	}
-	if count == 0 {
-		return nil
-	}
-	if _, err = fmt.Fprintf(output, "发现 %d 个旧 SGADK 会话（%s）。导入为只读历史？[y/N] ", count, sessionsPath); err != nil {
-		return err
-	}
-	answer, err := bufio.NewReader(input).ReadString('\n')
-	if err != nil && err != io.EOF {
-		return err
-	}
-	policy := clientruntime.LegacyImportOff
-	if strings.EqualFold(strings.TrimSpace(answer), "y") || strings.EqualFold(strings.TrimSpace(answer), "yes") {
-		policy = clientruntime.LegacyImportAuto
-	}
-	if err = os.Setenv(clientruntime.LegacyImportEnvironmentVariable, string(policy)); err != nil {
-		return err
-	}
-	_, err = fmt.Fprintf(output, "旧历史导入策略：%s；源文件不会被修改。\n", policy)
-	return err
 }
 
 func buildSandboxManager(cfg *config.Config, sessionID string) (sandbox.SandboxManager, error) {
@@ -122,11 +74,6 @@ func runCLI(cfg *config.Config, sessionID string) {
 	rt, err := clientruntime.NewInteractiveRuntime(context.Background(), cfg, sessionID)
 	if err != nil {
 		log.Fatalf("build runtime: %v", err)
-	}
-	if reporter, ok := rt.(interface{ LegacyImportSummary() string }); ok {
-		if summary := reporter.LegacyImportSummary(); summary != "" {
-			_, _ = fmt.Fprintln(os.Stderr, summary)
-		}
 	}
 	if err := tui.Run(rt, sessionID, cfg); err != nil {
 		os.Exit(1)

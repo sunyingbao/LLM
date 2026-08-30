@@ -22,7 +22,6 @@ Agent loop、长生命周期 thread、分布式 worker 和 CloudAgent 接入统�
 | `host` | SGADK provider、配置与运行时绑定 |
 | `tools` | 共享工具以及 SGADK 工具绑定 |
 | `memory` | structured memory、dream memory 与 consolidation |
-| `migration` | 旧 SGADK 可读历史的只读导入 |
 | `cmd/deepagent` | 本地 DeepAgent CLI |
 | `cmd/cloud_agent` | CloudAgent 三服务参考实现，用于 dogfood 和端到端验证 |
 
@@ -67,7 +66,7 @@ python3 cmd/cloud_agent/dev.py
 
 ```bash
 go test ./core/... ./worker/... ./cloud/...
-go test ./definition/... ./runtime/... ./host/... ./tools/... ./memory/... ./migration/...
+go test ./definition/... ./runtime/... ./host/... ./tools/... ./memory/...
 go test ./cmd/deepagent/... ./cmd/cloud_agent/...
 git diff --check
 ```

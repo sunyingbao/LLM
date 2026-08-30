@@ -10,35 +10,14 @@ import (
 
 func TestConfigFromEnvDefaultsLocalAndAcceptsRemote(t *testing.T) {
 	t.Setenv(RuntimeEnvironmentVariable, "")
-	t.Setenv(LegacyImportEnvironmentVariable, "")
 	config, err := ConfigFromEnv()
-	if err != nil || config.DefaultRuntime != sdkruntime.RuntimeLocal || config.LegacyImportPolicy != LegacyImportPrompt {
+	if err != nil || config.DefaultRuntime != sdkruntime.RuntimeLocal {
 		t.Fatalf("ConfigFromEnv(default) config=%+v error=%v", config, err)
 	}
 	t.Setenv(RuntimeEnvironmentVariable, "remote")
 	config, err = ConfigFromEnv()
 	if err != nil || config.DefaultRuntime != sdkruntime.RuntimeRemote {
 		t.Fatalf("ConfigFromEnv(remote) config=%+v error=%v", config, err)
-	}
-}
-
-func TestParseLegacyImportPolicy(t *testing.T) {
-	t.Parallel()
-	for _, test := range []struct {
-		value string
-		want  LegacyImportPolicy
-	}{
-		{value: "", want: LegacyImportPrompt},
-		{value: "OFF", want: LegacyImportOff},
-		{value: "auto", want: LegacyImportAuto},
-	} {
-		policy, err := ParseLegacyImportPolicy(test.value)
-		if err != nil || policy != test.want {
-			t.Fatalf("ParseLegacyImportPolicy(%q) = %q, %v; want %q", test.value, policy, err, test.want)
-		}
-	}
-	if _, err := ParseLegacyImportPolicy("always"); err == nil {
-		t.Fatal("ParseLegacyImportPolicy(always) error = nil")
 	}
 }
 

@@ -12,7 +12,6 @@ import (
 
 	protoevent "eino-cli/deepagent/cloud/protocol/event"
 	"eino-cli/deepagent/definition"
-	legacyimport "eino-cli/deepagent/migration/legacy"
 	"eino-cli/deepagent/mock/mock_model"
 	sdkruntime "eino-cli/deepagent/runtime"
 	"eino-cli/deepagent/runtime/clienttest"
@@ -67,31 +66,6 @@ func TestBuildLocalDefinitionResolvesSkillsThroughSDKLoader(t *testing.T) {
 	}
 	if resolved.Backend == nil {
 		t.Fatal("sandbox backend was not resolved")
-	}
-}
-
-func TestImportLegacyHistoryWithNoSessionsIsNoOp(t *testing.T) {
-	root := t.TempDir()
-	restore := config.SetRootDirForTest(root)
-	t.Cleanup(restore)
-	runtimeDir := filepath.Join(root, ".eino-cli", "runtime")
-	if err := os.MkdirAll(runtimeDir, 0o700); err != nil {
-		t.Fatalf("mkdir runtime: %v", err)
-	}
-	report, err := importLegacyHistory(context.Background(), runtimeDir, sdkruntime.NewMemoryThreadIndex())
-	if err != nil {
-		t.Fatalf("importLegacyHistory() error=%v", err)
-	}
-	if report.Sources != 0 || report.Imported != 0 || report.Failed != 0 {
-		t.Fatalf("importLegacyHistory() report=%+v", report)
-	}
-}
-
-func TestLegacyImportSummaryContainsCountsOnly(t *testing.T) {
-	runtime := &LocalRuntime{legacyImportReport: &legacyimport.Report{Sources: 3, Imported: 1, Skipped: 1, Failed: 1}}
-	summary := runtime.LegacyImportSummary()
-	if !strings.Contains(summary, "来源 3") || !strings.Contains(summary, "导入 1") || !strings.Contains(summary, "失败 1") {
-		t.Fatalf("LegacyImportSummary()=%q", summary)
 	}
 }
 

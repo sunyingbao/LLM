@@ -36,24 +36,21 @@ import (
 	host "eino-cli/deepagent/host"
 	"eino-cli/deepagent/host/checkpoint"
 	agentmemory "eino-cli/deepagent/memory/sgadk"
-	legacyimport "eino-cli/deepagent/migration/legacy"
 	agenttools "eino-cli/deepagent/tools/sgadk"
 )
 
 const localDefinitionVersion = "v1"
 
 type LocalRuntime struct {
-	cfg                *config.Config
-	router             *sdkruntime.Router
-	sessionID          string
-	definition         agentdefinition.Definition
-	modelName          string
-	runtimeKind        sdkruntime.RuntimeKind
-	legacyImportReport *legacyimport.Report
-
-	mu        sync.Mutex
-	threadRef sdkruntime.GlobalThreadRef
-	planMode  bool
+	cfg         *config.Config
+	router      *sdkruntime.Router
+	sessionID   string
+	definition  agentdefinition.Definition
+	modelName   string
+	runtimeKind sdkruntime.RuntimeKind
+	mu          sync.Mutex
+	threadRef   sdkruntime.GlobalThreadRef
+	planMode    bool
 }
 
 func NewLocalRuntime(ctx context.Context, cfg *config.Config, sessionID string) (runtime *LocalRuntime, err error) {
@@ -122,35 +119,12 @@ func NewLocalRuntime(ctx context.Context, cfg *config.Config, sessionID string) 
 	if err != nil {
 		return nil, err
 	}
-	runtimeConfig, err := ConfigFromEnv()
-	if err != nil {
-		return nil, err
-	}
-	var legacyReport *legacyimport.Report
-	if runtimeConfig.LegacyImportPolicy == LegacyImportAuto {
-		report, importErr := importLegacyHistory(ctx, runtimeDir, index)
-		if importErr != nil {
-			err = importErr
-			return nil, fmt.Errorf("import legacy history: %w", err)
-		}
-		legacyReport = &report
-	}
 	runtime = &LocalRuntime{
 		cfg:    cfg,
 		router: &sdkruntime.Router{Local: client, Index: index}, sessionID: sessionID,
 		definition: definition, modelName: cfg.DefaultModel, runtimeKind: sdkruntime.RuntimeLocal,
-		legacyImportReport: legacyReport,
 	}
 	return runtime, nil
-}
-
-func (runtime *LocalRuntime) LegacyImportSummary() (summary string) {
-	if runtime == nil || runtime.legacyImportReport == nil {
-		return ""
-	}
-	report := runtime.legacyImportReport
-	summary = fmt.Sprintf("旧历史导入完成：来源 %d，导入 %d，跳过 %d，失败 %d；源文件保持不变。", report.Sources, report.Imported, report.Skipped, report.Failed)
-	return summary
 }
 
 func sgadkMemoryTurnCompleted() (completed func(ctx context.Context, threadID, turnID string, chatModel model.ToolCallingChatModel, history []*schema.Message)) {
@@ -191,21 +165,6 @@ func NewRemoteRuntime(ctx context.Context, cfg *config.Config, sessionID string,
 		definition: definition, modelName: cfg.DefaultModel, runtimeKind: sdkruntime.RuntimeRemote,
 	}
 	return runtime, nil
-}
-
-func importLegacyHistory(ctx context.Context, runtimeDir string, index sdkruntime.ThreadIndex) (report legacyimport.Report, err error) {
-	databasePath, _ := LegacyRuntimePaths(runtimeDir)
-	destination, err := NewLegacyDestination(ctx, databasePath, config.RootDir(), index)
-	if err != nil {
-		return report, err
-	}
-	importer := &legacyimport.Importer{
-		SourceRoot:   config.BaseDir(),
-		ManifestPath: filepath.Join(runtimeDir, "legacy-import-manifest.json"),
-		Destination:  destination,
-	}
-	report, err = importer.Import(ctx)
-	return report, err
 }
 
 func buildLocalDefinition(ctx context.Context, cfg *config.Config) (definition agentdefinition.Definition, resolver *definitionresolver.Resolver, err error) {

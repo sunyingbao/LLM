@@ -16,7 +16,6 @@ deepagent/
   host/             SGADK provider、配置和运行时绑定
   tools/            共享工具及 SGADK 工具绑定
   memory/           structured memory、dream memory 与 consolidation
-  migration/        旧 SGADK 可读历史导入
 
 cmd/sgadk/           SGADK CLI 入口
 backend/cli/tui/     Bubble Tea 展示层
@@ -53,17 +52,6 @@ go run ./cmd/sgadk
 可选变量包括 `SGADK_REMOTE_AC_CLUSTER`、
 `SGADK_REMOTE_AC_HOSTPORTS` 和 `SGADK_REMOTE_ENV`。local 与 remote thread
 使用不可变 `GlobalThreadRef` 路由，不会自动互相回退。
-
-## 旧历史导入
-
-`SGADK_LEGACY_IMPORT` 支持：
-
-- `prompt`：默认值，不静默导入；等待产品层确认。
-- `auto`：启动 local runtime 时幂等导入旧 `.eino-cli/sessions`。
-- `off`：禁用导入。
-
-旧 checkpoint 不会恢复执行；未完成的旧 run 会作为 interrupted timeline
-导入。源文件保持只读，导入 manifest 不记录消息、memory 或凭据内容。
 
 ## 安装与验证
 

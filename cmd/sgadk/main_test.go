@@ -1,15 +1,12 @@
 package main
 
 import (
-	"bytes"
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"eino-cli/backend/config"
-	clientruntime "eino-cli/deepagent/host/runtime"
 )
 
 func TestParseFlagsRootPrefersFlag(t *testing.T) {
@@ -21,40 +18,6 @@ func TestParseFlagsRootPrefersFlag(t *testing.T) {
 	want, _ := filepath.Abs("from-flag")
 	if root != want {
 		t.Fatalf("root: got %q, want %q", root, want)
-	}
-}
-
-func TestPrepareLegacyImportPromptsAndEnablesConfirmedImport(t *testing.T) {
-	root := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(root, ".eino-cli", "sessions", "legacy-1"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv(clientruntime.RuntimeEnvironmentVariable, "local")
-	t.Setenv(clientruntime.LegacyImportEnvironmentVariable, "prompt")
-	var output bytes.Buffer
-	if err := prepareLegacyImport(root, strings.NewReader("yes\n"), &output); err != nil {
-		t.Fatalf("prepareLegacyImport() error=%v", err)
-	}
-	if got := os.Getenv(clientruntime.LegacyImportEnvironmentVariable); got != "auto" {
-		t.Fatalf("legacy import policy=%q", got)
-	}
-	if !strings.Contains(output.String(), "1 个旧 SGADK 会话") || !strings.Contains(output.String(), filepath.Join(root, ".eino-cli", "sessions")) {
-		t.Fatalf("output=%q", output.String())
-	}
-}
-
-func TestPrepareLegacyImportDefaultsToOff(t *testing.T) {
-	root := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(root, ".eino-cli", "sessions", "legacy-1"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv(clientruntime.RuntimeEnvironmentVariable, "local")
-	t.Setenv(clientruntime.LegacyImportEnvironmentVariable, "prompt")
-	if err := prepareLegacyImport(root, strings.NewReader("\n"), io.Discard); err != nil {
-		t.Fatalf("prepareLegacyImport() error=%v", err)
-	}
-	if got := os.Getenv(clientruntime.LegacyImportEnvironmentVariable); got != "off" {
-		t.Fatalf("legacy import policy=%q", got)
 	}
 }
 
