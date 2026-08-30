@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"maps"
-	"strings"
 	"sync"
 	"time"
 
@@ -170,6 +169,13 @@ func (r *TurnRunner) Init(ctx context.Context) (err error) {
 		deepagents.WithTools(r.cfg.Tools...),
 		deepagents.WithContextManager(r.buildCtxMngMiddleware()),
 	}
+	appendMiddlewares := func(mws []middleware.Middleware) {
+		for _, mw := range mws {
+			if mw != nil {
+				opts = append(opts, deepagents.WithMiddleware(mw))
+			}
+		}
+	}
 	if r.cfg.MaxSteps > 0 {
 		opts = append(opts, deepagents.WithMaxSteps(r.cfg.MaxSteps))
 	}
@@ -236,21 +242,9 @@ func (r *TurnRunner) Init(ctx context.Context) (err error) {
 
 	// 注入外部自定义中间件（动态 Provider 优先，其次静态 Middlewares）
 	if r.cfg.MiddlewaresProvider != nil {
-		if mws := r.cfg.MiddlewaresProvider(ctx, r.turnID); len(mws) > 0 {
-			for _, m := range mws {
-				if m != nil {
-					opts = append(opts, deepagents.WithMiddleware(m))
-				}
-			}
-		}
+		appendMiddlewares(r.cfg.MiddlewaresProvider(ctx, r.turnID))
 	}
-	if len(r.cfg.Middlewares) > 0 {
-		for _, m := range r.cfg.Middlewares {
-			if m != nil {
-				opts = append(opts, deepagents.WithMiddleware(m))
-			}
-		}
-	}
+	appendMiddlewares(r.cfg.Middlewares)
 
 	// 构建自定义 GraphState（仅外部 CustomStateBuilder）
 	if r.cfg.CustomStateBuilder != nil {
@@ -268,6 +262,9 @@ func (r *TurnRunner) Init(ctx context.Context) (err error) {
 	r.agent = agent
 	return nil
 }
+
+// ===== Middleware assembly =====
+
 func (r *TurnRunner) buildPlanMiddleware() middleware.Middleware {
 	return plan.New(&plan.PlanMiddlewareConfig{
 		ToolMask: r.cfg.ToolMask,
@@ -294,27 +291,8 @@ func (r *TurnRunner) setPendingInputDrainer(drainer pendingInputDrainer) {
 func (r *TurnRunner) setReactLoopBranchPolicy(policy deepagents.ReactLoopBranchPolicy) {
 	r.branchPolicy = policy
 }
-func (r *TurnRunner) Interrupt(timeout *time.Duration) bool {
-	return r.InterruptWithOptions(InterruptOptions{Timeout: timeout})
-}
-func (r *TurnRunner) InterruptWithOptions(opts InterruptOptions) bool {
-	r.mu.Lock()
-	agent := r.agent
-	if agent == nil {
-		r.mu.Unlock()
-		return false
-	}
-	r.interruptOpts = InterruptOptions{
-		Timeout:  opts.Timeout,
-		Metadata: maps.Clone(opts.Metadata),
-	}
-	r.interruptActive = true
-	r.mu.Unlock()
-	if opts.Timeout == nil {
-		return agent.Interrupt()
-	}
-	return agent.Interrupt(compose.WithGraphInterruptTimeout(*opts.Timeout))
-}
+
+// ===== Turn execution and interrupt translation =====
 
 // RunTurn 拆分为 3 步：初始化 agent → 执行（带 callbacks） → 消耗 stream
 func (r *TurnRunner) RunTurn(ctx context.Context, input *Message, opts *TurnRunOptions) (err error) {
@@ -379,6 +357,9 @@ func (r *TurnRunner) RunTurn(ctx context.Context, input *Message, opts *TurnRunO
 
 	return
 }
+
+// ===== Callback adapters and stream helpers =====
+
 func (r *TurnRunner) buildRunCallbacks() []callbacks.Handler {
 	handlers := []callbacks.Handler{r.buildCallbacks()}
 	for _, handler := range r.cfg.Callbacks {
@@ -676,50 +657,6 @@ func (r *TurnRunner) recordModelUsage(ctx context.Context, usage *model.TokenUsa
 	}
 	r.cm.RecordModelUsage(ctx, usage)
 }
-func (r *TurnRunner) emitEvent(ctx context.Context, typ EventType, payload any) {
-	loc := eventLocationFromContext(ctx)
-	if loc == (EventLocation{}) && r.agent != nil {
-		loc = EventLocation{
-			AgentName:  r.agent.Name(),
-			AgentDepth: r.agent.Depth(),
-		}
-	}
-	ev := Event{
-		Loc:      loc,
-		ID:       r.eventIDProvider(ctx, r.threadID, r.turnID),
-		TS:       time.Now(),
-		ThreadID: r.threadID,
-		TurnID:   r.turnID,
-		Type:     typ,
-		Payload:  payload,
-	}
-
-	r.eventMu.RLock()
-	defer r.eventMu.RUnlock()
-	if r.eventClosed {
-		logs.CtxWarn(ctx, "[TurnRunner::emitEvent] drop late event after turn event channel closed: thread_id=%s turn_id=%s event_type=%s",
-			r.threadID, r.turnID, typ)
-		return
-	}
-	queueLen := len(r.eventBus)
-	queueCap := cap(r.eventBus)
-	startedAt := time.Now()
-	r.eventBus <- ev
-	if elapsed := time.Since(startedAt); elapsed > eventEnqueueWarnThreshold {
-		logs.CtxWarn(ctx, "[TurnRunner::emitEvent] slow event enqueue: thread_id=%s turn_id=%s event_type=%s elapsed=%s queue_len_before=%d queue_cap=%d",
-			r.threadID, r.turnID, typ, elapsed, queueLen, queueCap)
-	}
-}
-func (r *TurnRunner) closeEventBus() {
-	r.eventMu.Lock()
-	defer r.eventMu.Unlock()
-	if r.eventClosed {
-		return
-	}
-	r.eventClosed = true
-	close(r.eventBus)
-}
-
 func normalizeInterruptAfterNodes(nodes []string) (normalized []string) {
 	normalized = make([]string, len(nodes))
 	for i, node := range nodes {
@@ -773,235 +710,4 @@ func buildInterruptBatchItem(ictx *compose.InterruptCtx) InterruptBatchItem {
 	}
 
 	return item
-}
-
-func llmEndFromCallbackOutput(output *model.CallbackOutput, llmResponseID string) LLMEnd {
-	if output == nil || output.Message == nil {
-		if output == nil {
-			return LLMEnd{LLMResponseID: llmResponseID}
-		}
-		return LLMEnd{
-			CallbackOutput: model.CallbackOutput{
-				Config:     cloneModelConfig(output.Config),
-				TokenUsage: cloneModelTokenUsage(output.TokenUsage),
-				Extra:      cloneAnyMap(output.Extra),
-			},
-			LLMResponseID: llmResponseID,
-		}
-	}
-	return LLMEnd{
-		CallbackOutput: model.CallbackOutput{
-			Message:    agentgraph.CopyMessage(output.Message),
-			Config:     cloneModelConfig(output.Config),
-			TokenUsage: cloneModelTokenUsage(output.TokenUsage),
-			Extra:      cloneAnyMap(output.Extra),
-		},
-		LLMResponseID: llmResponseID,
-	}
-}
-
-type modelCallbackStreamAccumulator struct {
-	config     *model.Config
-	tokenUsage *model.TokenUsage
-	extra      map[string]any
-	lastMsg    *schema.Message
-}
-
-func (a *modelCallbackStreamAccumulator) observe(output *model.CallbackOutput) {
-	if output == nil {
-		return
-	}
-	if output.Config != nil {
-		a.config = cloneModelConfig(output.Config)
-	}
-	if output.Extra != nil {
-		a.extra = cloneAnyMap(output.Extra)
-	}
-	if output.Message != nil {
-		a.lastMsg = agentgraph.CopyMessage(output.Message)
-	}
-	if output.TokenUsage != nil {
-		a.tokenUsage = cloneModelTokenUsage(output.TokenUsage)
-	}
-}
-func (a *modelCallbackStreamAccumulator) applyLastMessageFields(merged *schema.Message) {
-	if a == nil || merged == nil || a.lastMsg == nil {
-		return
-	}
-	if merged.Role == "" && a.lastMsg.Role != "" {
-		merged.Role = a.lastMsg.Role
-	}
-	if a.lastMsg.ResponseMeta != nil {
-		merged.ResponseMeta = a.lastMsg.ResponseMeta
-	}
-	if len(a.lastMsg.Extra) > 0 {
-		if merged.Extra == nil {
-			merged.Extra = map[string]any{}
-		}
-		for k, v := range a.lastMsg.Extra {
-			merged.Extra[k] = v
-		}
-	}
-}
-
-func mergeModelCallbackStream(
-	ctx context.Context,
-	output *schema.StreamReader[*model.CallbackOutput],
-	llmResponseID string,
-	onChunk func(context.Context, *schema.Message),
-) (LLMEnd, int, error) {
-	acc := &modelCallbackStreamAccumulator{}
-	chunkCount := 0
-	messageStream := schema.StreamReaderWithConvert(output, func(chunk *model.CallbackOutput) (*schema.Message, error) {
-		acc.observe(chunk)
-		if chunk == nil || chunk.Message == nil {
-			return nil, schema.ErrNoValue
-		}
-		if isEmptyModelMessageChunk(chunk.Message) {
-			return nil, schema.ErrNoValue
-		}
-		return chunk.Message, nil
-	})
-	defer messageStream.Close()
-
-	merger := agentgraph.NewStreamMessageMerger(func(ctx context.Context, chunk *schema.Message) {
-		if chunk == nil {
-			return
-		}
-		if chunk.Content != "" {
-			chunkCount++
-		}
-		if onChunk != nil {
-			onChunk(ctx, chunk)
-		}
-	})
-	merged, err := merger.Merge(ctx, messageStream)
-	if err != nil {
-		return LLMEnd{}, chunkCount, err
-	}
-	if merged != nil {
-		acc.applyLastMessageFields(merged)
-	}
-	return LLMEnd{
-		CallbackOutput: model.CallbackOutput{
-			Message:    merged,
-			Config:     cloneModelConfig(acc.config),
-			TokenUsage: cloneModelTokenUsage(acc.tokenUsage),
-			Extra:      cloneAnyMap(acc.extra),
-		},
-		LLMResponseID: llmResponseID,
-	}, chunkCount, nil
-}
-
-func isEmptyModelMessageChunk(msg *schema.Message) bool {
-	if msg == nil {
-		return true
-	}
-	return msg.Role == "" &&
-		msg.Content == "" &&
-		msg.ReasoningContent == "" &&
-		msg.Name == "" &&
-		msg.ToolCallID == "" &&
-		msg.ToolName == "" &&
-		len(msg.ToolCalls) == 0 &&
-		len(msg.MultiContent) == 0 &&
-		len(msg.UserInputMultiContent) == 0 &&
-		len(msg.AssistantGenMultiContent) == 0
-}
-
-func cloneModelTokenUsage(usage *model.TokenUsage) *model.TokenUsage {
-	if usage == nil {
-		return nil
-	}
-	copied := *usage
-	return &copied
-}
-
-func cloneModelConfig(cfg *model.Config) *model.Config {
-	if cfg == nil {
-		return nil
-	}
-	copied := *cfg
-	if cfg.Stop != nil {
-		copied.Stop = append([]string(nil), cfg.Stop...)
-	}
-	return &copied
-}
-
-func cloneAnyMap(in map[string]any) map[string]any {
-	if in == nil {
-		return nil
-	}
-	out := make(map[string]any, len(in))
-	for k, v := range in {
-		out[k] = v
-	}
-	return out
-}
-
-func callbackInputArgs(input *tool.CallbackInput) string {
-	if input == nil {
-		return ""
-	}
-	return input.ArgumentsInJSON
-}
-
-func callbackOutputText(output *tool.CallbackOutput) string {
-	if output == nil {
-		return ""
-	}
-	if output.Response != "" {
-		return output.Response
-	}
-	if output.ToolOutput != nil {
-		var sb strings.Builder
-		for _, part := range output.ToolOutput.Parts {
-			if part.Text != "" {
-				sb.WriteString(part.Text)
-			}
-		}
-		return sb.String()
-	}
-	return ""
-}
-
-func toolCallbackCallID(ctx context.Context, input *tool.CallbackInput, output *tool.CallbackOutput) string {
-	if callID := compose.GetToolCallID(ctx); callID != "" {
-		return callID
-	}
-	if input != nil {
-		if callID := toolCallbackExtraCallID(input.Extra); callID != "" {
-			return callID
-		}
-	}
-	if output != nil {
-		if callID := toolCallbackExtraCallID(output.Extra); callID != "" {
-			return callID
-		}
-	}
-	return ""
-}
-
-func toolCallbackExtraCallID(extra map[string]any) string {
-	if extra == nil {
-		return ""
-	}
-	raw, ok := extra["tool_call_id"]
-	if !ok {
-		return ""
-	}
-	callID, _ := raw.(string)
-	return callID
-}
-
-func eventLocationFromContext(ctx context.Context) EventLocation {
-	agent := deepagents.GetDeepAgent(ctx)
-	if agent == nil {
-		return EventLocation{}
-	}
-
-	return EventLocation{
-		AgentName:  agent.Name(),
-		AgentDepth: agent.Depth(),
-	}
 }

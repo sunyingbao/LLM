@@ -37,23 +37,23 @@ type InterruptOptions struct {
 type EventType string
 
 const (
-	EventTurnStart                     EventType = "turn_start" // need move to runner
+	EventTurnStart                     EventType = "turn_start"
 	EventLLMRequesting                 EventType = "llm_requesting"
-	EventLLMToken                      EventType = "llm_token" // need move to runner
+	EventLLMToken                      EventType = "llm_token"
 	EventLLMEnd                        EventType = "llm_end"
-	EventToolStart                     EventType = "tool_start" // already in runner
+	EventToolStart                     EventType = "tool_start"
 	EventToolCallOutputChunk           EventType = "tool_call_output_chunk"
-	EventToolEnd                       EventType = "tool_end"           // already in runner
-	EventApproveRequested              EventType = "approve_requested"  // need move to runner
-	EventFollowUpRequested             EventType = "followup_requested" // need move to runner
-	EventInterrupted                   EventType = "interrupted"        // need move to runner
+	EventToolEnd                       EventType = "tool_end"
+	EventApproveRequested              EventType = "approve_requested"
+	EventFollowUpRequested             EventType = "followup_requested"
+	EventInterrupted                   EventType = "interrupted"
 	EventInterruptBatchRequested       EventType = "interrupt_batch_requested"
 	EventPlanUpdated                   EventType = "plan_updated"
 	EventContextCompactStarted         EventType = "context_compact_started"
 	EventContextCompacted              EventType = "context_compacted"
-	EventTurnEnd                       EventType = "turn_end" // need move to runner
+	EventTurnEnd                       EventType = "turn_end"
 	EventPendingInputProcessingStarted EventType = "pending_input_processing_started"
-	EventError                         EventType = "error"          // need move to runner
+	EventError                         EventType = "error"
 	EventInterruptInfo                 EventType = "interrupt_info" // 将Interrupt信息带出来
 )
 
