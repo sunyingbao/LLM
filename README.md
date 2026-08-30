@@ -17,12 +17,12 @@ deepagent/
   tools/            共享工具及 SGADK 工具绑定
   memory/           structured memory、dream memory 与 consolidation
 
-cmd/sgadk/           SGADK CLI 入口
+deepagent/cmd/deepagent/  统一 DeepAgent/SGADK 本地 CLI 入口
 backend/cli/tui/     Bubble Tea 展示层
 backend/config/      SGADK 本地配置
 ```
 
-仓库只有根目录一个 Go module。历史目录 `arch/`、`agent/` 和
+仓库只有根目录一个 Go module。历史入口 `cmd/sgadk` 以及目录 `arch/`、`agent/` 和
 `backend/agent/` 已不存在，也没有第二套 Agent loop。
 
 ## 运行 SGADK
@@ -30,13 +30,13 @@ backend/config/      SGADK 本地配置
 准备 `yaml/config.yaml` 后：
 
 ```bash
-go run ./cmd/sgadk --root /Users/bytedance/go/src/content/LLM
+go run ./deepagent/cmd/deepagent --root /Users/bytedance/go/src/content/LLM
 ```
 
 本地 runtime 是默认值。也可以显式设置：
 
 ```bash
-SGADK_RUNTIME=local go run ./cmd/sgadk
+SGADK_RUNTIME=local go run ./deepagent/cmd/deepagent
 ```
 
 远端 runtime 需要 Agent Coordinator 配置：
@@ -46,7 +46,7 @@ SGADK_RUNTIME=remote \
 SGADK_REMOTE_AC_PSM=<coordinator-psm> \
 SGADK_REMOTE_NAMESPACE=<worker-namespace> \
 SGADK_REMOTE_USER_ID=<user-id> \
-go run ./cmd/sgadk
+go run ./deepagent/cmd/deepagent
 ```
 
 可选变量包括 `SGADK_REMOTE_AC_CLUSTER`、

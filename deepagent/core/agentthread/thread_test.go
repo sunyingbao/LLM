@@ -1172,7 +1172,7 @@ func TestDeepAgentThread_ResumeTurnRunnerConfigOverridesResolver(t *testing.T) {
 }
 
 func TestThreadRunCommitEndRejectsLaterInput(t *testing.T) {
-	run := newActiveRun(
+	run := newTurn(
 		"run-race",
 		nil,
 		nil,

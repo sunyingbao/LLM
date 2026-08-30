@@ -1,6 +1,8 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -50,6 +52,43 @@ func TestAppConfigOneShotPrompt(t *testing.T) {
 		cfg := AppConfig{ReadFromStdin: true}
 		if _, err := cfg.oneShotPrompt(nil, strings.NewReader("\n")); err == nil {
 			t.Fatalf("expected empty stdin error")
+		}
+	})
+}
+
+func TestResolveRoot(t *testing.T) {
+	base, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Run("flag wins", func(t *testing.T) {
+		got, err := resolveRoot(".")
+		if err != nil {
+			t.Fatal(err)
+		}
+		want, _ := filepath.Abs(".")
+		if got != want {
+			t.Fatalf("resolveRoot() = %q, want %q", got, want)
+		}
+	})
+	t.Run("environment fallback", func(t *testing.T) {
+		t.Setenv("SGADK_ROOT", base)
+		got, err := resolveRoot("")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got != base {
+			t.Fatalf("resolveRoot() = %q, want %q", got, base)
+		}
+	})
+	t.Run("cwd fallback", func(t *testing.T) {
+		t.Setenv("SGADK_ROOT", "")
+		got, err := resolveRoot("")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got != base {
+			t.Fatalf("resolveRoot() = %q, want %q", got, base)
 		}
 	})
 }

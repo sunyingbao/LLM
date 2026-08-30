@@ -9,7 +9,9 @@ import (
 
 	"eino-cli/deepagent/core/backends"
 	"eino-cli/deepagent/core/middleware/skill"
+	"eino-cli/deepagent/host"
 	inprocess "eino-cli/deepagent/worker/inprocess"
+	"github.com/cloudwego/eino/components/model"
 )
 
 type appDeps struct {
@@ -36,14 +38,25 @@ func buildDeps(ctx context.Context, cfg AppConfig) (*appDeps, error) {
 	cfg.CheckpointDir = filepath.Clean(cfg.CheckpointDir)
 	cfg.EnableRG = envBool("DEEPAGENT_ENABLE_RG")
 
-	if err := validateModelEnv(); err != nil {
-		return nil, err
+	if cfg.SGADKConfig == nil {
+		if err := validateModelEnv(); err != nil {
+			return nil, err
+		}
 	}
 	store, err := NewLocalStore(ctx, cfg.DBPath, cfg.CheckpointDir)
 	if err != nil {
 		return nil, err
 	}
-	chatModel, err := createChatModel(ctx)
+	var chatModel model.ToolCallingChatModel
+	if cfg.SGADKConfig != nil {
+		modelCfg := cfg.SGADKConfig.Models[cfg.SGADKConfig.DefaultModel]
+		if modelCfg == nil {
+			return nil, fmt.Errorf("default model %q is not configured", cfg.SGADKConfig.DefaultModel)
+		}
+		chatModel, err = host.BuildToolCallingChatModel(ctx, modelCfg)
+	} else {
+		chatModel, err = createChatModel(ctx)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("创建模型失败: %w", err)
 	}

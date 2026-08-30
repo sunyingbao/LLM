@@ -172,56 +172,56 @@ func WithBaseTurnRunnerConfig(cfg *TurnRunnerConfig) Option {
 // this turn, not for whatever turn becomes current later.
 type TurnHandle struct {
 	owner *DeepAgentThread
-	run   *activeRun
+	turn  *turn
 }
 
 func (c *TurnHandle) TurnID() string {
-	if c == nil || c.run == nil {
+	if c == nil || c.turn == nil {
 		return ""
 	}
-	return c.run.turnID
+	return c.turn.turnID
 }
 
 func (c *TurnHandle) Wait(ctx context.Context) error {
-	if c == nil || c.run == nil {
+	if c == nil || c.turn == nil {
 		return ErrInvalidOp
 	}
 	select {
-	case <-c.run.done:
-		return c.run.err()
+	case <-c.turn.done:
+		return c.turn.err()
 	case <-ctx.Done():
 		return ctx.Err()
 	}
 }
 
 func (c *TurnHandle) IsActive() bool {
-	if c == nil || c.owner == nil || c.run == nil {
+	if c == nil || c.owner == nil || c.turn == nil {
 		return false
 	}
 	c.owner.mu.Lock()
 	defer c.owner.mu.Unlock()
-	return c.run.isActive()
+	return c.turn.isActive()
 }
 
 func (c *TurnHandle) ConsumedInputs() []*schema.Message {
-	if c == nil || c.owner == nil || c.run == nil {
+	if c == nil || c.owner == nil || c.turn == nil {
 		return nil
 	}
 	c.owner.mu.Lock()
 	defer c.owner.mu.Unlock()
-	if len(c.run.consumed) == 0 {
+	if len(c.turn.consumed) == 0 {
 		return nil
 	}
-	return copyMessages(c.run.consumed)
+	return copyMessages(c.turn.consumed)
 }
 
 func (c *TurnHandle) ConsumedInputsMeta() []any {
-	if c == nil || c.owner == nil || c.run == nil {
+	if c == nil || c.owner == nil || c.turn == nil {
 		return nil
 	}
 	c.owner.mu.Lock()
 	defer c.owner.mu.Unlock()
-	return copyConsumedInputsMeta(c.run.consumedInputsMeta)
+	return copyConsumedInputsMeta(c.turn.consumedInputsMeta)
 }
 
 type DeepAgentThread struct {
@@ -232,8 +232,7 @@ type DeepAgentThread struct {
 	evCh chan Event
 
 	mu      sync.Mutex
-	current *activeRun
-	runner  *TurnRunner
+	current *turn
 
 	turnIDProvider TurnIDProvider
 }
@@ -355,14 +354,14 @@ func (t *DeepAgentThread) SubmitInput(ctx context.Context, input *Message, opts 
 		t.mu.Unlock()
 		return nil, err
 	}
-	run, runner, err := t.startTurnLocked(runCtx, turnID, input, submitOpts.InputMeta, nil, runnerCfg)
+	turn, err := t.startTurnLocked(runCtx, turnID, input, submitOpts.InputMeta, nil, runnerCfg)
 	if err != nil {
 		t.mu.Unlock()
 		return nil, err
 	}
 	result := SubmitInputResult{
 		TurnID:       turnID,
-		TurnHandle:   t.curTurnLocked(run),
+		TurnHandle:   t.curTurnLocked(turn),
 		StartNewTurn: true,
 		RunnerConfig: runnerCfg.Clone(),
 	}
@@ -371,7 +370,7 @@ func (t *DeepAgentThread) SubmitInput(ctx context.Context, input *Message, opts 
 	}
 	t.mu.Unlock()
 
-	go t.run(runCtx, run, runner)
+	go t.executeTurn(runCtx, turn)
 	return &result, nil
 }
 
@@ -423,53 +422,54 @@ func (t *DeepAgentThread) ResumeTurn(ctx context.Context, turnID string, opts Re
 		t.mu.Unlock()
 		return nil, err
 	}
-	run, runner, err := t.startTurnLocked(runCtx, turnID, nil, nil, &opts, runnerCfg)
+	turn, err := t.startTurnLocked(runCtx, turnID, nil, nil, &opts, runnerCfg)
 	if err != nil {
 		t.mu.Unlock()
 		return nil, err
 	}
-	curTurn := t.curTurnLocked(run)
+	curTurn := t.curTurnLocked(turn)
 	t.mu.Unlock()
 
-	go t.run(runCtx, run, runner)
+	go t.executeTurn(runCtx, turn)
 	return curTurn, nil
 }
 
-func (t *DeepAgentThread) startTurnLocked(ctx context.Context, turnID string, input *Message, inputMeta any, opts *ResumeTurnOptions, runnerCfg *TurnRunnerConfig) (*activeRun, *TurnRunner, error) {
+func (t *DeepAgentThread) startTurnLocked(ctx context.Context, turnID string, input *Message, inputMeta any, opts *ResumeTurnOptions, runnerCfg *TurnRunnerConfig) (*turn, error) {
 	if turnID == "" {
-		return nil, nil, ErrInvalidOp
+		return nil, ErrInvalidOp
 	}
 	if runnerCfg == nil {
 		runnerCfg = t.cfg.Clone()
 	} else {
 		runnerCfg = runnerCfg.Clone()
 	}
-	run := newActiveRun(turnID, input, inputMeta, opts)
-	runner := NewTurnRunner(runnerCfg, t.ThreadID, turnID, t.cm, run.events)
-	runner.setPendingInputDrainer(t)
-	runner.setReactLoopBranchPolicy(t)
-	t.current = run
-	t.runner = runner
-	if err := runner.Init(ctx); err != nil {
-		run.complete(err)
+	turn := newTurn(turnID, input, inputMeta, opts)
+	turn.runner = NewTurnRunner(runnerCfg, t.ThreadID, turnID, t.cm, turn.events)
+	turn.runner.setPendingInputDrainer(t)
+	turn.runner.setReactLoopBranchPolicy(t)
+	t.current = turn
+	if err := turn.runner.Init(ctx); err != nil {
+		turn.complete(err)
 		t.current = nil
-		t.runner = nil
-		return nil, nil, err
+		return nil, err
 	}
-	go t.forwardRunEvents(run)
-	return run, runner, nil
+	go t.forwardRunEvents(turn)
+	return turn, nil
 }
 
-func (t *DeepAgentThread) curTurnLocked(run *activeRun) *TurnHandle {
-	if run == nil {
+func (t *DeepAgentThread) curTurnLocked(turn *turn) *TurnHandle {
+	if turn == nil {
 		return nil
 	}
-	return &TurnHandle{owner: t, run: run}
+	return &TurnHandle{owner: t, turn: turn}
 }
 
 func (t *DeepAgentThread) Interrupt(opts InterruptOptions) bool {
 	t.mu.Lock()
-	runner := t.runner
+	var runner *TurnRunner
+	if t.current != nil {
+		runner = t.current.runner
+	}
 	t.mu.Unlock()
 	if runner == nil {
 		return false
@@ -477,13 +477,13 @@ func (t *DeepAgentThread) Interrupt(opts InterruptOptions) bool {
 	return runner.InterruptWithOptions(opts)
 }
 
-func (t *DeepAgentThread) consumedInputsSnapshot(run *activeRun) ([]*schema.Message, []any) {
+func (t *DeepAgentThread) consumedInputsSnapshot(turn *turn) ([]*schema.Message, []any) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	if run == nil || len(run.consumed) == 0 {
+	if turn == nil || len(turn.consumed) == 0 {
 		return nil, nil
 	}
-	return copyMessages(run.consumed), copyConsumedInputsMeta(run.consumedInputsMeta)
+	return copyMessages(turn.consumed), copyConsumedInputsMeta(turn.consumedInputsMeta)
 }
 
 func copyConsumedInputsMeta(in []any) []any {
@@ -590,13 +590,13 @@ func buildSubmitInputOptions(opts []SubmitInputOption) SubmitInputOptions {
 
 func (t *DeepAgentThread) DrainInput(ctx context.Context) []*schema.Message {
 	t.mu.Lock()
-	run := t.current
-	if run == nil {
+	turn := t.current
+	if turn == nil {
 		t.mu.Unlock()
 		return nil
 	}
-	msgs := run.drainInput()
-	runner := t.runner
+	msgs := turn.drainInput()
+	runner := turn.runner
 	t.mu.Unlock()
 	if len(msgs) > 0 && runner != nil {
 		runner.emitEvent(ctx, EventPendingInputProcessingStarted, PendingInputProcessingStartedPayload{

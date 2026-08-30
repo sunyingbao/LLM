@@ -7,7 +7,7 @@ install_dir="${SGADK_INSTALL_DIR:-${HOME}/.local/bin}"
 
 mkdir -p "${bin_dir}" "${install_dir}"
 
-(cd "${repo_root}" && go build -o "${bin_dir}/sgadk" ./cmd/sgadk)
+(cd "${repo_root}" && go build -o "${bin_dir}/sgadk" ./deepagent/cmd/deepagent)
 
 cat >"${install_dir}/sgadk" <<EOF
 #!/usr/bin/env bash

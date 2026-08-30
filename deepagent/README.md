@@ -4,9 +4,9 @@
 Agent loop、长生命周期 thread、分布式 worker 和 CloudAgent 接入统一在同一套
 定义、运行时协议和 timeline 语义下。
 
-根目录 `cmd/sgadk` 是本地产品入口；本目录下的 `cmd/deepagent` 和
-`cmd/cloud_agent` 是 SDK 示例与服务端参考实现。它们都复用这里的执行核心，不再
-各自维护 Agent loop。
+`cmd/deepagent` 是统一的本地产品入口：默认复用 SGADK 的 YAML 配置、session、sandbox、
+local/remote runtime 和交互 TUI；一次性 prompt、stdin、thread resume 等 DeepAgent
+能力仍然可用。`cmd/cloud_agent` 是服务端参考实现。它们都复用这里的执行核心。
 
 ## 主要模块
 
@@ -50,7 +50,14 @@ Agent loop、长生命周期 thread、分布式 worker 和 CloudAgent 接入统�
 export DEEPSEEK_API_KEY=<your-key>
 export OPENAI_MODEL=<model>
 
+# 默认启动统一 SGADK runtime/TUI（可用 --root 或 SGADK_ROOT 指定仓库根目录）
+go run ./cmd/deepagent
+
+# 保留 DeepAgent 的一次性执行能力
 go run ./cmd/deepagent -workdir=. -prompt "读取 README.md，总结这个仓库的主要模块"
+
+# 需要旧版 Bubble Tea 本地 CLI 时显式开启兼容模式
+go run ./cmd/deepagent --legacy -prompt "执行一次本地任务"
 ```
 
 CloudAgent 本地三服务链路：

@@ -17,13 +17,15 @@ const (
 	runStatusErrored runStatus = "errored"
 )
 
-// activeRun contains all mutable state belonging to one logical turn.
+// turn contains all mutable state belonging to one logical turn, including the
+// executor that owns its DeepAgent graph.
 // DeepAgentThread.mu protects status, pending input, and consumed input
 // snapshots; the run's channels coordinate execution and event draining.
-type activeRun struct {
+type turn struct {
 	turnID string
 	input  *Message
 	opts   *ResumeTurnOptions
+	runner *TurnRunner
 
 	status   runStatus
 	pending  []*schema.Message
@@ -38,8 +40,8 @@ type activeRun struct {
 	runErr        error
 }
 
-func newActiveRun(turnID string, input *Message, inputMeta any, opts *ResumeTurnOptions) *activeRun {
-	run := &activeRun{
+func newTurn(turnID string, input *Message, inputMeta any, opts *ResumeTurnOptions) *turn {
+	run := &turn{
 		turnID:        turnID,
 		input:         graph.CopyMessage(input),
 		opts:          copyResumeTurnOptions(opts),
@@ -55,11 +57,11 @@ func newActiveRun(turnID string, input *Message, inputMeta any, opts *ResumeTurn
 	return run
 }
 
-func (r *activeRun) isActive() bool {
+func (r *turn) isActive() bool {
 	return r.status == runStatusRunning || r.status == runStatusEnding
 }
 
-func (r *activeRun) enqueueInput(input *Message, inputMeta any) error {
+func (r *turn) enqueueInput(input *Message, inputMeta any) error {
 	if input == nil {
 		return ErrInvalidOp
 	}
@@ -73,7 +75,7 @@ func (r *activeRun) enqueueInput(input *Message, inputMeta any) error {
 	return nil
 }
 
-func (r *activeRun) drainInput() []*schema.Message {
+func (r *turn) drainInput() []*schema.Message {
 	if len(r.pending) == 0 {
 		return nil
 	}
@@ -83,7 +85,7 @@ func (r *activeRun) drainInput() []*schema.Message {
 	return out
 }
 
-func (r *activeRun) commitEndIfNoPending() bool {
+func (r *turn) commitEndIfNoPending() bool {
 	if len(r.pending) > 0 {
 		return false
 	}
@@ -93,7 +95,7 @@ func (r *activeRun) commitEndIfNoPending() bool {
 	return true
 }
 
-func (r *activeRun) complete(err error) {
+func (r *turn) complete(err error) {
 	r.runErr = err
 	if err != nil {
 		r.status = runStatusErrored
@@ -104,11 +106,11 @@ func (r *activeRun) complete(err error) {
 	close(r.done)
 }
 
-func (r *activeRun) err() error {
+func (r *turn) err() error {
 	return r.runErr
 }
 
-func (r *activeRun) turnRunOptions() *TurnRunOptions {
+func (r *turn) turnRunOptions() *TurnRunOptions {
 	if r.opts == nil {
 		return nil
 	}

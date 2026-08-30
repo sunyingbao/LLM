@@ -22,9 +22,9 @@ deepagent/
   internal/          implementation details that are not public contracts
 ```
 
-SGADK remains outside this directory only where it is a product shell:
-`cmd/sgadk`, TUI rendering, configuration loading and session catalog storage.
-It must consume `deepagent/runtime`; it must not own a second model loop,
+SGADK product-shell startup is now implemented by `deepagent/cmd/deepagent`;
+TUI rendering, configuration loading and session catalog storage remain shared
+backend capabilities. It must consume `deepagent/runtime`; it must not own a second model loop,
 middleware stack, tool registry or memory implementation.
 
 ## Migration invariants

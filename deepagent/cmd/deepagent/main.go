@@ -6,15 +6,20 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"code.byted.org/gopkg/logs/v2"
 	"code.byted.org/gopkg/logs/v2/writer"
+	backendconfig "eino-cli/backend/config"
 )
 
 const defaultUserID int64 = 1
 
 type AppConfig struct {
+	RootDir        string
+	SGADKConfig    *backendconfig.Config
+	Legacy         bool
 	UserID         int64
 	WorkDir        string
 	SkillsDir      string
@@ -30,6 +35,8 @@ type AppConfig struct {
 
 func parseFlags() AppConfig {
 	var cfg AppConfig
+	flag.StringVar(&cfg.RootDir, "root", "", "LLM repository root (defaults to SGADK_ROOT or current directory)")
+	flag.BoolVar(&cfg.Legacy, "legacy", false, "use the legacy local CLI instead of the unified SGADK runtime")
 	flag.Int64Var(&cfg.UserID, "user_id", defaultUserID, "本地用户 ID，用于隔离 thread/session")
 	flag.StringVar(&cfg.WorkDir, "workdir", ".", "工作目录")
 	flag.StringVar(&cfg.SkillsDir, "skills", "", "技能目录路径")
@@ -93,8 +100,38 @@ func initLogger() {
 }
 
 func main() {
-	initLogger()
 	cfg := parseFlags()
+	root, err := resolveRoot(cfg.RootDir)
+	if err != nil {
+		fmt.Printf("解析仓库根目录失败: %v\n", err)
+		os.Exit(1)
+	}
+	if err := os.Chdir(root); err != nil {
+		fmt.Printf("进入仓库根目录失败: %v\n", err)
+		os.Exit(1)
+	}
+	loadedConfig, err := backendconfig.Load(root)
+	if err != nil {
+		if !cfg.Legacy {
+			fmt.Printf("加载 yaml/config.yaml 失败: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("加载 yaml/config.yaml 失败，legacy 模式继续使用环境变量: %v\n", err)
+	} else {
+		backendconfig.SetLogLevel(loadedConfig)
+	}
+	cfg.RootDir = root
+	cfg.SGADKConfig = loadedConfig
+	initLogger()
+
+	if !cfg.Legacy && strings.TrimSpace(cfg.Prompt) == "" && !cfg.ReadFromStdin &&
+		len(flag.Args()) == 0 && strings.TrimSpace(cfg.ResumeThreadID) == "" && !cfg.AutoResume {
+		if err := runUnifiedCLI(context.Background(), loadedConfig); err != nil {
+			fmt.Printf("运行统一 CLI 失败: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
 
 	app, err := NewApp(context.Background(), cfg)
 	if err != nil {
@@ -102,4 +139,16 @@ func main() {
 		os.Exit(1)
 	}
 	os.Exit(app.Run(context.Background(), flag.Args()))
+}
+
+func resolveRoot(flagRoot string) (root string, err error) {
+	root = strings.TrimSpace(flagRoot)
+	if root == "" {
+		root = strings.TrimSpace(os.Getenv("SGADK_ROOT"))
+	}
+	if root == "" {
+		root, err = os.Getwd()
+		return root, err
+	}
+	return filepath.Abs(root)
 }
