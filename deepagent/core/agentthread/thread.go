@@ -29,6 +29,8 @@ type DeepAgentThread struct {
 	turnIDProvider TurnIDProvider
 }
 
+// Constructors and lifecycle
+
 // NewThread creates a DeepAgentThread with the SDK's default context manager.
 func NewThread(threadID string, runnerCfg *TurnRunnerConfig, eventBus chan Event, opts DefaultThreadOptions, threadOpts ...Option) *DeepAgentThread {
 	cmOpts := []MemoryContextManagerOption{}
@@ -62,9 +64,6 @@ func New(threadID string, cfg *TurnRunnerConfig, cm ContextManager, eventBus cha
 			opt(t)
 		}
 	}
-	if t.cfg == nil {
-		t.cfg = &TurnRunnerConfig{}
-	}
 	return t
 }
 
@@ -91,6 +90,8 @@ func (t *DeepAgentThread) CompactWithTurnID(ctx context.Context, turnID string) 
 	}
 	return t.cm.Compact(ctx, turnID)
 }
+
+// Input and turn control
 
 // ActiveTurn returns the thread's currently active turn, if any.
 func (t *DeepAgentThread) ActiveTurn() *TurnHandle {
@@ -157,28 +158,6 @@ func (t *DeepAgentThread) SubmitInput(ctx context.Context, input *Message, opts 
 	return &result, nil
 }
 
-func (t *DeepAgentThread) resolveTurnRunnerConfig(ctx context.Context, req TurnRunnerConfigRequest, explicit *TurnRunnerConfig, resolver TurnRunnerConfigResolver) (*TurnRunnerConfig, error) {
-	if explicit != nil {
-		return explicit.Clone(), nil
-	}
-	base := t.cfg.Clone()
-	if resolver == nil {
-		return base, nil
-	}
-	req.ThreadID = t.ThreadID
-	req.Input = graph.CopyMessage(req.Input)
-	req.Resume = copyResumeTurnConfigRequest(req.Resume)
-	req.Base = base.Clone()
-	cfg, err := resolver(ctx, req)
-	if err != nil {
-		return nil, err
-	}
-	if cfg == nil {
-		return base, nil
-	}
-	return cfg.Clone(), nil
-}
-
 // ResumeTurn resumes a checkpoint/interruption-bound turn. Unlike SubmitInput,
 // resume must target an existing turn ID and is never queued into an active turn.
 func (t *DeepAgentThread) ResumeTurn(ctx context.Context, turnID string, opts ResumeTurnOptions) (*TurnHandle, error) {
@@ -209,6 +188,63 @@ func (t *DeepAgentThread) ResumeTurn(ctx context.Context, turnID string, opts Re
 
 	go t.executeTurn(runCtx, turn)
 	return curTurn, nil
+}
+
+// Interrupt requests cancellation of the active turn.
+func (t *DeepAgentThread) Interrupt(opts InterruptOptions) bool {
+	t.mu.Lock()
+	var runner *TurnRunner
+	if t.current != nil {
+		runner = t.current.runner
+	}
+	t.mu.Unlock()
+	if runner == nil {
+		return false
+	}
+	return runner.InterruptWithOptions(opts)
+}
+
+// DrainInput removes pending inputs from the active turn for processing by its runner.
+func (t *DeepAgentThread) DrainInput(ctx context.Context) []*schema.Message {
+	t.mu.Lock()
+	turn := t.current
+	if turn == nil {
+		t.mu.Unlock()
+		return nil
+	}
+	msgs := turn.drainInput()
+	runner := turn.runner
+	t.mu.Unlock()
+	if len(msgs) > 0 && runner != nil {
+		runner.emitEvent(ctx, EventPendingInputProcessingStarted, PendingInputProcessingStartedPayload{
+			Inputs: copyMessages(msgs),
+		})
+	}
+	return msgs
+}
+
+// Turn creation and runner setup
+
+func (t *DeepAgentThread) resolveTurnRunnerConfig(ctx context.Context, req TurnRunnerConfigRequest, explicit *TurnRunnerConfig, resolver TurnRunnerConfigResolver) (*TurnRunnerConfig, error) {
+	if explicit != nil {
+		return explicit.Clone(), nil
+	}
+	base := t.cfg.Clone()
+	if resolver == nil {
+		return base, nil
+	}
+	req.ThreadID = t.ThreadID
+	req.Input = graph.CopyMessage(req.Input)
+	req.Resume = copyResumeTurnConfigRequest(req.Resume)
+	req.Base = base.Clone()
+	cfg, err := resolver(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	if cfg == nil {
+		return base, nil
+	}
+	return cfg.Clone(), nil
 }
 
 func (t *DeepAgentThread) prepareTurnStartContext(ctx context.Context, request turnStartRequest) context.Context {
@@ -249,62 +285,7 @@ func (t *DeepAgentThread) newTurnRunner(run *turn, cfg *TurnRunnerConfig) *TurnR
 	return runner
 }
 
-func (t *DeepAgentThread) curTurnLocked(turn *turn) *TurnHandle {
-	if turn == nil {
-		return nil
-	}
-	return &TurnHandle{owner: t, turn: turn}
-}
-
-func (t *DeepAgentThread) Interrupt(opts InterruptOptions) bool {
-	t.mu.Lock()
-	var runner *TurnRunner
-	if t.current != nil {
-		runner = t.current.runner
-	}
-	t.mu.Unlock()
-	if runner == nil {
-		return false
-	}
-	return runner.InterruptWithOptions(opts)
-}
-
-func (t *DeepAgentThread) consumedInputsSnapshot(turn *turn) ([]*schema.Message, []any) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	if turn == nil || len(turn.consumed) == 0 {
-		return nil, nil
-	}
-	return copyMessages(turn.consumed), copyConsumedInputsMeta(turn.consumedInputsMeta)
-}
-
-func (t *DeepAgentThread) newTurnID(ctx context.Context, input *Message) string {
-	if t.turnIDProvider == nil {
-		return defaultTurnIDProvider(ctx, t.ThreadID, input)
-	}
-	if turnID := t.turnIDProvider(ctx, t.ThreadID, graph.CopyMessage(input)); turnID != "" {
-		return turnID
-	}
-	return defaultTurnIDProvider(ctx, t.ThreadID, input)
-}
-
-func (t *DeepAgentThread) DrainInput(ctx context.Context) []*schema.Message {
-	t.mu.Lock()
-	turn := t.current
-	if turn == nil {
-		t.mu.Unlock()
-		return nil
-	}
-	msgs := turn.drainInput()
-	runner := turn.runner
-	t.mu.Unlock()
-	if len(msgs) > 0 && runner != nil {
-		runner.emitEvent(ctx, EventPendingInputProcessingStarted, PendingInputProcessingStartedPayload{
-			Inputs: copyMessages(msgs),
-		})
-	}
-	return msgs
-}
+// Execution and event forwarding
 
 // executeTurn executes one logical turn, drains all turn-local events, and only then
 // releases the thread's active-run slot. Keeping this sequence together makes
@@ -334,6 +315,33 @@ func (t *DeepAgentThread) forwardRunEvents(turn *turn) {
 				t.ThreadID, turn.turnID, ev.Type, elapsed, runQueueLen, runQueueCap, threadQueueLen, threadQueueCap)
 		}
 	}
+}
+
+// Completion and state helpers
+func (t *DeepAgentThread) curTurnLocked(turn *turn) *TurnHandle {
+	if turn == nil {
+		return nil
+	}
+	return &TurnHandle{owner: t, turn: turn}
+}
+
+func (t *DeepAgentThread) consumedInputsSnapshot(turn *turn) ([]*schema.Message, []any) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if turn == nil || len(turn.consumed) == 0 {
+		return nil, nil
+	}
+	return copyMessages(turn.consumed), copyConsumedInputsMeta(turn.consumedInputsMeta)
+}
+
+func (t *DeepAgentThread) newTurnID(ctx context.Context, input *Message) string {
+	if t.turnIDProvider == nil {
+		return defaultTurnIDProvider(ctx, t.ThreadID, input)
+	}
+	if turnID := t.turnIDProvider(ctx, t.ThreadID, graph.CopyMessage(input)); turnID != "" {
+		return turnID
+	}
+	return defaultTurnIDProvider(ctx, t.ThreadID, input)
 }
 
 // finishTurn closes the logical turn and clears the thread's current turn only
