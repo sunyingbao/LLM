@@ -44,18 +44,40 @@ func buildChatModel(
 	case "claude", "anthropic":
 		return buildClaudeChatModel(ctx, modelConfig, apiKey, timeout, modelConfig.SupportsThinking)
 	case "openai":
-		return openaimodel.NewChatModel(ctx, &openaimodel.ChatModelConfig{
+		openAIConfig := &openaimodel.ChatModelConfig{
 			APIKey:          apiKey,
 			Model:           strings.TrimSpace(modelConfig.Model),
 			BaseURL:         strings.TrimSpace(modelConfig.BaseURL),
 			Timeout:         timeout,
 			ReasoningEffort: parseReasoningEffort(modelConfig.ReasoningEffort),
-		})
+		}
+		if strings.HasSuffix(strings.TrimRight(openAIConfig.BaseURL, "/"), "/crawl") {
+			openAIConfig.HTTPClient = &http.Client{Transport: &modelHubCrawlTransport{base: http.DefaultTransport}, Timeout: timeout}
+		}
+		return openaimodel.NewChatModel(ctx, openAIConfig)
 	case "kimi", "moonshot":
 		return buildKimiChatModel(ctx, modelConfig, apiKey, timeout)
 	default:
 		return nil, fmt.Errorf("unsupported model provider %q", modelConfig.Provider)
 	}
+}
+
+// modelHubCrawlTransport adapts the ModelHub crawl endpoint to the OpenAI SDK.
+// The SDK appends /chat/completions, while ModelHub expects the request at /crawl.
+type modelHubCrawlTransport struct {
+	base http.RoundTripper
+}
+
+func (transport *modelHubCrawlTransport) RoundTrip(req *http.Request) (resp *http.Response, err error) {
+	if transport == nil || transport.base == nil {
+		transport = &modelHubCrawlTransport{base: http.DefaultTransport}
+	}
+	cloned := req.Clone(req.Context())
+	urlCopy := *req.URL
+	path := strings.TrimSuffix(urlCopy.Path, "/chat/completions")
+	urlCopy.Path = path
+	cloned.URL = &urlCopy
+	return transport.base.RoundTrip(cloned)
 }
 
 // BuildToolCallingChatModel constructs the configured model for the unified
