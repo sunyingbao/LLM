@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"eino-cli/deepagent/core/utils"
+	serialiser "eino-cli/deepagent/serialiser"
 	"eino-cli/deepagent/worker"
 	inprocess "eino-cli/deepagent/worker/inprocess"
 	"github.com/google/uuid"
@@ -75,7 +75,7 @@ func (s *SQLiteEventStore) AppendEvent(ctx context.Context, ev *agentworker.Even
 		TurnID:       ev.TurnID,
 		Type:         string(ev.Type),
 		Payload:      append([]byte(nil), ev.Payload...),
-		MetadataJSON: utils.ToString(ev.Metadata),
+		MetadataJSON: serialiser.ToString(ev.Metadata),
 		TS:           ev.TS,
 	}
 	if row.TS.IsZero() {
@@ -108,7 +108,7 @@ func (s *SQLiteEventStore) ListEvents(ctx context.Context, threadID string, opts
 	}
 	out := make([]*agentworker.Event, 0, len(rows))
 	for _, row := range rows {
-		metadata, err := utils.ToStruct[map[string]string](row.MetadataJSON)
+		metadata, err := serialiser.ToStruct[map[string]string](row.MetadataJSON)
 		if err != nil {
 			return nil, err
 		}

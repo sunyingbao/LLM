@@ -47,8 +47,7 @@ local/remote runtime 和交互 TUI；一次性 prompt、stdin、thread resume �
 本地 CLI：
 
 ```bash
-export DEEPSEEK_API_KEY=<your-key>
-export OPENAI_MODEL=<model>
+export OPENAI_API_KEY=<your-key>
 
 # 默认启动统一 SGADK runtime/TUI（可用 --root 或 SGADK_ROOT 指定仓库根目录）
 go run ./cmd/deepagent

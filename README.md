@@ -30,6 +30,7 @@ backend/config/      SGADK 本地配置
 准备 `yaml/config.yaml` 后：
 
 ```bash
+export OPENAI_API_KEY=<your-openai-key>
 go run ./deepagent/cmd/deepagent --root /Users/bytedance/go/src/content/LLM
 ```
 

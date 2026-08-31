@@ -4,7 +4,7 @@ import (
 	"context"
 
 	deeptools "eino-cli/deepagent/core/tools"
-	sdkutils "eino-cli/deepagent/core/utils"
+	sdkutils "eino-cli/deepagent/serialiser"
 )
 
 func (m *ExecuteMiddleware) PolicyGate() deeptools.ToolPolicyGate {

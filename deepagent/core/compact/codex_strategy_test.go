@@ -9,6 +9,7 @@ import (
 	"eino-cli/deepagent/core/agentthread"
 	"eino-cli/deepagent/core/utils"
 	"eino-cli/deepagent/mock/mock_model"
+	serialiser "eino-cli/deepagent/serialiser"
 
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
@@ -276,7 +277,7 @@ func TestCodexStrategyRepeatedCompactThroughContextManagerSkipsPriorSummary(t *t
 func TestCodexStrategyResumeSanitizesPostCompactMessages(t *testing.T) {
 	strat := NewCodexStrategy(nil, 1, 2, nil)
 	summary := schema.UserMessage(summarizationPrefix + "\n\nsummary")
-	payload := utils.ToString(&codexStrategyPayload{
+	payload := serialiser.ToString(&codexStrategyPayload{
 		KeptUserMsgs: []*schema.Message{schema.UserMessage("original request")},
 	})
 	compact := &agentthread.CompactRecord{

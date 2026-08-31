@@ -711,3 +711,199 @@ func buildInterruptBatchItem(ictx *compose.InterruptCtx) InterruptBatchItem {
 
 	return item
 }
+
+// Clone returns a turn-local copy of the runner config.
+//
+// Dependency objects such as models, backends, stores, loaders, and middleware
+// instances are intentionally shared by reference. Container fields are copied
+// so turn-local edits cannot mutate the thread-level base config by appending to
+// slices or writing maps.
+func (c *TurnRunnerConfig) Clone() *TurnRunnerConfig {
+	if c == nil {
+		return &TurnRunnerConfig{}
+	}
+	out := *c
+	out.Tools = append([]tool.BaseTool(nil), c.Tools...)
+	if c.FilesystemConfig != nil {
+		fs := *c.FilesystemConfig
+		out.FilesystemConfig = &fs
+	}
+	if c.HITLConfig != nil {
+		hitl := *c.HITLConfig
+		hitl.NeedApproveTools = maps.Clone(c.HITLConfig.NeedApproveTools)
+		hitl.ToolPolicyGates = maps.Clone(c.HITLConfig.ToolPolicyGates)
+		hitl.NeedReviewAndEditTools = maps.Clone(c.HITLConfig.NeedReviewAndEditTools)
+		out.HITLConfig = &hitl
+	}
+	out.SubAgents = append([]*subagent.SubAgent(nil), c.SubAgents...)
+	out.InterruptAfterNodes = append([]string(nil), c.InterruptAfterNodes...)
+	out.Middlewares = append([]middleware.Middleware(nil), c.Middlewares...)
+	out.Callbacks = append([]callbacks.Handler(nil), c.Callbacks...)
+	return &out
+}
+
+// emitEvent is the single producer boundary for events emitted by one turn.
+// The event lock keeps closeEventBus from racing with late callbacks.
+func (r *TurnRunner) emitEvent(ctx context.Context, typ EventType, payload any) {
+	loc := eventLocationFromContext(ctx)
+	if loc == (EventLocation{}) && r.agent != nil {
+		loc = EventLocation{AgentName: r.agent.Name(), AgentDepth: r.agent.Depth()}
+	}
+	ev := Event{
+		Loc: loc, ID: r.eventIDProvider(ctx, r.threadID, r.turnID), TS: time.Now(),
+		ThreadID: r.threadID, TurnID: r.turnID, Type: typ, Payload: payload,
+	}
+	r.eventMu.RLock()
+	defer r.eventMu.RUnlock()
+	if r.eventClosed {
+		logs.CtxWarn(ctx, "[TurnRunner::emitEvent] drop late event after turn event channel closed: thread_id=%s turn_id=%s event_type=%s",
+			r.threadID, r.turnID, typ)
+		return
+	}
+	queueLen, queueCap, startedAt := len(r.eventBus), cap(r.eventBus), time.Now()
+	r.eventBus <- ev
+	if elapsed := time.Since(startedAt); elapsed > eventEnqueueWarnThreshold {
+		logs.CtxWarn(ctx, "[TurnRunner::emitEvent] slow event enqueue: thread_id=%s turn_id=%s event_type=%s elapsed=%s queue_len_before=%d queue_cap=%d",
+			r.threadID, r.turnID, typ, elapsed, queueLen, queueCap)
+	}
+}
+
+// closeEventBus closes the turn-local event stream exactly once. The thread
+// waits for the forwarding goroutine before declaring the turn complete.
+func (r *TurnRunner) closeEventBus() {
+	r.eventMu.Lock()
+	defer r.eventMu.Unlock()
+	if r.eventClosed {
+		return
+	}
+	r.eventClosed = true
+	close(r.eventBus)
+}
+
+// Interrupt requests an interruption of the currently running DeepAgent graph.
+// A nil timeout uses Eino's default interrupt behavior.
+func (r *TurnRunner) Interrupt(timeout *time.Duration) bool {
+	return r.InterruptWithOptions(InterruptOptions{Timeout: timeout})
+}
+
+// InterruptWithOptions records external interrupt metadata before asking
+// DeepAgent to stop. The metadata is consumed when RunTurn translates the
+// graph interrupt into an agentthread event.
+func (r *TurnRunner) InterruptWithOptions(opts InterruptOptions) bool {
+	r.mu.Lock()
+	agent := r.agent
+	if agent == nil {
+		r.mu.Unlock()
+		return false
+	}
+	r.interruptOpts = InterruptOptions{Timeout: opts.Timeout, Metadata: maps.Clone(opts.Metadata)}
+	r.interruptActive = true
+	r.mu.Unlock()
+	if opts.Timeout == nil {
+		return agent.Interrupt()
+	}
+	return agent.Interrupt(compose.WithGraphInterruptTimeout(*opts.Timeout))
+}
+
+func (r *TurnRunner) beginModelEventBarrier(ctx context.Context) *modelEventBarrier {
+	if r.cfg != nil && r.cfg.EnableStreamToolCall {
+		return nil
+	}
+	barrier := newModelEventBarrier()
+	r.modelBarrierMu.Lock()
+	if r.modelBarrier != nil {
+		r.modelBarrier.release()
+		logs.CtxWarn(ctx, "[TurnRunner::modelBarrier] release stale model barrier before new model call: thread_id=%s turn_id=%s", r.threadID, r.turnID)
+	}
+	r.modelBarrier = barrier
+	r.modelBarrierMu.Unlock()
+	return barrier
+}
+
+func (r *TurnRunner) currentModelEventBarrier() *modelEventBarrier {
+	if r.cfg != nil && r.cfg.EnableStreamToolCall {
+		return nil
+	}
+	r.modelBarrierMu.Lock()
+	defer r.modelBarrierMu.Unlock()
+	return r.modelBarrier
+}
+
+func (r *TurnRunner) releaseModelEventBarrier(barrier *modelEventBarrier) {
+	if barrier == nil {
+		return
+	}
+	barrier.release()
+	r.modelBarrierMu.Lock()
+	if r.modelBarrier == barrier {
+		r.modelBarrier = nil
+	}
+	r.modelBarrierMu.Unlock()
+}
+
+func (r *TurnRunner) waitModelEventBarrier(ctx context.Context) bool {
+	barrier := r.currentModelEventBarrier()
+	if barrier == nil {
+		return true
+	}
+	startedAt := time.Now()
+	select {
+	case <-barrier.done:
+	case <-ctx.Done():
+		logs.CtxWarn(ctx, "[TurnRunner::modelBarrier] stop waiting for llm_end before tool start: thread_id=%s turn_id=%s err=%v", r.threadID, r.turnID, ctx.Err())
+		return false
+	}
+	if elapsed := time.Since(startedAt); elapsed > modelBarrierWaitWarnThreshold {
+		logs.CtxWarn(ctx, "[TurnRunner::modelBarrier] waited for llm_end before tool start: thread_id=%s turn_id=%s elapsed=%s", r.threadID, r.turnID, elapsed)
+	}
+	return true
+}
+
+func (r *TurnRunner) toolState(callID, name string) *toolEventState {
+	key := toolEventKey(callID, name)
+	if state, ok := r.toolEventMw.store.load(key); ok {
+		if state.name == "" {
+			state.name = name
+		}
+		if state.callID == "" {
+			state.callID = callID
+		}
+		return state
+	}
+	return r.toolEventMw.store.loadOrStore(key, &toolEventState{name: name, callID: callID})
+}
+
+func (r *TurnRunner) lookupOrCreateToolState(callID, name string) *toolEventState {
+	if callID != "" {
+		return r.toolState(callID, name)
+	}
+	if state := r.findPendingToolStateByName(name); state != nil {
+		return state
+	}
+	return r.toolState(callID, name)
+}
+
+func (r *TurnRunner) findPendingToolStateByName(name string) *toolEventState {
+	var ret *toolEventState
+	r.toolEventMw.store.rangeStates(func(_ string, state *toolEventState) bool {
+		if state.name == name && state.isPendingStreamBinding() {
+			ret = state
+			return false
+		}
+		return true
+	})
+	return ret
+}
+
+func (r *TurnRunner) emitToolEnd(ctx context.Context, state *toolEventState, result string) {
+	if state == nil || !state.markEndEmitted() {
+		return
+	}
+	snapshot := state.snapshot()
+	r.emitEvent(ctx, EventToolEnd, ToolEndPayload{
+		Name: snapshot.name, CallID: snapshot.callID, ToolStartTime: snapshot.toolStartTime,
+		ArgumentsInJSON: snapshot.argumentsInJSON, Result: result,
+	})
+	// Keep state for interrupt resume: persisted start/end flags prevent
+	// duplicate tool events when callbacks are replayed.
+}

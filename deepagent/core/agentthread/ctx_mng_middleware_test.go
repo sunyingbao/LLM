@@ -18,7 +18,7 @@ type recordingContextManager struct {
 	compactErr        error
 	compactCalls      []int
 	forceCompactCalls []int
-	forceCompactTurn []string
+	forceCompactTurn  []string
 	usage             ContextUsageSnapshot
 }
 

@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"eino-cli/deepagent/core/utils"
+	serialiser "eino-cli/deepagent/serialiser"
 	"eino-cli/deepagent/worker"
 	inprocess "eino-cli/deepagent/worker/inprocess"
 	"github.com/google/uuid"
@@ -107,9 +107,9 @@ func (s *SQLiteThreadStateStore) CreateThread(ctx context.Context, spec inproces
 		ParentThreadID: spec.ParentThreadID,
 		RootThreadID:   rootID,
 		Title:          spec.Title,
-		ProfileJSON:    utils.ToString(spec.Profile),
+		ProfileJSON:    serialiser.ToString(spec.Profile),
 		Cwd:            spec.Profile.Cwd,
-		MetadataJSON:   utils.ToString(spec.Metadata),
+		MetadataJSON:   serialiser.ToString(spec.Metadata),
 		CreatedAt:      now,
 		UpdatedAt:      now,
 	}
@@ -226,14 +226,14 @@ func (s *SQLiteThreadStateStore) UpdateThread(ctx context.Context, threadID stri
 		}
 		profile := current.Profile
 		profile.Cwd = *patch.Cwd
-		updates["profile"] = utils.ToString(profile)
+		updates["profile"] = serialiser.ToString(profile)
 		updates["cwd"] = *patch.Cwd
 	}
 	if patch.Metadata != nil {
-		updates["metadata_json"] = utils.ToString(patch.Metadata)
+		updates["metadata_json"] = serialiser.ToString(patch.Metadata)
 	}
 	if patch.PendingBlock != nil {
-		updates["pending_block_json"] = utils.ToString(patch.PendingBlock)
+		updates["pending_block_json"] = serialiser.ToString(patch.PendingBlock)
 	} else if patch.ClearPendingBlock {
 		updates["pending_block_json"] = ""
 	}
@@ -251,11 +251,11 @@ func (s *SQLiteThreadStateStore) UpdateThread(ctx context.Context, threadID stri
 }
 
 func (r threadStateRow) toThreadState() (*inprocess.ThreadState, error) {
-	metadata, err := utils.ToStruct[map[string]string](r.MetadataJSON)
+	metadata, err := serialiser.ToStruct[map[string]string](r.MetadataJSON)
 	if err != nil {
 		return nil, err
 	}
-	profile, err := utils.ToStruct[inprocess.ThreadProfile](r.ProfileJSON)
+	profile, err := serialiser.ToStruct[inprocess.ThreadProfile](r.ProfileJSON)
 	if err != nil {
 		return nil, err
 	}
@@ -264,7 +264,7 @@ func (r threadStateRow) toThreadState() (*inprocess.ThreadState, error) {
 	}
 	var pendingBlock *agentworker.PendingBlock
 	if strings.TrimSpace(r.PendingBlock) != "" {
-		block, err := utils.ToStruct[agentworker.PendingBlock](r.PendingBlock)
+		block, err := serialiser.ToStruct[agentworker.PendingBlock](r.PendingBlock)
 		if err != nil {
 			return nil, err
 		}

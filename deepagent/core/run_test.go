@@ -6,8 +6,8 @@ import (
 	"eino-cli/deepagent/core/middleware"
 	"eino-cli/deepagent/core/middleware/contextmanager"
 	"eino-cli/deepagent/core/middleware/plan"
-	"eino-cli/deepagent/core/utils"
 	"eino-cli/deepagent/mock/mock_model"
+	serialiser "eino-cli/deepagent/serialiser"
 	"errors"
 	"fmt"
 	"github.com/cloudwego/eino/components/model"
@@ -230,7 +230,7 @@ func TestDeepAgent_StreamSimple(t *testing.T) {
 					ID: randStr(),
 					Function: schema.FunctionCall{
 						Name:      fakeToolInfo.Name,
-						Arguments: utils.ToString(&fakeToolCounterReq{Delta: 1}),
+						Arguments: serialiser.ToString(&fakeToolCounterReq{Delta: 1}),
 					},
 				},
 			}),
@@ -240,7 +240,7 @@ func TestDeepAgent_StreamSimple(t *testing.T) {
 					ID: randStr(),
 					Function: schema.FunctionCall{
 						Name:      fakeToolInfo.Name,
-						Arguments: utils.ToString(&fakeToolCounterReq{Delta: 1}),
+						Arguments: serialiser.ToString(&fakeToolCounterReq{Delta: 1}),
 					},
 				},
 			}),
@@ -250,14 +250,14 @@ func TestDeepAgent_StreamSimple(t *testing.T) {
 					ID: randStr(),
 					Function: schema.FunctionCall{
 						Name:      fakeToolInfo.Name,
-						Arguments: utils.ToString(&fakeToolCounterReq{Delta: 1}),
+						Arguments: serialiser.ToString(&fakeToolCounterReq{Delta: 1}),
 					},
 				},
 				{
 					ID: randStr(),
 					Function: schema.FunctionCall{
 						Name:      fakeToolInfo.Name,
-						Arguments: utils.ToString(&fakeToolCounterReq{Delta: 1}),
+						Arguments: serialiser.ToString(&fakeToolCounterReq{Delta: 1}),
 					},
 				},
 			}),
@@ -335,7 +335,7 @@ func TestDeepAgentMaxModelCallsStopsBeforeNextModelCall(t *testing.T) {
 				ID: randStr(),
 				Function: schema.FunctionCall{
 					Name:      fakeToolInfo.Name,
-					Arguments: utils.ToString(&fakeToolCounterReq{Delta: 1}),
+					Arguments: serialiser.ToString(&fakeToolCounterReq{Delta: 1}),
 				},
 			}}), nil
 		},
@@ -562,7 +562,7 @@ func TestDeepAgent_RunCanEndAfterToolsWithoutSecondModelTurn(t *testing.T) {
 					ID: randStr(),
 					Function: schema.FunctionCall{
 						Name:      fakeToolInfo.Name,
-						Arguments: utils.ToString(&fakeToolCounterReq{Delta: 2}),
+						Arguments: serialiser.ToString(&fakeToolCounterReq{Delta: 2}),
 					},
 				}}), nil
 		}).Times(1)
@@ -613,7 +613,7 @@ func TestDeepAgent_ToolNodeHandlers_NonStream(t *testing.T) {
 	preHandler := func(ctx context.Context, input *schema.Message) (*schema.Message, error) {
 		copied := *input
 		copied.ToolCalls = append([]schema.ToolCall(nil), input.ToolCalls...)
-		copied.ToolCalls[0].Function.Arguments = utils.ToString(&fakeToolCounterReq{Delta: 3})
+		copied.ToolCalls[0].Function.Arguments = serialiser.ToString(&fakeToolCounterReq{Delta: 3})
 		return &copied, nil
 	}
 	postHandler := func(ctx context.Context, output []*schema.Message) ([]*schema.Message, error) {
@@ -635,7 +635,7 @@ func TestDeepAgent_ToolNodeHandlers_NonStream(t *testing.T) {
 						ID: randStr(),
 						Function: schema.FunctionCall{
 							Name:      fakeToolInfo.Name,
-							Arguments: utils.ToString(&fakeToolCounterReq{Delta: 1}),
+							Arguments: serialiser.ToString(&fakeToolCounterReq{Delta: 1}),
 						},
 					}}), nil
 			case 2:
@@ -694,7 +694,7 @@ func TestDeepAgent_ToolNodePreHandlerError_NonStream(t *testing.T) {
 				ID: randStr(),
 				Function: schema.FunctionCall{
 					Name:      fakeToolInfo.Name,
-					Arguments: utils.ToString(&fakeToolCounterReq{Delta: 1}),
+					Arguments: serialiser.ToString(&fakeToolCounterReq{Delta: 1}),
 				},
 			}}), nil).Times(1)
 
@@ -740,7 +740,7 @@ func TestDeepAgent_ToolNodeHandlers_IgnoredWhenStreamToolCallEnabled(t *testing.
 						ID: randStr(),
 						Function: schema.FunctionCall{
 							Name:      fakeToolInfo.Name,
-							Arguments: utils.ToString(&fakeToolCounterReq{Delta: 1}),
+							Arguments: serialiser.ToString(&fakeToolCounterReq{Delta: 1}),
 						},
 					}}), nil)
 			case 2:

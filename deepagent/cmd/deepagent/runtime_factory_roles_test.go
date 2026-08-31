@@ -12,7 +12,7 @@ import (
 	execmw "eino-cli/deepagent/core/middleware/execute"
 	"eino-cli/deepagent/core/middleware/planmode"
 	deeptools "eino-cli/deepagent/core/tools"
-	sdkutils "eino-cli/deepagent/core/utils"
+	sdkutils "eino-cli/deepagent/serialiser"
 	inprocess "eino-cli/deepagent/worker/inprocess"
 	"github.com/cloudwego/eino/schema"
 )

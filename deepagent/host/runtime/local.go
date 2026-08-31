@@ -6,7 +6,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -40,18 +39,6 @@ import (
 )
 
 const localDefinitionVersion = "v1"
-
-type LocalRuntime struct {
-	cfg         *config.Config
-	router      *sdkruntime.Router
-	sessionID   string
-	definition  agentdefinition.Definition
-	modelName   string
-	runtimeKind sdkruntime.RuntimeKind
-	mu          sync.Mutex
-	threadRef   sdkruntime.GlobalThreadRef
-	planMode    bool
-}
 
 func NewLocalRuntime(ctx context.Context, cfg *config.Config, sessionID string) (runtime *LocalRuntime, err error) {
 	if cfg == nil {

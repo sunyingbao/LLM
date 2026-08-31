@@ -1,7 +1,6 @@
 package agentthread
 
 import (
-	"context"
 	"strings"
 	"sync"
 	"time"
@@ -28,63 +27,6 @@ type toolEventSnapshot struct {
 	callID          string
 	toolStartTime   time.Time
 	argumentsInJSON string
-}
-
-func (r *TurnRunner) toolState(callID, name string) *toolEventState {
-	key := toolEventKey(callID, name)
-	if state, ok := r.toolEventMw.store.load(key); ok {
-		if state.name == "" {
-			state.name = name
-		}
-		if state.callID == "" {
-			state.callID = callID
-		}
-		return state
-	}
-	ts := &toolEventState{name: name, callID: callID}
-	actual := r.toolEventMw.store.loadOrStore(key, ts)
-	return actual
-}
-
-func (r *TurnRunner) lookupOrCreateToolState(callID, name string) *toolEventState {
-	if callID != "" {
-		return r.toolState(callID, name)
-	}
-	if state := r.findPendingToolStateByName(name); state != nil {
-		return state
-	}
-	return r.toolState(callID, name)
-}
-
-func (r *TurnRunner) findPendingToolStateByName(name string) *toolEventState {
-	var ret *toolEventState
-	r.toolEventMw.store.rangeStates(func(_ string, state *toolEventState) bool {
-		if state.name == name && state.isPendingStreamBinding() {
-			ret = state
-			return false
-		}
-		return true
-	})
-	return ret
-}
-
-func (r *TurnRunner) emitToolEnd(ctx context.Context, state *toolEventState, result string) {
-	if state == nil {
-		return
-	}
-	if !state.markEndEmitted() {
-		return
-	}
-	snapshot := state.snapshot()
-	r.emitEvent(ctx, EventToolEnd, ToolEndPayload{
-		Name:            snapshot.name,
-		CallID:          snapshot.callID,
-		ToolStartTime:   snapshot.toolStartTime,
-		ArgumentsInJSON: snapshot.argumentsInJSON,
-		Result:          result,
-	})
-	// NOTE: Do not delete state here. Interrupt resume may replay callbacks, and
-	// persisted start/end flags are what prevent duplicate tool events.
 }
 
 func toolEventKey(callID, name string) string {

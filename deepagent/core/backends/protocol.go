@@ -5,7 +5,7 @@ import (
 	"context"
 	"time"
 
-	"eino-cli/deepagent/core/utils"
+	serialiser "eino-cli/deepagent/serialiser"
 )
 
 // FileOperationError 文件操作错误类型
@@ -30,7 +30,7 @@ type CommonToolResult struct {
 }
 
 func (c CommonToolResult) String() string {
-	return utils.ToString(c)
+	return serialiser.ToString(c)
 }
 
 // FileInfo 文件信息

@@ -10,6 +10,7 @@ import (
 	"code.byted.org/gopkg/logs/v2"
 	"eino-cli/deepagent/core/agentthread"
 	"eino-cli/deepagent/core/utils"
+	serialiser "eino-cli/deepagent/serialiser"
 
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
@@ -199,7 +200,7 @@ selectLoop:
 	compact := &agentthread.CompactRecord{
 		Summary:           summaryMsg,
 		CompactStrategyID: c.ID(),
-		CompactStrategyPayload: utils.ToString(&codexStrategyPayload{
+		CompactStrategyPayload: serialiser.ToString(&codexStrategyPayload{
 			OriginalTokens: total,
 			NewTokens:      used,
 			KeptUserMsgs:   selected,
@@ -212,7 +213,7 @@ selectLoop:
 func (c CodexStrategy) Resume(ctx context.Context, compact *agentthread.CompactRecord, postCompactMessages []*agentthread.Message) (*agentthread.ResumeResult, error) {
 	rebuilt := make([]*schema.Message, 0, len(postCompactMessages)+1)
 	var csp codexStrategyPayload
-	if err := utils.FromString(compact.CompactStrategyPayload, &csp); err != nil {
+	if err := serialiser.FromString(compact.CompactStrategyPayload, &csp); err != nil {
 		return nil, err
 	}
 

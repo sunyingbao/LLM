@@ -12,7 +12,7 @@ import (
 	"eino-cli/deepagent/core/middleware"
 	"eino-cli/deepagent/core/tools"
 	"eino-cli/deepagent/core/types"
-	"eino-cli/deepagent/core/utils"
+	serialiser "eino-cli/deepagent/serialiser"
 
 	"code.byted.org/gopkg/lang/sets"
 	"code.byted.org/gopkg/logs/v2"
@@ -584,7 +584,7 @@ func collectAllTools(ctx context.Context, chain *middleware.MiddlewareChain, cfg
 		info, _ := t.Info(ctx)
 		infos = append(infos, info)
 	}
-	logs.CtxInfo(ctx, "[DeepAgent::collectAllTools] allToolsInfo: %v", utils.ToString(infos))
+	logs.CtxInfo(ctx, "[DeepAgent::collectAllTools] allToolsInfo: %v", serialiser.ToString(infos))
 	return allTools, nil
 }
 

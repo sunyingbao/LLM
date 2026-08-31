@@ -148,7 +148,26 @@ func resolveRoot(flagRoot string) (root string, err error) {
 	}
 	if root == "" {
 		root, err = os.Getwd()
-		return root, err
+		if err != nil {
+			return "", err
+		}
+		return findRepositoryRoot(root), nil
 	}
 	return filepath.Abs(root)
+}
+
+// findRepositoryRoot makes IDE launches from deepagent/cmd/deepagent behave
+// like launches from the repository root without changing explicit overrides.
+func findRepositoryRoot(start string) (root string) {
+	root = filepath.Clean(start)
+	for {
+		if _, err := os.Stat(filepath.Join(root, "yaml", "config.yaml")); err == nil {
+			return root
+		}
+		parent := filepath.Dir(root)
+		if parent == root {
+			return filepath.Clean(start)
+		}
+		root = parent
+	}
 }

@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	protoinput "eino-cli/deepagent/cloud/protocol/input"
+	"eino-cli/deepagent/cloud/protocol/timeline"
 	"eino-cli/deepagent/definition"
 	runtimeclient "eino-cli/deepagent/runtime"
 	"eino-cli/deepagent/worker"
@@ -158,6 +159,45 @@ func (client *Client) ListThreads(ctx context.Context, query runtimeclient.ListT
 		result.Threads = append(result.Threads, threadFromState(state))
 	}
 	return result, nil
+}
+
+func (client *Client) ListTimeline(ctx context.Context, query runtimeclient.TimelineQuery) (result *runtimeclient.TimelineResult, err error) {
+	if err = validateLocalRef(query.Ref, "list_timeline"); err != nil {
+		return nil, err
+	}
+	limit := query.Limit
+	if limit <= 0 {
+		limit = 10000
+	}
+	events, err := client.worker.ListEvents(ctx, query.Ref.ThreadID, inprocess.ListEventsOptions{Limit: limit})
+	if err != nil {
+		return nil, wrapError("list_timeline", err)
+	}
+	events = workerEventsAfter(events, query.AfterEventID)
+	result = &runtimeclient.TimelineResult{Events: make([]timeline.Event, 0, len(events))}
+	for _, event := range events {
+		result.Events = append(result.Events, timelineEventFromWorker(event))
+	}
+	return result, nil
+}
+
+func (client *Client) SubscribeTimeline(ctx context.Context, query runtimeclient.TimelineQuery) (subscription runtimeclient.TimelineSubscription, err error) {
+	if err = validateLocalRef(query.Ref, "subscribe_timeline"); err != nil {
+		return nil, err
+	}
+	live, err := client.worker.SubscribeThreadEvents(ctx, query.Ref.ThreadID, client.options.SubscriberBuffer)
+	if err != nil {
+		return nil, wrapError("subscribe_timeline", err)
+	}
+	replay, err := client.worker.ListEvents(ctx, query.Ref.ThreadID, inprocess.ListEventsOptions{Limit: 10000})
+	if err != nil {
+		live.Close()
+		return nil, wrapError("subscribe_timeline", err)
+	}
+	replay = workerEventsAfter(replay, query.AfterEventID)
+	stream := &subscriptionStream{events: make(chan timeline.Event, len(replay)+16), cancel: live.Close}
+	go stream.forward(ctx, replay, live.Events)
+	return stream, nil
 }
 
 func invalidRuntime(operation string, kind runtimeclient.RuntimeKind) (err error) {

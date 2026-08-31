@@ -3,7 +3,7 @@ package execute
 import (
 	"context"
 
-	sdkutils "eino-cli/deepagent/core/utils"
+	sdkutils "eino-cli/deepagent/serialiser"
 )
 
 type OutputFormatter interface {

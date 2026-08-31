@@ -7,7 +7,7 @@ import (
 
 	"eino-cli/deepagent/core/backends"
 	deepmiddleware "eino-cli/deepagent/core/middleware"
-	sdkutils "eino-cli/deepagent/core/utils"
+	sdkutils "eino-cli/deepagent/serialiser"
 	"github.com/cloudwego/eino/components/tool"
 	einoutils "github.com/cloudwego/eino/components/tool/utils"
 	"github.com/cloudwego/eino/schema"

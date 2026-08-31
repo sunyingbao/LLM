@@ -87,8 +87,26 @@ func TestResolveRoot(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if got != base {
-			t.Fatalf("resolveRoot() = %q, want %q", got, base)
+		want := findRepositoryRoot(base)
+		if got != want {
+			t.Fatalf("resolveRoot() = %q, want %q", got, want)
 		}
 	})
+}
+
+func TestFindRepositoryRoot(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "yaml"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "yaml", "config.yaml"), []byte("default_model: test\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	start := filepath.Join(root, "deepagent", "cmd", "deepagent")
+	if err := os.MkdirAll(start, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if got := findRepositoryRoot(start); got != root {
+		t.Fatalf("findRepositoryRoot() = %q, want %q", got, root)
+	}
 }

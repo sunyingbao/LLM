@@ -7,7 +7,8 @@ import (
 	"eino-cli/deepagent/core/graph"
 	"eino-cli/deepagent/core/middleware"
 	"eino-cli/deepagent/core/types"
-	utils2 "eino-cli/deepagent/core/utils"
+	"eino-cli/deepagent/core/utils"
+	"eino-cli/deepagent/serialiser"
 	"github.com/bytedance/sonic"
 	"github.com/cloudwego/eino/schema"
 )
@@ -55,7 +56,7 @@ func (c *SimpleContextManager) ModifyModelStreamResponse(ctx context.Context, mo
 
 	go func() {
 		defer func() {
-			utils2.PanicGuard(ctx)
+			utils.PanicGuard(ctx)
 			modelResp.Close()
 			outputWriter.Close()
 		}()
@@ -89,6 +90,6 @@ func (c *SimpleContextManager) MarshalRuntimeState() string {
 
 func (c *SimpleContextManager) UnmarshalRuntimeState(data string) error {
 	err := sonic.UnmarshalString(data, &c.history)
-	logs.Info("[SimpleContextManager] resume data:%s", utils2.ToString(c.history))
+	logs.Info("[SimpleContextManager] resume data:%s", serialiser.ToString(c.history))
 	return err
 }

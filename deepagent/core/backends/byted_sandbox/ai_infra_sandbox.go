@@ -19,7 +19,7 @@ import (
 	"code.byted.org/overpass/pippit_sandbox_gateway/kitex_gen/pippit/sandbox/gateway"
 	"code.byted.org/overpass/pippit_sandbox_gateway/rpc/pippit_sandbox_gateway"
 	"eino-cli/deepagent/core/backends"
-	"eino-cli/deepagent/core/utils"
+	serialiser "eino-cli/deepagent/serialiser"
 )
 
 var fileNotFoundMsgs = []string{
@@ -72,12 +72,12 @@ func (A *AIInfraSandbox) EnsureWorkDir(ctx context.Context) error {
 	}
 	resp, err := pippit_sandbox_gateway.RawCall.FileMkdir(ctx, req)
 	if err != nil {
-		logs.CtxError(ctx, "[AIInfraSandbox::EnsureWorkDir] failed, err: %v, req:%s resp:%s", err, utils.ToString(req), utils.ToString(resp))
+		logs.CtxError(ctx, "[AIInfraSandbox::EnsureWorkDir] failed, err: %v, req:%s resp:%s", err, serialiser.ToString(req), serialiser.ToString(resp))
 		return err
 	}
 	if resp.GetBaseResp().GetStatusCode() != 0 {
 		err := fmt.Errorf("mkdir workdir status_code=%d status_message=%s", resp.GetBaseResp().GetStatusCode(), resp.GetBaseResp().GetStatusMessage())
-		logs.CtxError(ctx, "[AIInfraSandbox::EnsureWorkDir] failed, err: %v, req:%s resp:%s", err, utils.ToString(req), utils.ToString(resp))
+		logs.CtxError(ctx, "[AIInfraSandbox::EnsureWorkDir] failed, err: %v, req:%s resp:%s", err, serialiser.ToString(req), serialiser.ToString(resp))
 		return err
 	}
 	return nil
@@ -108,7 +108,7 @@ func (A *AIInfraSandbox) LsInfo(ctx context.Context, path string) ([]backends.Fi
 	}
 
 	if err != nil {
-		logs.CtxError(ctx, "[AIInfraSandbox::LsInfo] failed, err: %v, path: %s meta:%sv", err, path, utils.ToString(A.meta))
+		logs.CtxError(ctx, "[AIInfraSandbox::LsInfo] failed, err: %v, path: %s meta:%sv", err, path, serialiser.ToString(A.meta))
 		return nil, err
 	}
 	var fileInfos []backends.FileInfo
@@ -146,7 +146,7 @@ func (A *AIInfraSandbox) Read(ctx context.Context, path string, offset, limit *i
 	}
 
 	if err != nil {
-		logs.CtxError(ctx, "[AIInfraSandbox::Read] failed, err: %v, path: %s meta:%sv", err, path, utils.ToString(A.meta))
+		logs.CtxError(ctx, "[AIInfraSandbox::Read] failed, err: %v, path: %s meta:%sv", err, path, serialiser.ToString(A.meta))
 		if resp != nil && strings.Contains(resp.GetBaseResp().GetStatusMessage(), "File does not exist") {
 			return "", backends.ErrFileNotFound
 		}
@@ -172,7 +172,7 @@ func (A *AIInfraSandbox) Write(ctx context.Context, path string, content string)
 	}
 
 	if err != nil {
-		logs.CtxError(ctx, "[AIInfraSandbox::Write] failed, err: %v, path: %s meta:%sv", err, path, utils.ToString(A.meta))
+		logs.CtxError(ctx, "[AIInfraSandbox::Write] failed, err: %v, path: %s meta:%sv", err, path, serialiser.ToString(A.meta))
 		if resp != nil && strings.Contains(resp.GetBaseResp().GetStatusMessage(), "File does not exist") {
 			return nil, backends.ErrFileNotFound
 		}
@@ -200,7 +200,7 @@ func (A *AIInfraSandbox) Edit(ctx context.Context, path string, oldString, newSt
 	}
 
 	if err != nil {
-		logs.CtxError(ctx, "[AIInfraSandbox::Edit] failed, err: %v, path: %s meta:%sv", err, path, utils.ToString(A.meta))
+		logs.CtxError(ctx, "[AIInfraSandbox::Edit] failed, err: %v, path: %s meta:%sv", err, path, serialiser.ToString(A.meta))
 		if resp != nil && strings.Contains(resp.GetBaseResp().GetStatusMessage(), "File does not exist") {
 			return nil, backends.ErrFileNotFound
 		}
@@ -237,7 +237,7 @@ func (A *AIInfraSandbox) GrepRaw(ctx context.Context, pattern string, path strin
 	}
 
 	if err != nil {
-		logs.CtxError(ctx, "[AIInfraSandbox::GrepRaw] failed, err: %v, path: %s meta:%sv", err, path, utils.ToString(A.meta))
+		logs.CtxError(ctx, "[AIInfraSandbox::GrepRaw] failed, err: %v, path: %s meta:%sv", err, path, serialiser.ToString(A.meta))
 		return nil, err
 	}
 
@@ -268,7 +268,7 @@ func (A *AIInfraSandbox) GlobInfo(ctx context.Context, pattern string, path stri
 		return nil, backends.ErrFileNotFound
 	}
 	if err != nil {
-		logs.CtxError(ctx, "[AIInfraSandbox::GlobInfo] failed, err: %v, path: %s meta:%sv", err, path, utils.ToString(A.meta))
+		logs.CtxError(ctx, "[AIInfraSandbox::GlobInfo] failed, err: %v, path: %s meta:%sv", err, path, serialiser.ToString(A.meta))
 		return nil, err
 	}
 	var results []backends.FileInfo
@@ -308,7 +308,7 @@ func (A *AIInfraSandbox) UploadFiles(ctx context.Context, files []struct {
 				Text:    thrift.StringPtr(string(content)),
 			})
 			if err != nil {
-				logs.CtxError(ctx, "[AIInfraSandbox::UploadFiles] failed, err: %v, path: %s meta:%sv", err, f.Path, utils.ToString(A.meta))
+				logs.CtxError(ctx, "[AIInfraSandbox::UploadFiles] failed, err: %v, path: %s meta:%sv", err, f.Path, serialiser.ToString(A.meta))
 				res[idx].Error = backends.ErrSandboxFsFailed
 				return
 			}
@@ -337,7 +337,7 @@ func (A *AIInfraSandbox) DownloadFiles(ctx context.Context, paths []string) ([]b
 			continue
 		}
 		if err != nil {
-			logs.CtxError(ctx, "[AIInfraSandbox::DownloadFiles] failed, err: %v, path: %s meta:%sv", err, path, utils.ToString(A.meta))
+			logs.CtxError(ctx, "[AIInfraSandbox::DownloadFiles] failed, err: %v, path: %s meta:%sv", err, path, serialiser.ToString(A.meta))
 			return nil, err
 		}
 		if resp == nil {
@@ -400,7 +400,7 @@ func (A *AIInfraSandbox) executeCommandWithOpts(ctx context.Context, req backend
 	}
 	resp, err := pippit_sandbox_gateway.RawCall.BashExec(ctx, execReq, callOpts...)
 	if err != nil {
-		logs.CtxError(ctx, "[AIInfraSandbox::Execute] failed, err: %v, req:%s", err, utils.ToString(execReq))
+		logs.CtxError(ctx, "[AIInfraSandbox::Execute] failed, err: %v, req:%s", err, serialiser.ToString(execReq))
 		return nil, err
 	}
 
@@ -422,12 +422,12 @@ func (A *AIInfraSandbox) ApplyPatch(ctx context.Context, patch string) (string, 
 	command := buildApplyPatchCommand(A.workDir, patch)
 	rsp, err := A.ExecuteCommand(ctx, backends.CommandRequest{Command: command})
 	if err != nil {
-		logs.CtxError(ctx, "[AIInfraSandbox::ApplyPatch] failed, err: %v, patch: %s meta:%sv", err, patch, utils.ToString(A.meta))
+		logs.CtxError(ctx, "[AIInfraSandbox::ApplyPatch] failed, err: %v, patch: %s meta:%sv", err, patch, serialiser.ToString(A.meta))
 		return "", err
 	}
 
 	if rsp.ExitCode != 0 {
-		logs.CtxError(ctx, "[AIInfraSandbox::ApplyPatch] failed, exit code: %d,output:%s patch: %s meta:%sv", rsp.ExitCode, rsp.Output, patch, utils.ToString(A.meta))
+		logs.CtxError(ctx, "[AIInfraSandbox::ApplyPatch] failed, exit code: %d,output:%s patch: %s meta:%sv", rsp.ExitCode, rsp.Output, patch, serialiser.ToString(A.meta))
 		return "", fmt.Errorf("exit code: %d ,output:%s", rsp.ExitCode, rsp.Output)
 	}
 

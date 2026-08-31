@@ -19,7 +19,7 @@ import (
 
 	"eino-cli/deepagent/core/constant"
 	"eino-cli/deepagent/core/middleware"
-	utils2 "eino-cli/deepagent/core/utils"
+	serialiser "eino-cli/deepagent/serialiser"
 )
 
 // ProgressCallback 进度回调函数类型（Phase 3 用于 SSE 推送）
@@ -142,7 +142,7 @@ func (m *PlanningMiddleware) MarshalRuntimeState() string {
 func (m *PlanningMiddleware) UnmarshalRuntimeState(data string) error {
 	err := sonic.UnmarshalString(data, &m.todos)
 
-	logs.Info("[PlanningMiddleware] resume data:%s", utils2.ToString(m.todos))
+	logs.Info("[PlanningMiddleware] resume data:%s", serialiser.ToString(m.todos))
 	return err
 }
 
