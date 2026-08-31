@@ -9,7 +9,6 @@ import (
 	"strconv"
 	"strings"
 
-	ac "code.byted.org/overpass/ad_creative_aic_agent_coordinator/kitex_gen/agent_coordinator"
 	cloudbackend "eino-cli/deepagent/cloud/backend"
 	protoinput "eino-cli/deepagent/cloud/protocol/input"
 	"eino-cli/deepagent/cloud/worker/runtimectx"
@@ -19,6 +18,8 @@ import (
 	"eino-cli/deepagent/core/memory"
 	"eino-cli/deepagent/worker"
 	"eino-cli/deepagent/worker/tasktool"
+
+	ac "code.byted.org/overpass/ad_creative_aic_agent_coordinator/kitex_gen/agent_coordinator"
 	"github.com/cloudwego/eino/callbacks"
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/compose"
@@ -88,7 +89,7 @@ func (b *threadBuilder) newAgentThread(ctx context.Context, threadInfo *ac.Threa
 		return nil, err
 	}
 	threadLevelConfig := b.buildThreadLevelConfig(ctx, spec, resources, threadProfile, turnProfile)
-	thread := agentthread.NewDefault(spec.ThreadID, nil, resources.EventBus, threadLevelConfig)
+	thread := agentthread.NewThread(spec.ThreadID, nil, resources.EventBus, threadLevelConfig)
 	return b.adaptAgentThreadToWorker(ctx, spec, resources, threadProfile, thread)
 }
 

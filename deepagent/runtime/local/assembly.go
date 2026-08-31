@@ -16,6 +16,7 @@ import (
 	runtimeclient "eino-cli/deepagent/runtime"
 	"eino-cli/deepagent/worker"
 	"eino-cli/deepagent/worker/inprocess"
+
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/compose"
@@ -112,7 +113,7 @@ func NewThreadFactory(dependencies AssemblyDependencies) (factory inprocess.Thre
 		eventBus := make(chan agentthread.Event, buffer)
 		runnerConfig := turnRunnerConfigFromResolved(config, checkpoint)
 		runnerConfig.TurnCompleted = dependencies.TurnCompleted
-		thread := agentthread.NewDefault(state.ID, runnerConfig, eventBus, agentthread.DefaultThreadOptions{HistoryStore: history, ContextWindow: dependencies.ContextWindow})
+		thread := agentthread.NewThread(state.ID, runnerConfig, eventBus, agentthread.DefaultThreadOptions{HistoryStore: history, ContextWindow: dependencies.ContextWindow})
 		runtime, err = workerthread.NewRuntime(workerthread.AdapterConfig{SessionID: state.SessionID, ThreadID: state.ID, Thread: thread, EventBus: eventBus})
 		return runtime, err
 	}

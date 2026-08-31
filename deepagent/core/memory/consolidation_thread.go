@@ -7,10 +7,11 @@ import (
 	"sync"
 	"time"
 
-	"code.byted.org/gopkg/logs/v2"
 	"eino-cli/deepagent/core"
 	"eino-cli/deepagent/core/agentthread"
 	"eino-cli/deepagent/worker"
+
+	"code.byted.org/gopkg/logs/v2"
 	"github.com/bytedance/sonic"
 	"github.com/cloudwego/eino/callbacks"
 	"github.com/cloudwego/eino/components/model"
@@ -69,7 +70,7 @@ func NewConsolidationAgentThread(cfg ConsolidationAgentThreadConfig) (agentworke
 
 	eventBus := make(chan agentthread.Event, 256)
 	runnerCfg := newConsolidationTurnRunnerConfig(cfg)
-	thread := agentthread.NewDefault(cfg.ThreadID, runnerCfg, eventBus, agentthread.DefaultThreadOptions{
+	thread := agentthread.NewThread(cfg.ThreadID, runnerCfg, eventBus, agentthread.DefaultThreadOptions{
 		HistoryStore: cfg.HistoryStore,
 	})
 	now := cfg.Now

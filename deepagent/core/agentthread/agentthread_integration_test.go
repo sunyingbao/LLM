@@ -1,20 +1,22 @@
 package agentthread
 
 import (
-	"code.byted.org/gopkg/logs/v2"
 	"context"
 	"eino-cli/deepagent/core/types"
 	"fmt"
-	"github.com/tidwall/gjson"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"code.byted.org/gopkg/logs/v2"
+	"github.com/tidwall/gjson"
+
 	deepagents "eino-cli/deepagent/core"
 	"eino-cli/deepagent/core/checkpointer"
 	deeptools "eino-cli/deepagent/core/tools"
 	"eino-cli/deepagent/mock/mock_model"
+
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/schema"
@@ -232,7 +234,7 @@ func hasEventType(events []Event, typ EventType) bool {
 
 func buildThreadForTest(threadID string, runnerCfg *TurnRunnerConfig, hs HistoryRolloutStore, inputQueueSize int, strategy CompactionStrategy, eventBus chan Event) *DeepAgentThread {
 	_ = inputQueueSize
-	return NewDefault(threadID, nil, eventBus, DefaultThreadOptions{
+	return NewThread(threadID, nil, eventBus, DefaultThreadOptions{
 		HistoryStore:       hs,
 		CompactionStrategy: strategy,
 	}, WithBaseTurnRunnerConfig(runnerCfg), WithTurnIDProvider(func(ctx context.Context, threadID string, input *Message) string {

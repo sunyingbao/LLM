@@ -5,9 +5,9 @@ import (
 	"sync"
 	"time"
 
-	"code.byted.org/gopkg/logs/v2"
-	"eino-cli/deepagent/core"
 	"eino-cli/deepagent/core/graph"
+
+	"code.byted.org/gopkg/logs/v2"
 	"github.com/cloudwego/eino/schema"
 )
 
@@ -29,8 +29,8 @@ type DeepAgentThread struct {
 	turnIDProvider TurnIDProvider
 }
 
-// NewDefault creates a DeepAgentThread with the SDK's default context manager.
-func NewDefault(threadID string, runnerCfg *TurnRunnerConfig, eventBus chan Event, opts DefaultThreadOptions, threadOpts ...Option) *DeepAgentThread {
+// NewThread creates a DeepAgentThread with the SDK's default context manager.
+func NewThread(threadID string, runnerCfg *TurnRunnerConfig, eventBus chan Event, opts DefaultThreadOptions, threadOpts ...Option) *DeepAgentThread {
 	cmOpts := []MemoryContextManagerOption{}
 	if opts.ContextWindow > 0 {
 		cmOpts = append(cmOpts, WithContextWindow(opts.ContextWindow))
@@ -128,31 +128,22 @@ func (t *DeepAgentThread) SubmitInput(ctx context.Context, input *Message, opts 
 		t.mu.Unlock()
 		return &result, nil
 	}
-	turnID := t.newTurnID(ctx, input)
-	runCtx := applyTurnRunnerStart(ctx, submitOpts.OnTurnRunnerStart, TurnRunnerStartRequest{
-		ThreadID:  t.ThreadID,
-		TurnID:    turnID,
-		Trigger:   TurnRunnerConfigForSubmit,
-		Input:     input,
-		InputMeta: submitOpts.InputMeta,
-	})
-	runnerCfg, err := t.resolveTurnRunnerConfig(runCtx, TurnRunnerConfigRequest{
-		TurnID:    turnID,
-		Trigger:   TurnRunnerConfigForSubmit,
-		Input:     input,
-		InputMeta: submitOpts.InputMeta,
-	}, nil, submitOpts.TurnRunnerConfig)
-	if err != nil {
-		t.mu.Unlock()
-		return nil, err
+	request := turnStartRequest{
+		turnID:         t.newTurnID(ctx, input),
+		input:          input,
+		inputMeta:      submitOpts.InputMeta,
+		trigger:        TurnRunnerConfigForSubmit,
+		configResolver: submitOpts.TurnRunnerConfig,
+		onRunnerStart:  submitOpts.OnTurnRunnerStart,
 	}
-	turn, err := t.startTurnLocked(runCtx, turnID, input, submitOpts.InputMeta, nil, runnerCfg)
+	runCtx := t.prepareTurnStartContext(ctx, request)
+	turn, runnerCfg, err := t.startTurnLocked(runCtx, request)
 	if err != nil {
 		t.mu.Unlock()
 		return nil, err
 	}
 	result := SubmitInputResult{
-		TurnID:       turnID,
+		TurnID:       turn.turnID,
 		TurnHandle:   t.curTurnLocked(turn),
 		StartNewTurn: true,
 		RunnerConfig: runnerCfg.Clone(),
@@ -199,22 +190,16 @@ func (t *DeepAgentThread) ResumeTurn(ctx context.Context, turnID string, opts Re
 		t.mu.Unlock()
 		return nil, ErrThreadRunning
 	}
-	runCtx := applyTurnRunnerStart(ctx, opts.OnTurnRunnerStart, TurnRunnerStartRequest{
-		ThreadID: t.ThreadID,
-		TurnID:   turnID,
-		Trigger:  TurnRunnerConfigForResume,
-		Resume:   resumeTurnConfigRequestFromOptions(&opts),
-	})
-	runnerCfg, err := t.resolveTurnRunnerConfig(runCtx, TurnRunnerConfigRequest{
-		TurnID:  turnID,
-		Trigger: TurnRunnerConfigForResume,
-		Resume:  resumeTurnConfigRequestFromOptions(&opts),
-	}, opts.RunnerConfig, opts.TurnRunnerConfig)
-	if err != nil {
-		t.mu.Unlock()
-		return nil, err
+	request := turnStartRequest{
+		turnID:         turnID,
+		resume:         &opts,
+		trigger:        TurnRunnerConfigForResume,
+		explicitConfig: opts.RunnerConfig,
+		configResolver: opts.TurnRunnerConfig,
+		onRunnerStart:  opts.OnTurnRunnerStart,
 	}
-	turn, err := t.startTurnLocked(runCtx, turnID, nil, nil, &opts, runnerCfg)
+	runCtx := t.prepareTurnStartContext(ctx, request)
+	turn, _, err := t.startTurnLocked(runCtx, request)
 	if err != nil {
 		t.mu.Unlock()
 		return nil, err
@@ -226,27 +211,42 @@ func (t *DeepAgentThread) ResumeTurn(ctx context.Context, turnID string, opts Re
 	return curTurn, nil
 }
 
-func (t *DeepAgentThread) startTurnLocked(ctx context.Context, turnID string, input *Message, inputMeta any, opts *ResumeTurnOptions, runnerCfg *TurnRunnerConfig) (*turn, error) {
-	if turnID == "" {
-		return nil, ErrInvalidOp
+func (t *DeepAgentThread) prepareTurnStartContext(ctx context.Context, request turnStartRequest) context.Context {
+	return applyTurnRunnerStart(ctx, request.onRunnerStart, TurnRunnerStartRequest{
+		ThreadID:  t.ThreadID,
+		TurnID:    request.turnID,
+		Trigger:   request.trigger,
+		Input:     request.input,
+		InputMeta: request.inputMeta,
+		Resume:    request.configRequest().Resume,
+	})
+}
+
+func (t *DeepAgentThread) startTurnLocked(ctx context.Context, request turnStartRequest) (*turn, *TurnRunnerConfig, error) {
+	if request.turnID == "" {
+		return nil, nil, ErrInvalidOp
 	}
-	if runnerCfg == nil {
-		runnerCfg = t.cfg.Clone()
-	} else {
-		runnerCfg = runnerCfg.Clone()
+	runnerCfg, err := t.resolveTurnRunnerConfig(ctx, request.configRequest(), request.explicitConfig, request.configResolver)
+	if err != nil {
+		return nil, nil, err
 	}
-	turn := newTurn(turnID, input, inputMeta, opts)
-	turn.runner = NewTurnRunner(runnerCfg, t.ThreadID, turnID, t.cm, turn.events)
-	turn.runner.setPendingInputDrainer(t)
-	turn.runner.setReactLoopBranchPolicy(t)
-	t.current = turn
-	if err := turn.runner.Init(ctx); err != nil {
-		turn.complete(err)
+	run := newTurn(request.turnID, request.input, request.inputMeta, request.resume)
+	run.runner = t.newTurnRunner(run, runnerCfg)
+	t.current = run
+	if err := run.runner.Init(ctx); err != nil {
+		run.complete(err)
 		t.current = nil
-		return nil, err
+		return nil, nil, err
 	}
-	go t.forwardRunEvents(turn)
-	return turn, nil
+	go t.forwardRunEvents(run)
+	return run, runnerCfg, nil
+}
+
+func (t *DeepAgentThread) newTurnRunner(run *turn, cfg *TurnRunnerConfig) *TurnRunner {
+	runner := NewTurnRunner(cfg, t.ThreadID, run.turnID, t.cm, run.events)
+	runner.setPendingInputDrainer(t)
+	runner.setReactLoopBranchPolicy(t.newReactLoopPolicy())
+	return runner
 }
 
 func (t *DeepAgentThread) curTurnLocked(turn *turn) *TurnHandle {
@@ -304,23 +304,6 @@ func (t *DeepAgentThread) DrainInput(ctx context.Context) []*schema.Message {
 		})
 	}
 	return msgs
-}
-
-func (t *DeepAgentThread) AfterModel(ctx context.Context, input deepagents.ReactLoopAfterModelInput) (deepagents.ReactLoopBranchDecision, error) {
-	_ = ctx
-	if input.Default != deepagents.ReactLoopBranchToEnd {
-		return deepagents.ReactLoopBranchDefault, nil
-	}
-	if t.commitEndIfNoPending() {
-		return deepagents.ReactLoopBranchDefault, nil
-	}
-	return deepagents.ReactLoopBranchToExecutor, nil
-}
-
-func (t *DeepAgentThread) AfterTools(ctx context.Context, input deepagents.ReactLoopAfterToolsInput) (deepagents.ReactLoopBranchDecision, error) {
-	_ = ctx
-	_ = input
-	return deepagents.ReactLoopBranchDefault, nil
 }
 
 // executeTurn executes one logical turn, drains all turn-local events, and only then

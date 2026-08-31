@@ -17,6 +17,7 @@ import (
 	deeptools "eino-cli/deepagent/core/tools"
 	"eino-cli/deepagent/worker"
 	inprocess "eino-cli/deepagent/worker/inprocess"
+
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
 )
@@ -71,7 +72,7 @@ func (f *DeepAgentRuntimeFactory) NewThreadRuntime(ctx context.Context, state *i
 	}
 	return &localThreadRuntime{
 		state:            state,
-		thread:           agentthread.NewDefault(state.ID, nil, eventBus, f.defaultThreadOptions(), agentthread.WithBaseTurnRunnerConfig(runnerCfg)),
+		thread:           agentthread.NewThread(state.ID, nil, eventBus, f.defaultThreadOptions(), agentthread.WithBaseTurnRunnerConfig(runnerCfg)),
 		baseRunnerConfig: runnerCfg,
 		planRunnerConfig: func() *agentthread.TurnRunnerConfig {
 			return f.planTurnConfig(runnerCfg, state)

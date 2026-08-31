@@ -14,6 +14,7 @@ import (
 	"eino-cli/deepagent/core/checkpointer"
 	deeptools "eino-cli/deepagent/core/tools"
 	"eino-cli/deepagent/mock/mock_model"
+
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/schema"
@@ -318,7 +319,7 @@ func TestAgentThreadCompactionContinuesWithRebuiltHistory(t *testing.T) {
 	).AnyTimes()
 
 	store := NewInMemoryHistoryRolloutStore()
-	thread := NewDefault("thread-compact-continue", &TurnRunnerConfig{
+	thread := NewThread("thread-compact-continue", &TurnRunnerConfig{
 		ChatModel:       cm,
 		CheckpointStore: checkpointer.NewInMemoryStore(),
 	}, make(chan Event, 128), DefaultThreadOptions{
@@ -406,7 +407,7 @@ func TestAgentThreadCompactionBeforeApproveResume(t *testing.T) {
 
 	bus := make(chan Event, 256)
 	store := NewInMemoryHistoryRolloutStore()
-	thread := NewDefault("thread-compact-resume", &TurnRunnerConfig{
+	thread := NewThread("thread-compact-resume", &TurnRunnerConfig{
 		ChatModel:       cm,
 		Tools:           []tool.BaseTool{approvalTool},
 		CheckpointStore: checkpointer.NewInMemoryStore(),
@@ -488,7 +489,7 @@ func TestIntegrationAgentThreadCompactionWithRealModel(t *testing.T) {
 		for range eventBus {
 		}
 	}()
-	thread := NewDefault(threadID, &TurnRunnerConfig{
+	thread := NewThread(threadID, &TurnRunnerConfig{
 		ChatModel:       chatModel,
 		CheckpointStore: checkpointer.NewInMemoryStore(),
 	}, eventBus, DefaultThreadOptions{
