@@ -78,9 +78,9 @@ Agent Worker 的核心不是“异步执行”，而是定义服务端 worker ho
 - 调用业务 Agent runtime 处理输入。
 - 把运行过程、阻塞状态和结果持续写入 output channel。
 
-这里的 channel 是运行模型上的输入 / 输出通道。业务实现可以用 Go channel、内存队列、runtime 自己的输入队列，或者 `deepagents/agentthread` 已有的 pending input 机制；关键语义是“Worker 负责交付输入，业务 thread 持续处理并输出事件”。
+这里的 channel 是运行模型上的输入 / 输出通道。业务实现可以用 Go channel、内存队列、runtime 自己的输入队列，或者 `deepagent/core/agentthread` 已有的 pending input 机制；关键语义是“Worker 负责交付输入，业务 thread 持续处理并输出事件”。
 
-`agentworker/cloud.Worker` 负责和 Agent Coordinator 协作：
+`deepagent/worker/cloud.Worker` 负责和 Agent Coordinator 协作：
 
 - scan 可运行 thread。
 - claim thread lease。
@@ -100,7 +100,7 @@ Agent Worker 的核心不是“异步执行”，而是定义服务端 worker ho
 - 把 runtime 输出转换成 coordinator event。
 - 在当前 claim 需要 release / block / stop 时，通过 `ThreadOutput.Items` 发出 yield。
 
-`cmd/cloud_agent` 是当前仓库里的参考业务实现。它通过 `cloudagent/worker` 把 `deepagents/agentthread` 适配成 `agentworker.AgentThread`，用于 dogfood 业务接入路径。
+`deepagent/cmd/cloud_agent` 是当前仓库里的参考业务实现。它通过 `deepagent/cloud/worker` 把 `deepagent/core/agentthread` 适配成 `agentworker.AgentThread`，用于 dogfood 业务接入路径。
 
 ## 核心边界
 
@@ -123,7 +123,7 @@ Agent Worker 由两部分配合完成：
 
 ## 接入接口
 
-业务实现公共的 `agentworker.AgentThread`，再把它交给具体 host。接 Agent Coordinator 时使用 `agentworker/cloud`：
+业务实现公共的 `agentworker.AgentThread`，再把它交给具体 host。接 Agent Coordinator 时使用 `deepagent/worker/cloud`：
 
 ```go
 type AgentThreadFactory func(ctx context.Context, threadInfo *ac.Thread) (agentworker.AgentThread, error)
@@ -230,7 +230,7 @@ err := w.Run(ctx)
 
 ## Message、Event 与 Ack
 
-在公共 Agent Worker 层，输入是 `agentworker.Message`，输出是 `agentworker.Event` / `agentworker.ThreadYield`。`agentworker/cloud` 负责和 coordinator 类型互转。
+在公共 Agent Worker 层，输入是 `agentworker.Message`，输出是 `agentworker.Event` / `agentworker.ThreadYield`。`deepagent/worker/cloud` 负责和 coordinator 类型互转。
 
 - message 是业务 runtime 的结构化输入。
 - event 是前端、调用方、其他系统观察 Agent 的事实。
@@ -250,7 +250,7 @@ err := w.Run(ctx)
 
 `agentworker` 不规定 event payload 协议。业务需要自己设计 payload，并保证前端、调用方和工具能读懂。
 
-`agentworker/cloud` 额外公开了两个 coordinator mailbox 控制消息：
+`deepagent/worker/cloud` 额外公开了两个 coordinator mailbox 控制消息：
 
 - `cloud.MessageTypeControlCancelInput` / `cloud.CancelInputControlPayload`：取消某条 cutoff message 之前的输入，并请求 runtime interrupt 当前 active turn。
 - `cloud.MessageTypeControlCloseThread` / `cloud.CloseThreadControlPayload`：关闭 thread。worker 会 ack close control、打断 active turn、调用 runtime `Close`，最后调用 coordinator 的 close complete 接口。
@@ -269,9 +269,9 @@ err := w.Run(ctx)
 
 `agentworker.AgentThread` 是 worker 层接口。
 
-它不等于 `deepagents/agentthread` 里的 Agent Thread 实现。
+它不等于 `deepagent/core/agentthread` 里的 Agent Thread 实现。
 
-业务可以用 `deepagents/agentthread` 实现这个接口，也可以用自己的 runtime 实现这个接口。
+业务可以用 `deepagent/core/agentthread` 实现这个接口，也可以用自己的 runtime 实现这个接口。
 
 典型关系是：
 
@@ -281,7 +281,7 @@ agentworker.AgentThread
   - 输出 coordinator event
   - 包装业务自己的 Agent runtime
 
-deepagents/agentthread
+deepagent/core/agentthread
   - 处理模型、工具、上下文、HITL、pending input
   - 不依赖 Agent Coordinator
 ```
@@ -298,7 +298,7 @@ deepagents/agentthread
 
 它封装 Agent Coordinator 的通用请求，但不定义业务自己的 thread 命名、角色、父子关系、展示文案和权限语义。
 
-如果业务需要这些信息，应在业务层通过 `Metadata`、`ResolveTarget`、`OnThreadSpawned`、`FormatOutbound`、`MessageWaitObserver` 等扩展点表达。SDK 保证 metadata 的承载位置和合并优先级稳定，但不定义具体 key 的业务含义。`cmd/cloud_agent` 里的 thread ref、main / child role、`from_thread_ref`、`parent_thread_id`、`root_thread_id` 都属于参考业务协议，不是 `agentworker` 核心协议。
+如果业务需要这些信息，应在业务层通过 `Metadata`、`ResolveTarget`、`OnThreadSpawned`、`FormatOutbound`、`MessageWaitObserver` 等扩展点表达。SDK 保证 metadata 的承载位置和合并优先级稳定，但不定义具体 key 的业务含义。`deepagent/cmd/cloud_agent` 里的 thread ref、main / child role、`from_thread_ref`、`parent_thread_id`、`root_thread_id` 都属于参考业务协议，不是 `agentworker` 核心协议。
 
 ## 直接接入前的检查
 
@@ -316,7 +316,7 @@ deepagents/agentthread
 
 参考实现：
 
-- `cmd/cloud_agent`
+- `deepagent/cmd/cloud_agent`
 
 它们是 dogfood / reference example，用来验证 SDK 接入形态和边界，不是 SDK 核心 API。
 
@@ -326,7 +326,7 @@ deepagents/agentthread
 - `PostMessage` 返回 nil 只表示 runtime 接收了 message；ack 也只表示已交付，不表示这条 message 已经处理完成。
 - `agentworker` 不理解模型请求、ReAct loop、prompt、工具语义或前端展示协议，这些属于业务 Agent runtime。
 - `ThreadOutput.Items` 里的 event 和 yield 共用有序流；不要用旁路状态判断替代 runtime 输出。
-- `cmd/cloud_agent` 是参考业务实现，不是 `agentworker` 核心 API；它的 session、thread ref 和展示语义不要下沉到 `agentworker`。
+- `deepagent/cmd/cloud_agent` 是参考业务实现，不是 `agentworker` 核心 API；它的 session、thread ref 和展示语义不要下沉到 `agentworker`。
 
 ## 下一步
 

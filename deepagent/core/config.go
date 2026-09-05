@@ -1,6 +1,7 @@
 package deepagents
 
 import (
+	"maps"
 	"time"
 
 	"eino-cli/deepagent/core/backends"
@@ -11,6 +12,7 @@ import (
 	"eino-cli/deepagent/core/middleware/web"
 	"eino-cli/deepagent/core/tools"
 	"eino-cli/deepagent/core/types"
+
 	"github.com/cloudwego/eino/callbacks"
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/components/tool"
@@ -18,23 +20,10 @@ import (
 )
 
 type HITLConfig struct {
-	// NeedApproveTools is the legacy bool approval hook. true means interrupt
-	// for approval; false means run the tool.
-	NeedApproveTools map[string]tools.NeedApproval
-
-	// ToolPolicyGates is the three-state tool gate for allow / approval / deny.
-	// A tool must not be configured here and in NeedApproveTools at the same time.
 	ToolPolicyGates map[string]tools.ToolPolicyGate
 
 	NeedReviewAndEditTools map[string]tools.NeedReviewAndEdit
 	NeedFollowUpTool       bool
-}
-
-type ContextManagerConfig struct {
-	// 上下文管理器, 必传, 如果只是想体验，可以用 SimpleContextManager
-	// 需要注意的是，不建议每轮对话都构建新的上下文管理器，
-	// 因为这样会丢失之前的对话历史，导致上下文不连续
-	Manager middleware.Middleware
 }
 
 type FilesystemConfig struct {
@@ -60,9 +49,6 @@ type Config struct {
 	// is enabled.
 	MaxModelCalls int
 
-	// WorkDir 工作目录
-	WorkDir string
-
 	// Tools 用户自定义工具
 	Tools []tool.BaseTool
 
@@ -82,27 +68,10 @@ type Config struct {
 	// EnableSubAgentTaskStreaming 使 SubAgentMiddleware 的 task 工具流式输出子 agent 最终回复。
 	EnableSubAgentTaskStreaming bool
 
-	// MemoryPaths 记忆文件路径
-	MemoryPaths []string
-
-	// deprecated, 使用这种方式启用 skill middleware 会导致你无法获得 skill list 的句柄,当你想实现 list_skills 这样的功能时就无法做到
-	// SkillsDirs 技能目录路径列表
-	SkillsDirs []string
-	// SkillLoader 技能加载器, 推荐使用这个来启用 skill middleware
-	// 需要注意的是,你可以选择 skill 目录下已经内置的实现，比如 NewFileSystemSkillLoader；该实现可按构造参数决定是否启用一次性缓存
+	// SkillLoader 技能加载器
 	SkillLoader skill.Loader
-	// SkillMask 仅作用于框架内部创建的 FileSystemSkillLoader
-	// 当 SkillLoader 由调用方自行传入时，过滤逻辑由调用方自己负责
-	// 返回 true 表示该 skill 对外可见，返回 false 表示对外隐藏
-	SkillMask skill.Mask
 
-	// EnablePlanning 是否启用规划能力
-	EnablePlanning bool
-
-	// EnableFilesystem 是否启用文件系统访问
-	EnableFilesystem bool
-
-	// FilesystemConfig 文件系统能力配置
+	// FilesystemConfig 非空时启用文件系统能力
 	FilesystemConfig *FilesystemConfig
 
 	// EnablePatchToolCalls 是否启用工具调用修补
@@ -111,28 +80,17 @@ type Config struct {
 	// EnableStreamToolCall 是否启用流式工具调用执行
 	EnableStreamToolCall bool
 
-	// EnableWeb 是否启用 Web 工具
-	EnableWeb bool
-
 	// DisableSubAgent 是否禁用子代理中间件
 	// 默认情况下，当 backend != nil 或有 SubAgents 配置时自动启用
 	// 设置为 true 可强制禁用子代理能力
 	DisableSubAgent bool
 
-	// DisableUploadDownload 禁用文件系统的 upload_files 和 download_files 工具
-	DisableUploadDownload bool
-
-	// DisableExecute 禁用文件系统的 execute 工具
-	// 即使 Backend 实现了 SandboxBackend 接口，也不暴露 execute 工具
-	DisableExecute bool
-
-	// WebConfig Web 工具配置
+	// WebConfig 非空时启用 Web 工具
 	WebConfig *web.WebConfig
 
 	HITLConfig *HITLConfig
 
-	// ContextManagerCfg 上下文管理器配置
-	ContextManagerCfg *ContextManagerConfig
+	ContextManager middleware.Middleware
 
 	// Backend 文件系统后端
 	// 如果传入的是 SandboxBackend，则自动启用 execute 工具
@@ -176,17 +134,70 @@ type Config struct {
 	// 当前仅在 EnableStreamToolCall=false 时生效。
 	ToolNodePostHandler ToolNodePostHandler
 
-	// ReactLoopBranchPolicy 控制 DeepAgent react loop 在 model/tools 节点后的分支。
-	// 为空时保持默认行为：model 有服务端工具调用则进入 tools，否则结束；tools 后回到 model。
-	ReactLoopBranchPolicy ReactLoopBranchPolicy
+	// ContinueAfterModel is checked when the model has no tool call and would
+	// otherwise finish. Returning true starts another model pass with empty input.
+	ContinueAfterModel ContinueAfterModelFunc
+}
 
-	workDirExplicit               bool
-	disableUploadDownloadExplicit bool
-	disableExecuteExplicit        bool
+// Clone returns an independent configuration container. Runtime dependencies
+// and function values remain shared, while mutable maps, slices, and nested
+// configuration values are copied.
+func (c *Config) Clone() (cloned *Config) {
+	if c == nil {
+		return &Config{}
+	}
+	value := *c
+	cloned = &value
+	cloned.Tools = append([]tool.BaseTool(nil), c.Tools...)
+	cloned.SubAgents = append([]*subagent.SubAgent(nil), c.SubAgents...)
+	cloned.SubAgentsDirs = append([]string(nil), c.SubAgentsDirs...)
+	cloned.Middlewares = append([]middleware.Middleware(nil), c.Middlewares...)
+	cloned.Callbacks = append([]callbacks.Handler(nil), c.Callbacks...)
+	cloned.InterruptBeforeNodes = append([]string(nil), c.InterruptBeforeNodes...)
+	cloned.InterruptAfterNodes = append([]string(nil), c.InterruptAfterNodes...)
+	cloned.CustomGraphState = maps.Clone(c.CustomGraphState)
+	cloned.SubAgentSharedCustomStateNames = append([]string(nil), c.SubAgentSharedCustomStateNames...)
+
+	if c.FilesystemConfig != nil {
+		filesystem := *c.FilesystemConfig
+		cloned.FilesystemConfig = &filesystem
+	}
+	if c.WebConfig != nil {
+		webConfig := *c.WebConfig
+		cloned.WebConfig = &webConfig
+	}
+	if c.HITLConfig != nil {
+		hitl := *c.HITLConfig
+		hitl.ToolPolicyGates = maps.Clone(c.HITLConfig.ToolPolicyGates)
+		hitl.NeedReviewAndEditTools = maps.Clone(c.HITLConfig.NeedReviewAndEditTools)
+		cloned.HITLConfig = &hitl
+	}
+	return cloned
+}
+
+func (c *Config) filesystemConfig() (filesystem FilesystemConfig) {
+	if c != nil && c.FilesystemConfig != nil {
+		return *c.FilesystemConfig
+	}
+	return filesystem
+}
+
+func (c *Config) filesystemWorkDir() (workDir string) {
+	return c.filesystemConfig().WorkDir
 }
 
 // Option 是 New builder 的配置选项函数。
 type Option func(*Config)
+
+// WithConfig uses one complete Config as the starting point for New. Options
+// that follow it may still override individual fields.
+func WithConfig(source *Config) (option Option) {
+	option = func(target *Config) {
+		configured := source.Clone()
+		*target = *configured
+	}
+	return option
+}
 
 func WithCustomGraphState(fields map[string]types.RunTimeStateful) Option {
 	return func(c *Config) {
@@ -230,8 +241,10 @@ func WithMaxModelCalls(calls int) Option {
 // WithWorkDir 设置工作目录
 func WithWorkDir(dir string) Option {
 	return func(c *Config) {
-		c.WorkDir = dir
-		c.workDirExplicit = true
+		if c.FilesystemConfig == nil {
+			c.FilesystemConfig = &FilesystemConfig{}
+		}
+		c.FilesystemConfig.WorkDir = dir
 	}
 }
 
@@ -250,17 +263,11 @@ func WithToolMask(mask tools.Mask) Option {
 	}
 }
 
-// WithReactLoopBranchPolicy 设置 DeepAgent react loop 分支策略。
-//
-// nil 策略保持现有行为不变：model 有服务端工具调用就进入 Tools，
-// model 无服务端工具调用就 END，Tools 执行后回到 model。
-//
-// 只有当调用方确实需要改变 react loop 本身的路由时才应该设置该选项，
-// 例如同一个 turn 内插入新输入后继续跑 model，或工具结果可直接作为最终结果。
-func WithReactLoopBranchPolicy(policy ReactLoopBranchPolicy) Option {
-	return func(c *Config) {
-		c.ReactLoopBranchPolicy = policy
+func WithContinueAfterModel(continueAfterModel ContinueAfterModelFunc) (option Option) {
+	option = func(c *Config) {
+		c.ContinueAfterModel = continueAfterModel
 	}
+	return option
 }
 
 // WithSubAgents 设置子代理
@@ -297,44 +304,10 @@ func WithSubAgentTaskStreaming() Option {
 	}
 }
 
-// WithMemory 设置记忆文件路径
-func WithMemory(paths ...string) Option {
-	return func(c *Config) {
-		c.MemoryPaths = append(c.MemoryPaths, paths...)
-	}
-}
-
-// deprecated , 使用这种方式启用 skill middleware 会导致你无法获得 skill list 的句柄,当你想实现 list_skills 这样的功能时就无法做到.同样 , 当你不想每次都加载的时候，你也无法做到
-func WithSkillsDir(dir string) Option {
-	return WithSkillsDirs(dir)
-}
-
-// deprecated , 使用这种方式启用 skill middleware 会导致你无法获得 skill list 的句柄,当你想实现 list_skills 这样的功能时就无法做到.同样 , 当你不想每次都加载的时候，你也无法做到
-func WithSkillsDirs(dirs ...string) Option {
-	return func(c *Config) {
-		c.SkillsDirs = append(c.SkillsDirs, dirs...)
-	}
-}
-
 // WithSkillLoader 设置技能加载器
 func WithSkillLoader(loader skill.Loader) Option {
 	return func(c *Config) {
 		c.SkillLoader = loader
-	}
-}
-
-// WithSkillMask 设置内置 FileSystemSkillLoader 的技能可见性过滤函数。
-// 返回 true 表示保留该 skill，返回 false 表示将其从对外暴露的技能列表中过滤掉。
-func WithSkillMask(mask skill.Mask) Option {
-	return func(c *Config) {
-		c.SkillMask = mask
-	}
-}
-
-// WithPlanning 启用规划能力
-func WithPlanning() Option {
-	return func(c *Config) {
-		c.EnablePlanning = true
 	}
 }
 
@@ -346,16 +319,18 @@ func WithPlanMiddleware(cfg *plan.PlanMiddlewareConfig) Option {
 }
 
 // WithFilesystem 启用文件系统访问
-func WithFilesystem() Option {
-	return func(c *Config) {
-		c.EnableFilesystem = true
+func WithFilesystem() (option Option) {
+	option = func(c *Config) {
+		if c.FilesystemConfig == nil {
+			c.FilesystemConfig = &FilesystemConfig{}
+		}
 	}
+	return option
 }
 
 // WithFilesystemConfig 使用自定义配置启用文件系统访问。
-func WithFilesystemConfig(cfg *FilesystemConfig) Option {
-	return func(c *Config) {
-		c.EnableFilesystem = true
+func WithFilesystemConfig(cfg *FilesystemConfig) (option Option) {
+	option = func(c *Config) {
 		if cfg == nil {
 			c.FilesystemConfig = &FilesystemConfig{}
 			return
@@ -363,6 +338,7 @@ func WithFilesystemConfig(cfg *FilesystemConfig) Option {
 		cloned := *cfg
 		c.FilesystemConfig = &cloned
 	}
+	return option
 }
 
 // WithDisableSubAgent 禁用子代理中间件
@@ -375,8 +351,10 @@ func WithDisableSubAgent() Option {
 // WithDisableUploadDownload 禁用 upload_files 和 download_files 工具
 func WithDisableUploadDownload() Option {
 	return func(c *Config) {
-		c.DisableUploadDownload = true
-		c.disableUploadDownloadExplicit = true
+		if c.FilesystemConfig == nil {
+			c.FilesystemConfig = &FilesystemConfig{}
+		}
+		c.FilesystemConfig.DisableUploadDownload = true
 	}
 }
 
@@ -384,8 +362,10 @@ func WithDisableUploadDownload() Option {
 // 即使 Backend 实现了 SandboxBackend 接口，也不暴露 execute 工具
 func WithDisableExecute() Option {
 	return func(c *Config) {
-		c.DisableExecute = true
-		c.disableExecuteExplicit = true
+		if c.FilesystemConfig == nil {
+			c.FilesystemConfig = &FilesystemConfig{}
+		}
+		c.FilesystemConfig.DisableExecute = true
 	}
 }
 
@@ -417,18 +397,24 @@ func WithStreamToolCall() Option {
 }
 
 // WithWeb 启用 Web 工具（web_search, http_request, fetch_url）
-func WithWeb() Option {
-	return func(c *Config) {
-		c.EnableWeb = true
+func WithWeb() (option Option) {
+	option = func(c *Config) {
+		c.WebConfig = web.DefaultConfig()
 	}
+	return option
 }
 
 // WithWebConfig 使用自定义配置启用 Web 工具
-func WithWebConfig(config *web.WebConfig) Option {
-	return func(c *Config) {
-		c.EnableWeb = true
-		c.WebConfig = config
+func WithWebConfig(config *web.WebConfig) (option Option) {
+	option = func(c *Config) {
+		if config == nil {
+			c.WebConfig = web.DefaultConfig()
+			return
+		}
+		cloned := *config
+		c.WebConfig = &cloned
 	}
+	return option
 }
 
 // WithMiddleware 添加自定义中间件
@@ -473,13 +459,15 @@ func WithInterruptAfterNodes(nodes ...string) Option {
 }
 
 // WithAllFeatures 启用所有功能
-func WithAllFeatures() Option {
-	return func(c *Config) {
-		c.EnablePlanning = true
-		c.EnableFilesystem = true
+func WithAllFeatures() (option Option) {
+	option = func(c *Config) {
+		if c.FilesystemConfig == nil {
+			c.FilesystemConfig = &FilesystemConfig{}
+		}
 		c.EnablePatchToolCalls = true
-		c.EnableWeb = true
+		c.WebConfig = web.DefaultConfig()
 	}
+	return option
 }
 
 func WithHITLConfig(cfg *HITLConfig) Option {
@@ -490,9 +478,7 @@ func WithHITLConfig(cfg *HITLConfig) Option {
 
 func WithContextManager(manager middleware.Middleware) Option {
 	return func(c *Config) {
-		c.ContextManagerCfg = &ContextManagerConfig{
-			Manager: manager,
-		}
+		c.ContextManager = manager
 	}
 }
 

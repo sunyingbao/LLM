@@ -10,35 +10,32 @@ import (
 	"time"
 
 	"code.byted.org/gopkg/logs/v2"
+	deepagents "eino-cli/deepagent/core"
 	"eino-cli/deepagent/core/agentthread"
 	"eino-cli/deepagent/core/backends"
 	sdkmiddleware "eino-cli/deepagent/core/middleware"
+	"eino-cli/deepagent/core/middleware/baseprompt"
 	"eino-cli/deepagent/core/middleware/skill"
-	"eino-cli/deepagent/definition"
-	definitionresolver "eino-cli/deepagent/definition/resolver"
 	sdkruntime "eino-cli/deepagent/runtime"
 	localclient "eino-cli/deepagent/runtime/local"
 	"eino-cli/deepagent/worker/inprocess"
 	inprocessstore "eino-cli/deepagent/worker/inprocess/store"
 	"github.com/cloudwego/eino/components/model"
-	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/compose"
 	"github.com/cloudwego/eino/schema"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 
-	"eino-cli/backend/config"
-	"eino-cli/backend/consts"
-	memorystore "eino-cli/backend/memory/store"
-	"eino-cli/backend/sandbox"
+	"eino-cli/deepagent/backend/config"
+	"eino-cli/deepagent/backend/consts"
+	memorystore "eino-cli/deepagent/backend/memory/store"
+	"eino-cli/deepagent/backend/sandbox"
 	host "eino-cli/deepagent/host"
 	"eino-cli/deepagent/host/checkpoint"
-	agentmemory "eino-cli/deepagent/memory/sgadk"
-	agenttools "eino-cli/deepagent/tools/sgadk"
+	agentmemory "eino-cli/deepagent/memory/facts"
+	agenttools "eino-cli/deepagent/tools"
 )
-
-const localDefinitionVersion = "v1"
 
 func NewLocalRuntime(ctx context.Context, cfg *config.Config, sessionID string) (runtime *LocalRuntime, err error) {
 	if cfg == nil {
@@ -66,7 +63,7 @@ func NewLocalRuntime(ctx context.Context, cfg *config.Config, sessionID string) 
 		return nil, err
 	}
 
-	definition, resolver, err := buildLocalDefinition(ctx, cfg)
+	agentConfig, err := buildLocalAgentConfig(ctx, cfg)
 	if err != nil {
 		return nil, err
 	}
@@ -80,8 +77,7 @@ func NewLocalRuntime(ctx context.Context, cfg *config.Config, sessionID string) 
 		return nil, err
 	}
 	threadFactory, err := localclient.NewThreadFactory(localclient.AssemblyDependencies{
-		Definition: definition,
-		Resolver:   resolver,
+		AgentConfig: agentConfig,
 		HistoryStore: func(ctx context.Context, threadID string) (store agentthread.HistoryRolloutStore, err error) {
 			return historyStore, nil
 		},
@@ -89,7 +85,7 @@ func NewLocalRuntime(ctx context.Context, cfg *config.Config, sessionID string) 
 			store = checkpoint.NewStore(filepath.Join(runtimeDir, "checkpoints", threadID))
 			return store, nil
 		},
-		TurnCompleted: sgadkMemoryTurnCompleted(),
+		TurnCompleted: memoryTurnCompleted(),
 	})
 	if err != nil {
 		return nil, err
@@ -102,115 +98,56 @@ func NewLocalRuntime(ctx context.Context, cfg *config.Config, sessionID string) 
 	if err != nil {
 		return nil, err
 	}
-	index, err := OpenPersistentThreadIndex(filepath.Join(runtimeDir, "thread-index.json"))
-	if err != nil {
-		return nil, err
-	}
 	runtime = &LocalRuntime{
-		cfg:    cfg,
-		router: &sdkruntime.Router{Local: client, Index: index}, sessionID: sessionID,
-		definition: definition, modelName: cfg.DefaultModel, runtimeKind: sdkruntime.RuntimeLocal,
+		router: &sdkruntime.Router{Local: client}, sessionID: sessionID,
+		modelName: cfg.DefaultModel, runtimeKind: sdkruntime.RuntimeLocal,
 	}
 	return runtime, nil
 }
 
-func sgadkMemoryTurnCompleted() (completed func(ctx context.Context, threadID, turnID string, chatModel model.ToolCallingChatModel, history []*schema.Message)) {
+func memoryTurnCompleted() (completed func(ctx context.Context, threadID, turnID string, chatModel model.ToolCallingChatModel, history []*schema.Message)) {
 	updater := agentmemory.NewMemoryUpdater(memorystore.NewStore())
 	completed = func(ctx context.Context, threadID, turnID string, chatModel model.ToolCallingChatModel, history []*schema.Message) {
 		memoryContext := context.WithoutCancel(ctx)
 		messages := append([]*schema.Message(nil), history...)
 		go func() {
 			if updateErr := updater.Run(memoryContext, chatModel, consts.DefaultAgentKey, messages, false); updateErr != nil {
-				logs.CtxWarn(memoryContext, "[sgadk_memory] update failed: thread_id=%s turn_id=%s err=%v", threadID, turnID, updateErr)
+				logs.CtxWarn(memoryContext, "[memory] update failed: thread_id=%s turn_id=%s err=%v", threadID, turnID, updateErr)
 			}
 		}()
 	}
 	return completed
 }
 
-func NewRemoteRuntime(ctx context.Context, cfg *config.Config, sessionID string, client sdkruntime.Client) (runtime *LocalRuntime, err error) {
-	if cfg == nil || client == nil {
-		return nil, fmt.Errorf("remote runtime configuration and client are required")
-	}
-	if strings.TrimSpace(sessionID) == "" {
-		return nil, fmt.Errorf("session id is required")
-	}
-	definition, _, err := buildLocalDefinition(ctx, cfg)
+func buildLocalAgentConfig(ctx context.Context, cfg *config.Config) (agentConfig *deepagents.Config, err error) {
+	skillBackend := backends.NewFilesystemBackend(&backends.FilesystemBackendConfig{RootDir: config.RootDir(), VirtualMode: true})
+	workspaceBackend := agenttools.NewWorkspaceBackend(sandbox.Default())
+	chatModel, err := host.BuildToolCallingChatModel(ctx, cfg.Models[cfg.DefaultModel])
 	if err != nil {
 		return nil, err
 	}
-	runtimeDir := filepath.Join(config.BaseDir(), "runtime")
-	if err = os.MkdirAll(runtimeDir, 0o700); err != nil {
-		return nil, err
-	}
-	index, err := OpenPersistentThreadIndex(filepath.Join(runtimeDir, "thread-index.json"))
+	builtinTools := agenttools.BuildExtensionTools(cfg, sandbox.Default())
+	webConfig, err := buildWebConfig(cfg.WebSearch)
 	if err != nil {
 		return nil, err
 	}
-	runtime = &LocalRuntime{
-		cfg: cfg, router: &sdkruntime.Router{Remote: client, Index: index}, sessionID: sessionID,
-		definition: definition, modelName: cfg.DefaultModel, runtimeKind: sdkruntime.RuntimeRemote,
-	}
-	return runtime, nil
-}
-
-func buildLocalDefinition(ctx context.Context, cfg *config.Config) (definition agentdefinition.Definition, resolver *definitionresolver.Resolver, err error) {
-	registry := definitionresolver.NewRegistry()
-	workspaceBackend := backends.NewFilesystemBackend(&backends.FilesystemBackendConfig{RootDir: config.RootDir(), VirtualMode: true})
-	registry.RegisterModel("sgadk-default", func(ctx context.Context, policy agentdefinition.ModelPolicy) (chatModel model.ToolCallingChatModel, err error) {
-		chatModel, err = host.BuildToolCallingChatModel(ctx, cfg.Models[cfg.DefaultModel])
-		return chatModel, err
-	})
-	registry.RegisterSkillLoader("sgadk-filesystem", func(ctx context.Context, policy agentdefinition.SkillPolicy) (loader skill.Loader, err error) {
-		var mask skill.Mask
-		if len(policy.Names) > 0 {
-			allowed := make(map[string]struct{}, len(policy.Names))
-			for _, name := range policy.Names {
-				allowed[name] = struct{}{}
-			}
-			mask = func(ctx context.Context, metadata *skill.SkillMetadata) (included bool) {
-				if metadata != nil {
-					_, included = allowed[metadata.Name]
-				}
-				return included
-			}
+	for _, baseTool := range builtinTools {
+		if _, infoErr := baseTool.Info(ctx); infoErr != nil {
+			return nil, fmt.Errorf("inspect tool: %w", infoErr)
 		}
-		loader = skill.NewFileSystemSkillLoader([]string{"backend/skills"}, workspaceBackend, false, mask)
-		return loader, nil
-	})
-	registry.RegisterMemory("sgadk-memory", func(ctx context.Context, policy agentdefinition.MemoryPolicy) (memory sdkmiddleware.Middleware, err error) {
-		memory = newSGADKMemoryMiddleware()
-		return memory, nil
-	})
-	registry.RegisterSandbox("sgadk-workspace", func(ctx context.Context, policy agentdefinition.SandboxPolicy) (backend backends.Backend, err error) {
-		return workspaceBackend, nil
-	})
-	definition = agentdefinition.Definition{
-		Name: consts.DefaultAgentKey, Version: localDefinitionVersion,
-		Instructions: host.GetUnifiedSystemPrompt(consts.DefaultAgentKey, true, cfg),
-		Model:        agentdefinition.ModelPolicy{Provider: "sgadk-default", Model: cfg.DefaultModel},
-		Skills:       agentdefinition.SkillPolicy{Loader: "sgadk-filesystem"},
-		Memory:       agentdefinition.MemoryPolicy{Provider: "sgadk-memory"},
-		// SGADK keeps its established sandbox-aware tool names. The resolved
-		// backend remains available to skills and runtime capabilities without
-		// installing the core filesystem tool middleware a second time.
-		Sandbox: agentdefinition.SandboxPolicy{Backend: "sgadk-workspace", Config: agentdefinition.Config{
-			"enable_filesystem_tools": false,
-		}},
-		Limits: agentdefinition.RuntimeLimits{MaxSteps: consts.DefaultAgentIterations},
 	}
-	for _, baseTool := range agenttools.BuildBuiltinTools(cfg, sandbox.Default()) {
-		info, infoErr := baseTool.Info(ctx)
-		if infoErr != nil {
-			return definition, nil, fmt.Errorf("inspect tool: %w", infoErr)
-		}
-		name := info.Name
-		registeredTool := baseTool
-		registry.RegisterTool(name, func(ctx context.Context, binding agentdefinition.ToolBinding) (baseTool tool.BaseTool, err error) {
-			return registeredTool, nil
-		})
-		definition.Tools = append(definition.Tools, agentdefinition.ToolBinding{Name: name})
+	agentConfig = &deepagents.Config{
+		Model:            chatModel,
+		WebConfig:        webConfig,
+		MaxSteps:         consts.DefaultAgentIterations,
+		Tools:            builtinTools,
+		SkillLoader:      skill.NewFileSystemSkillLoader([]string{"deepagent/backend/skills"}, skillBackend, false, nil),
+		Backend:          workspaceBackend,
+		FilesystemConfig: &deepagents.FilesystemConfig{WorkDir: config.RootDir(), DisableApplyPatch: true, DisableUploadDownload: true},
+		Middlewares: []sdkmiddleware.Middleware{
+			baseprompt.New(host.SystemPrompt(consts.DefaultAgentKey, true)),
+			newMemoryMiddleware(),
+		},
 	}
-	resolver = definitionresolver.NewResolver(registry)
-	return definition, resolver, nil
+	return agentConfig, nil
 }

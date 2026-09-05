@@ -145,6 +145,40 @@ join: no
 	}
 }
 
+func TestParseMetadataRejectsInvalidSkillNames(t *testing.T) {
+	tests := []struct {
+		name      string
+		path      string
+		skillName string
+		wantError string
+	}{
+		{
+			name:      "invalid characters",
+			path:      "/tmp/example-skill/SKILL.md",
+			skillName: "Example Skill",
+			wantError: constant.ErrMsgSkillNameInvalid,
+		},
+		{
+			name:      "directory mismatch",
+			path:      "/tmp/example-skill/SKILL.md",
+			skillName: "another-skill",
+			wantError: constant.ErrMsgSkillNameMismatch,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			content := "---\nname: " + tt.skillName + "\ndescription: Example skill\n---\n"
+
+			_, err := parseMetadata(context.Background(), content, tt.path)
+
+			if err == nil || !strings.Contains(err.Error(), tt.wantError) {
+				t.Fatalf("parseMetadata() error = %v, want error containing %q", err, tt.wantError)
+			}
+		})
+	}
+}
+
 func TestBackendLoaderListSkillsUsesPriorityAndLoadsContent(t *testing.T) {
 	ctx := context.Background()
 	backend := newSkillTestBackend(t)

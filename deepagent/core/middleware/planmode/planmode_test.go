@@ -80,8 +80,15 @@ func TestRequestUserInputResumeReturnsStructuredAnswer(t *testing.T) {
 	cm.EXPECT().WithTools(gomock.Any()).Return(cm, nil).AnyTimes()
 
 	var callID = "call_request_user_input"
+	var resumedAnswer RequestUserInputResponse
 	cm.EXPECT().Generate(gomock.Any(), gomock.Any(), gomock.Any()).
-		DoAndReturn(func(_ context.Context, _ []*schema.Message, _ ...model.Option) (*schema.Message, error) {
+		DoAndReturn(func(_ context.Context, messages []*schema.Message, _ ...model.Option) (*schema.Message, error) {
+			for _, message := range messages {
+				if message != nil && message.Role == schema.Tool {
+					require.NoError(t, json.Unmarshal([]byte(message.Content), &resumedAnswer))
+					return schema.AssistantMessage("answer received", nil), nil
+				}
+			}
 			return schema.AssistantMessage("ask",
 				[]schema.ToolCall{{
 					ID: callID,
@@ -90,14 +97,13 @@ func TestRequestUserInputResumeReturnsStructuredAnswer(t *testing.T) {
 						Arguments: `{"questions":[{"id":"scope","header":"Scope","question":"Which scope should the plan target?","options":[{"label":"SDK only (Recommended)","description":"Limit the change to reusable SDK middleware."}]}]}`,
 					},
 				}}), nil
-		}).Times(1)
+		}).Times(2)
 
 	agent, err := deepagents.New(ctx,
 		deepagents.WithModel(cm),
 		deepagents.WithMiddleware(New(nil)),
 		deepagents.WithContextManager(contextmanager.New()),
 		deepagents.WithCheckpointStore(checkpointer.NewInMemoryStore()),
-		deepagents.WithReactLoopBranchPolicy(endAfterToolsPolicy{}),
 	)
 	require.NoError(t, err)
 
@@ -124,11 +130,9 @@ func TestRequestUserInputResumeReturnsStructuredAnswer(t *testing.T) {
 	)
 	require.NoError(t, err)
 	require.NotNil(t, got)
-	assert.Equal(t, schema.Tool, got.Role)
-
-	var decoded RequestUserInputResponse
-	require.NoError(t, json.Unmarshal([]byte(got.Content), &decoded))
-	assert.Equal(t, response.Answers["scope"].Answers, decoded.Answers["scope"].Answers)
+	assert.Equal(t, schema.Assistant, got.Role)
+	assert.Equal(t, "answer received", got.Content)
+	assert.Equal(t, response.Answers["scope"].Answers, resumedAnswer.Answers["scope"].Answers)
 }
 
 func TestPlanModeDoesNotExposeUpdatePlan(t *testing.T) {
@@ -153,14 +157,4 @@ func requestUserInputTool(t *testing.T) tool.InvokableTool {
 	askTool, ok := tools[0].(tool.InvokableTool)
 	require.True(t, ok)
 	return askTool
-}
-
-type endAfterToolsPolicy struct{}
-
-func (endAfterToolsPolicy) AfterModel(context.Context, deepagents.ReactLoopAfterModelInput) (deepagents.ReactLoopBranchDecision, error) {
-	return deepagents.ReactLoopBranchDefault, nil
-}
-
-func (endAfterToolsPolicy) AfterTools(context.Context, deepagents.ReactLoopAfterToolsInput) (deepagents.ReactLoopBranchDecision, error) {
-	return deepagents.ReactLoopBranchToEnd, nil
 }

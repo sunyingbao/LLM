@@ -1,31 +1,28 @@
 # Unified DeepAgent Runtime
 
-本仓库将原 SGADK 本地 Agent 与服务端 Agent SDK 融合为同一个 Agent
-Runtime。所有 Agent 执行逻辑位于 `deepagent/`；SGADK 只保留配置、TUI
-和会话展示等产品壳能力。
+DeepAgent 提供本地 CLI 和云端 Web 工作台，共用一个 Agent Runtime。
+模型执行、工具、中间件和线程逻辑都位于 `deepagent/`。
 
 ## 架构入口
 
 ```text
 deepagent/
-  definition/       AgentDefinition 与能力解析
+  backend/          本地配置、沙箱、会话数据和 TUI
   runtime/          RuntimeClient、local/remote client 和路由
   worker/           in-process 与 Agent Coordinator worker
   cloud/            Cloud API、协议与服务端适配
   core/             模型循环、AgentThread、middleware、workspace backend
-  host/             SGADK provider、配置和运行时绑定
-  tools/            共享工具及 SGADK 工具绑定
-  memory/           structured memory、dream memory 与 consolidation
+  host/             本地模型、配置和运行时装配
+  tools/            本地扩展工具，通用工具复用 core
+  memory/           结构化事实提取、合并与提示词注入
 
-deepagent/cmd/deepagent/  统一 DeepAgent/SGADK 本地 CLI 入口
-backend/cli/tui/     Bubble Tea 展示层
-backend/config/      SGADK 本地配置
+deepagent/cmd/deepagent/  本地 CLI 入口
+deepagent/cmd/cloud_agent/  HTTP、Coordinator、Worker 单进程入口
 ```
 
-仓库只有根目录一个 Go module。历史入口 `cmd/sgadk` 以及目录 `arch/`、`agent/` 和
-`backend/agent/` 已不存在，也没有第二套 Agent loop。
+仓库只有根目录一个 Go module，没有第二套 Agent loop。
 
-## 运行 SGADK
+## 运行 DeepAgent
 
 准备 `yaml/config.yaml` 后：
 
@@ -37,30 +34,31 @@ go run ./deepagent/cmd/deepagent --root /Users/bytedance/go/src/content/LLM
 本地 runtime 是默认值。也可以显式设置：
 
 ```bash
-SGADK_RUNTIME=local go run ./deepagent/cmd/deepagent
+DEEPAGENT_RUNTIME=local go run ./deepagent/cmd/deepagent
 ```
 
-远端 runtime 需要 Agent Coordinator 配置：
+远端 CLI 和 WebUI 共用 Cloud Agent 的 HTTP/SSE 接口。先启动后端，再连接已有项目：
 
 ```bash
-SGADK_RUNTIME=remote \
-SGADK_REMOTE_AC_PSM=<coordinator-psm> \
-SGADK_REMOTE_NAMESPACE=<worker-namespace> \
-SGADK_REMOTE_USER_ID=<user-id> \
+DEEPAGENT_RUNTIME=remote \
+DEEPAGENT_SERVER_URL=http://127.0.0.1:6789 \
+DEEPAGENT_PROJECT=<project-name> \
 go run ./deepagent/cmd/deepagent
 ```
 
-可选变量包括 `SGADK_REMOTE_AC_CLUSTER`、
-`SGADK_REMOTE_AC_HOSTPORTS` 和 `SGADK_REMOTE_ENV`。local 与 remote thread
-使用不可变 `GlobalThreadRef` 路由，不会自动互相回退。
+需要认证的服务使用 `DEEPAGENT_USER_TOKEN`（发送为 `X-Bytedance-User`）。远端 CLI
+不加载模型 YAML，不连接 MySQL/Redis，也不启动本地沙箱；执行目录由后端项目决定。
+`--resume_session_id <session-id>` 恢复后端会话，`--auto_resume` 选择当前项目最近会话。
+本地模式仍使用 `--resume_thread_id`，两种模式不会自动互相回退。
+详细用法见 [HTTP CLI 运行说明](deepagent/docs/runbooks/http-cli.md)。
 
 ## 安装与验证
 
 安装本地命令：
 
 ```bash
-bash scripts/install-sgadk.sh
-sgadk
+bash scripts/install-deepagent.sh
+deepagent
 ```
 
 常用验证：

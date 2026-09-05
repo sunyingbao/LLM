@@ -70,15 +70,16 @@ type InvokableApprovableTool struct {
 	gate ToolPolicyGate
 }
 
-func NewInvokableApprovableTool(tool tool.InvokableTool, needApproval NeedApproval) InvokableApprovableTool {
-	return NewInvokablePolicyTool(tool, ToolPolicyGate{
+func ApprovalGate(needApproval NeedApproval) (gate ToolPolicyGate) {
+	gate = ToolPolicyGate{
 		Policy: func(ctx context.Context, info *ApprovalInfo) (ToolCallDecision, error) {
 			if needApproval != nil && needApproval(ctx, info) {
 				return ToolCallDecision{Action: ToolCallRequireApproval}, nil
 			}
 			return ToolCallDecision{Action: ToolCallAllow}, nil
 		},
-	})
+	}
+	return gate
 }
 
 func NewInvokablePolicyTool(tool tool.InvokableTool, gate ToolPolicyGate) InvokableApprovableTool {

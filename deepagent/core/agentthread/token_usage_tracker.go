@@ -221,17 +221,6 @@ func (t *TokenUsageTracker) ShouldCompact(limit int64) bool {
 	return t.Current().CurrentTotal >= limit
 }
 
-func (t *TokenUsageTracker) currentTotalLocked() int64 {
-	if t.hasModelUsage {
-		total := t.lastModelTotal + t.estimatedAfterModel
-		if t.estimatedTotal > total {
-			return t.estimatedTotal
-		}
-		return total
-	}
-	return t.estimatedTotal
-}
-
 func (t *TokenUsageTracker) snapshotLocked(total int64, source ContextUsageSource) ContextUsageSnapshot {
 	return ContextUsageSnapshot{
 		ContextWindow:             t.contextWindow,

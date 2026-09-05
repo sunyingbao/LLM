@@ -19,11 +19,8 @@ const (
 	// NodeKeyTools 工具节点键
 	NodeKeyTools = "tools"
 
-	// NodeKeyContinue 继续执行节点键，用于无工具调用但需要继续回到 Executor 的场景。
+	// NodeKeyContinue returns an empty input to the model for another pass.
 	NodeKeyContinue = "continue"
-
-	// NodeKeyToolResultTerminal 工具结果终止节点键，用于 tools 直接结束当前 react loop 的场景。
-	NodeKeyToolResultTerminal = "tool_result_terminal"
 )
 
 // 默认配置

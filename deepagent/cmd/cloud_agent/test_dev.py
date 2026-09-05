@@ -7,6 +7,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import dev
+import audit_local_schema
 
 
 class ModelEnvironmentTest(unittest.TestCase):
@@ -47,6 +48,49 @@ class ModelEnvironmentTest(unittest.TestCase):
             env = dev.resolve_model_env(cfg)
 
         self.assertEqual(env["KIMI_API_KEY"], "shell-token")
+
+
+class DatabaseSchemaTest(unittest.TestCase):
+    def test_all_database_schema_files_exist(self) -> None:
+        sql_files = dev.database_sql_files()
+
+        self.assertEqual(len(sql_files), 11)
+        self.assertTrue(all(sql_file.is_file() for sql_file in sql_files))
+        self.assertIn(
+            dev.REPO_ROOT / "cloud" / "worker" / "sql" / "t_agent_thread_ref.sql",
+            sql_files,
+        )
+        self.assertIn(
+            dev.REPO_ROOT / "core" / "memory" / "gorm_store" / "sql" / "t_memory_source.sql",
+            sql_files,
+        )
+
+    def test_all_audit_schema_files_exist(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            sql_files = audit_local_schema.ddl_files()
+
+            self.assertEqual(len(sql_files), 11)
+            self.assertTrue(all(sql_file.is_file() for sql_file in sql_files))
+
+
+class CloudAgentServiceTest(unittest.TestCase):
+    def test_command_does_not_require_psm(self) -> None:
+        cfg = dev.default_config()
+
+        self.assertEqual(
+            dev.service_command(cfg, "cloud_agent"),
+            [str(dev.service_binary("cloud_agent"))],
+        )
+
+    def test_address_is_provided_through_environment(self) -> None:
+        cfg = dev.default_config()
+        cfg["ports"]["cloud_agent"] = 8080
+
+        with patch.object(dev, "resolve_model_env", return_value={}):
+            env = dev.service_env(cfg, "cloud_agent")
+
+        self.assertEqual(env["DEEP_AGENT_SDK_API_ADDRESS"], "127.0.0.1:8080")
+        self.assertNotIn("PSM", env)
 
 
 if __name__ == "__main__":

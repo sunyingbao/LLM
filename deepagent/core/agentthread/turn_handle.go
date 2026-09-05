@@ -11,54 +11,56 @@ import (
 // this turn, not for whatever turn becomes current later.
 type TurnHandle struct {
 	owner *DeepAgentThread
-	turn  *turn
+	run   *run
 }
 
-func (c *TurnHandle) TurnID() string {
-	if c == nil || c.turn == nil {
+func (c *TurnHandle) TurnID() (turnID string) {
+	if c == nil || c.run == nil {
 		return ""
 	}
-	return c.turn.turnID
+	return c.run.turnID
 }
 
-func (c *TurnHandle) Wait(ctx context.Context) error {
-	if c == nil || c.turn == nil {
+func (c *TurnHandle) Wait(ctx context.Context) (err error) {
+	if c == nil || c.run == nil {
 		return ErrInvalidOp
 	}
 	select {
-	case <-c.turn.done:
-		return c.turn.err()
+	case <-c.run.done:
+		return c.run.runErr
 	case <-ctx.Done():
 		return ctx.Err()
 	}
 }
 
-func (c *TurnHandle) IsActive() bool {
-	if c == nil || c.owner == nil || c.turn == nil {
+func (c *TurnHandle) IsActive() (active bool) {
+	if c == nil || c.owner == nil || c.run == nil {
 		return false
 	}
 	c.owner.mu.Lock()
 	defer c.owner.mu.Unlock()
-	return c.turn.isActive()
+	return c.owner.current == c.run
 }
 
-func (c *TurnHandle) ConsumedInputs() []*schema.Message {
-	if c == nil || c.owner == nil || c.turn == nil {
+func (c *TurnHandle) ConsumedInputs() (messages []*schema.Message) {
+	if c == nil || c.owner == nil || c.run == nil {
 		return nil
 	}
 	c.owner.mu.Lock()
 	defer c.owner.mu.Unlock()
-	if len(c.turn.consumed) == 0 {
+	if len(c.run.consumed) == 0 {
 		return nil
 	}
-	return copyMessages(c.turn.consumed)
+	messages = copyMessages(c.run.consumed)
+	return messages
 }
 
-func (c *TurnHandle) ConsumedInputsMeta() []any {
-	if c == nil || c.owner == nil || c.turn == nil {
+func (c *TurnHandle) ConsumedInputsMeta() (metadata []any) {
+	if c == nil || c.owner == nil || c.run == nil {
 		return nil
 	}
 	c.owner.mu.Lock()
 	defer c.owner.mu.Unlock()
-	return copyConsumedInputsMeta(c.turn.consumedInputsMeta)
+	metadata = copyConsumedInputsMeta(c.run.consumedInputMeta)
+	return metadata
 }

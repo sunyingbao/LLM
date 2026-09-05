@@ -12,8 +12,7 @@ func threadFromState(state *inprocess.ThreadState) (thread *runtimeclient.Thread
 		return nil
 	}
 	thread = &runtimeclient.Thread{
-		Ref:            runtimeclient.GlobalThreadRef{Runtime: runtimeclient.RuntimeLocal, Namespace: state.SessionID, ThreadID: state.ID},
-		DefinitionName: definitionMetadata(state.Metadata, metadataDefinitionName), DefinitionVersion: definitionMetadata(state.Metadata, metadataDefinitionVersion),
+		Ref:       runtimeclient.GlobalThreadRef{Runtime: runtimeclient.RuntimeLocal, Namespace: state.SessionID, ThreadID: state.ID},
 		Workspace: runtimeclient.WorkspaceSpec{Cwd: state.Profile.Cwd}, Title: state.Title,
 		State: runtimeclient.ThreadStateIdle, CreatedAtMS: state.CreatedAt.UnixMilli(), UpdatedAtMS: state.UpdatedAt.UnixMilli(),
 	}

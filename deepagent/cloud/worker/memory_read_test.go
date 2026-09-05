@@ -7,11 +7,12 @@ import (
 	"strings"
 	"testing"
 
-	ac "code.byted.org/overpass/ad_creative_aic_agent_coordinator/kitex_gen/agent_coordinator"
 	"eino-cli/deepagent/core/agentthread"
 	"eino-cli/deepagent/core/backends"
 	"eino-cli/deepagent/core/memory"
 	"eino-cli/deepagent/core/middleware"
+
+	"eino-cli/deepagent/coordinator"
 )
 
 func TestMemorySummaryMiddlewareBuildInitialContext(t *testing.T) {
@@ -77,12 +78,12 @@ func TestPlanModeTurnConfigKeepsMemorySummaryMiddleware(t *testing.T) {
 		deps: Deps{MemoryWorkspace: workspace},
 	}
 	turnProfile := mustBaseTurnProfile(t, builder)
-	cfg := builder.applyPlanModeTurnConfig(ctx, &agentthread.TurnRunnerConfig{}, threadSpec{
-		Info:   &ac.Thread{UserId: 1234},
-		RoleID: DefaultRoleID,
+	cfg := builder.applyPlanModeTurnConfig(ctx, &agentthread.TurnConfig{}, threadSpec{
+		Info:    &coordinator.Thread{UserID: 1234},
+		Profile: ResolvedThreadProfile{RoleID: DefaultRoleID},
 	}, nil, turnProfile)
 
-	msgs, err := middleware.NewMiddlewareChain(cfg.Middlewares...).BuildPrompts(ctx)
+	msgs, err := middleware.NewMiddlewareChain(cfg.Agent.Middlewares...).BuildPrompts(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}

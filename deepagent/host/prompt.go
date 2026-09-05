@@ -1,60 +1,15 @@
-// Package agent assembles the lead chat-model agent, its middleware chain, and the system prompt.
+// Package host binds the shared runtime to the local product environment.
 package host
 
 import (
 	"fmt"
-	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
-	"eino-cli/backend/config"
-	"eino-cli/backend/sandboxpaths"
-	"eino-cli/deepagent/host/skills"
+	"eino-cli/deepagent/backend/config"
 )
-
-// Skill mirrors deerflow.skills.Skill (only fields used by the prompt).
-type Skill struct {
-	Name        string
-	Description string
-	Category    string // "custom" → marked [custom, editable]; otherwise [built-in]
-	SkillFile   string
-}
-
-// AvailableSkills mirrors Python's `available_skills: set[str] | None`.
-// All=true → load every enabled skill (Python None); else Names is the explicit set.
-type AvailableSkills struct {
-	All   bool
-	Names []string
-}
-
-// AllSkills returns the sentinel meaning "load every enabled skill" — equivalent
-// to passing available_skills=None in Python.
-func AllSkills() *AvailableSkills { return &AvailableSkills{All: true} }
-
-// SkillSet returns an AvailableSkills representing a Python set([names...]).
-func SkillSet(names ...string) *AvailableSkills {
-	return &AvailableSkills{All: false, Names: append([]string(nil), names...)}
-}
-
-func contains(haystack []string, needle string) bool {
-	for _, s := range haystack {
-		if s == needle {
-			return true
-		}
-	}
-	return false
-}
-
-// availableSkillsAsSet returns (allSkills, names, isExplicit). isExplicit==false
-// means the caller passed Python's None — load everything enabled.
-func availableSkillsAsSet(a *AvailableSkills) (allSkills bool, names []string) {
-	if a == nil || a.All {
-		return true, nil
-	}
-	return false, a.Names
-}
 
 // buildSubagentSection renders the orchestrator block; n is the per-turn task() cap.
 func buildSubagentSection(n int) string {
@@ -62,7 +17,7 @@ func buildSubagentSection(n int) string {
 	// "Available Subagents:" header when no named profiles are configured.
 	availableSubagents := "- `general-purpose`: a fresh deep-agent instance with the same toolbelt; use it for context-isolated parallel research / extraction tasks."
 	directToolExamples := "ls, read_file, web_search, etc."
-	directExecutionExample := "# User asks: \"Read the README\"\n# Thinking: Single straightforward file read\n# → Execute directly\n\nread_file(\"README.md\")  # Resolves under /mnt/repo; direct execution, not task()"
+	directExecutionExample := "# User asks: \"Read the README\"\n# Thinking: Single straightforward file read\n# → Execute directly\n\nread_file(\"README.md\")  # Runs under /mnt/repo; direct execution, not task()"
 
 	lines := []string{
 		"<subagent_system>",
@@ -197,83 +152,6 @@ func buildSubagentSection(n int) string {
 	return strings.Join(lines, "\n")
 }
 
-// GetSkillsPromptSection mirrors get_skills_prompt_section.
-func GetSkillsPromptSection(available *AvailableSkills) string {
-	skills := loadEnabledSkillsFromConfig()
-
-	if len(skills) == 0 {
-		return ""
-	}
-
-	allSkills, allowedNames := availableSkillsAsSet(available)
-
-	if !allSkills {
-		anyMatch := false
-		for _, s := range skills {
-			if contains(allowedNames, s.Name) {
-				anyMatch = true
-				break
-			}
-		}
-		if !anyMatch {
-			return ""
-		}
-	}
-
-	var filtered []Skill
-	if allSkills {
-		filtered = skills
-	} else {
-		for _, s := range skills {
-			if contains(allowedNames, s.Name) {
-				filtered = append(filtered, s)
-			}
-		}
-	}
-
-	skillsXML := ""
-	if len(filtered) > 0 {
-		items := make([]string, 0, len(filtered))
-		for _, s := range filtered {
-			tag := "[built-in]"
-			if s.Category == "custom" {
-				tag = "[custom, editable]"
-			}
-			items = append(items, fmt.Sprintf(
-				"    <skill>\n        <name>%s</name>\n        <description>%s %s</description>\n        <location>%s</location>\n    </skill>",
-				s.Name, s.Description, tag, buildSkillVirtualPath(s.SkillFile),
-			))
-		}
-		skillsXML = "<available_skills>\n" + strings.Join(items, "\n") + "\n</available_skills>"
-	}
-
-	return "" +
-		"<skill_system>\n" +
-		"You have access to skills that provide optimized workflows for specific tasks. " +
-		"Each skill contains best practices, frameworks, and references to additional resources.\n" +
-		"\n" +
-		"**Progressive Loading Pattern:**\n" +
-		"1. When a user query matches a skill's use case, immediately call `read_file` on the skill's main file " +
-		"using the path attribute provided in the skill tag below\n" +
-		"2. Read and understand the skill's workflow and instructions\n" +
-		"3. The skill file contains references to external resources under the same folder\n" +
-		"4. Load referenced resources only when needed during execution\n" +
-		"5. Follow the skill's instructions precisely\n" +
-		"\n" +
-		skillsXML + "\n" +
-		"\n" +
-		"</skill_system>"
-}
-
-// GetDeferredToolsPromptSection mirrors get_deferred_tools_prompt_section.
-func GetDeferredToolsPromptSection() string {
-	names := DeferredToolNamesFromConfig()
-	if len(names) == 0 {
-		return ""
-	}
-	return "<available-deferred-tools>\n" + strings.Join(names, "\n") + "\n</available-deferred-tools>"
-}
-
 // systemPromptTemplateRaw uses "§" as a backtick sentinel (Go raw strings
 // cannot contain backticks); package init swaps them back via ReplaceAll.
 const systemPromptTemplateRaw = `
@@ -368,15 +246,9 @@ Use only these virtual paths in tool calls. Never use host absolute paths such a
   You: "Deploying to staging..." [proceed]
 </clarification_system>
 
-{skills_section}
-
-{deferred_tools_section}
-
 {subagent_section}
 
 <root>/mnt/repo</root>
-
-{acp_section}
 
 <response_style>
   - **Imperative-by-default**: When the conversation references a target
@@ -439,31 +311,14 @@ func getMaxSubagents() int {
 	return defaultMaxConcurrentSubagents
 }
 
-func GetSystemPrompt(agentName string, isSubagentEnabled bool, cfg *config.Config) string {
-	return getSystemPrompt(agentName, isSubagentEnabled, true, cfg)
-}
-
-// GetUnifiedSystemPrompt omits the legacy prompt-side skill catalog because
-// unified runtimes expose skills through AgentDefinition.SkillPolicy.
-func GetUnifiedSystemPrompt(agentName string, isSubagentEnabled bool, cfg *config.Config) (prompt string) {
-	prompt = getSystemPrompt(agentName, isSubagentEnabled, false, cfg)
-	return prompt
-}
-
-func getSystemPrompt(agentName string, isSubagentEnabled, includeLegacySkills bool, cfg *config.Config) (prompt string) {
+func SystemPrompt(agentName string, isSubagentEnabled bool) (prompt string) {
 	n := getMaxSubagents()
-	skillsSection := ""
-	if includeLegacySkills {
-		skillsSection = GetSkillsPromptSection(AllSkills())
-	}
 	replacer := strings.NewReplacer(
 		"{agent_name}", agentName,
 		"{agents_md}", loadAgentsMDPrompt(),
-		"{subagent_thinking}", GetSubagentThinking(isSubagentEnabled, n),
-		"{skills_section}", skillsSection,
-		"{deferred_tools_section}", GetDeferredToolsPromptSection(),
-		"{subagent_section}", GetSubagentSection(isSubagentEnabled, n),
-		"{subagent_reminder}", GetSubagentReminder(isSubagentEnabled, n),
+		"{subagent_thinking}", getSubagentThinking(isSubagentEnabled, n),
+		"{subagent_section}", getSubagentSection(isSubagentEnabled, n),
+		"{subagent_reminder}", getSubagentReminder(isSubagentEnabled, n),
 	)
 	prompt = replacer.Replace(strings.ReplaceAll(systemPromptTemplateRaw, "§", "`"))
 
@@ -508,7 +363,7 @@ func extractTopLevelSection(text, title string) string {
 	return strings.TrimSpace(rest)
 }
 
-func GetSubagentThinking(isSubagentEnabled bool, n int) string {
+func getSubagentThinking(isSubagentEnabled bool, n int) string {
 	if isSubagentEnabled {
 		return "" +
 			"- **DECOMPOSITION CHECK: Can this task be broken into 2+ parallel sub-tasks? If YES, COUNT them. " +
@@ -518,7 +373,7 @@ func GetSubagentThinking(isSubagentEnabled bool, n int) string {
 	return ""
 }
 
-func GetSubagentReminder(isSubagentEnabled bool, n int) string {
+func getSubagentReminder(isSubagentEnabled bool, n int) string {
 	if isSubagentEnabled {
 		return "" +
 			"- **Orchestrator Mode**: You are a task orchestrator - decompose complex tasks into parallel sub-tasks. " +
@@ -528,52 +383,9 @@ func GetSubagentReminder(isSubagentEnabled bool, n int) string {
 	return ""
 }
 
-func GetSubagentSection(isSubagentEnabled bool, n int) string {
+func getSubagentSection(isSubagentEnabled bool, n int) string {
 	if isSubagentEnabled {
 		return buildSubagentSection(n)
 	}
 	return ""
-}
-
-// loadEnabledSkillsFromConfig scans the default skills path for SKILL.md files and
-// returns the enabled skills as the prompt-side Skill type. Errors yield nil.
-func buildSkillVirtualPath(skillFile string) string {
-	skillsRoot := filepath.Join(config.RootDir(), "backend", "skills")
-	skillsRootAbs, err := filepath.Abs(skillsRoot)
-	if err != nil {
-		return sandboxpaths.VirtualPathPrefixSkills
-	}
-	skillAbs, err := filepath.Abs(skillFile)
-	if err != nil {
-		return sandboxpaths.VirtualPathPrefixSkills
-	}
-	rel := strings.TrimPrefix(skillAbs, skillsRootAbs)
-	rel = strings.TrimPrefix(rel, string(filepath.Separator))
-	if rel == "" {
-		return sandboxpaths.VirtualPathPrefixSkills
-	}
-	return sandboxpaths.VirtualPathPrefixSkills + "/" + filepath.ToSlash(rel)
-}
-
-func loadEnabledSkillsFromConfig() []Skill {
-	loaded, err := skills.LoadFromPaths([]string{filepath.Join(config.RootDir(), "backend", "skills")})
-	if err != nil {
-		slog.Warn("skills loader: scan failed", "err", err)
-		return nil
-	}
-	out := make([]Skill, 0, len(loaded))
-	for _, s := range loaded {
-		out = append(out, Skill{
-			Name:        s.Name,
-			Description: s.Description,
-			Category:    s.Category,
-			SkillFile:   s.SkillFile,
-		})
-	}
-	return out
-}
-
-// DeferredToolNamesFromConfig returns the code-defined deferred tool list.
-func DeferredToolNamesFromConfig() []string {
-	return nil
 }

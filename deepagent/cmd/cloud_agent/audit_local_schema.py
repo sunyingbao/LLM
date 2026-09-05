@@ -18,29 +18,19 @@ ROOT = Path(__file__).resolve().parent
 SDK_REPO = ROOT.parents[1]
 
 
-def resolve_ac_repo() -> Path:
-    configured = os.environ.get("AC_REPO", "").strip()
-    if configured:
-        return Path(configured).expanduser().resolve()
-    for candidate in (SDK_REPO.parent / "aic_agent_coordinator",):
-        if candidate.is_dir():
-            return candidate.resolve()
-    raise SystemExit(f"cannot find aic_agent_coordinator next to {SDK_REPO}")
-
-
-def ddl_files(ac_repo: Path) -> list[Path]:
+def ddl_files() -> list[Path]:
     return [
-        ac_repo / "sql" / "t_agent_namespace.sql",
-        ac_repo / "sql" / "t_thread.sql",
-        ac_repo / "sql" / "t_mailbox_message.sql",
-        ac_repo / "sql" / "t_event_log.sql",
-        SDK_REPO / "cmd" / "cloud_agent" / "aic_agent_sdk_session" / "sql" / "t_agent_session.sql",
-        SDK_REPO / "cloudagent" / "worker" / "sql" / "t_agent_thread_ref.sql",
-        SDK_REPO / "cloudagent" / "worker" / "sql" / "t_agentthread_history.sql",
-        SDK_REPO / "deepagents" / "memory" / "gorm_store" / "sql" / "t_memory_source.sql",
-        SDK_REPO / "deepagents" / "memory" / "gorm_store" / "sql" / "t_memory_stage1_output.sql",
-        SDK_REPO / "deepagents" / "memory" / "gorm_store" / "sql" / "t_memory_stage2_job.sql",
-        SDK_REPO / "deepagents" / "memory" / "gorm_store" / "sql" / "t_memory_baseline.sql",
+        SDK_REPO / "coordinator" / "sql" / "t_agent_namespace.sql",
+        SDK_REPO / "coordinator" / "sql" / "t_thread.sql",
+        SDK_REPO / "coordinator" / "sql" / "t_mailbox_message.sql",
+        SDK_REPO / "coordinator" / "sql" / "t_event_log.sql",
+        SDK_REPO / "cmd" / "cloud_agent" / "deep_agent_sdk_session" / "sql" / "t_agent_session.sql",
+        SDK_REPO / "cloud" / "worker" / "sql" / "t_agent_thread_ref.sql",
+        SDK_REPO / "cloud" / "worker" / "sql" / "t_agentthread_history.sql",
+        SDK_REPO / "core" / "memory" / "gorm_store" / "sql" / "t_memory_source.sql",
+        SDK_REPO / "core" / "memory" / "gorm_store" / "sql" / "t_memory_stage1_output.sql",
+        SDK_REPO / "core" / "memory" / "gorm_store" / "sql" / "t_memory_stage2_job.sql",
+        SDK_REPO / "core" / "memory" / "gorm_store" / "sql" / "t_memory_baseline.sql",
     ]
 
 
@@ -215,8 +205,7 @@ def main() -> int:
     parser.add_argument("--json-out", default="")
     args = parser.parse_args()
 
-    ac_repo = resolve_ac_repo()
-    files = ddl_files(ac_repo)
+    files = ddl_files()
     for path in files:
         if not path.is_file():
             raise SystemExit(f"DDL file missing: {path}")

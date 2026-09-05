@@ -51,12 +51,15 @@ func NewInMemoryStore() *InMemoryStore {
 	}
 }
 
-func (s *InMemoryStore) TouchSource(_ context.Context, req TouchSourceRequest) error {
+func (s *InMemoryStore) TouchSource(_ context.Context, req TouchSourceRequest) (err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	key := sourceKey(req.Memory.UserID, req.SourceThreadID)
 	candidate := s.sources[key]
+	if req.SourceUpdatedAt.Before(candidate.SourceUpdatedAt) {
+		return nil
+	}
 	candidate.UserID = strings.TrimSpace(req.Memory.UserID)
 	candidate.SourceThreadID = strings.TrimSpace(req.SourceThreadID)
 	candidate.SourceUpdatedAt = req.SourceUpdatedAt
@@ -65,7 +68,9 @@ func (s *InMemoryStore) TouchSource(_ context.Context, req TouchSourceRequest) e
 	if candidate.Status == "" {
 		candidate.Status = SourceStatusPending
 	}
-	candidate.UpdatedAt = req.SourceUpdatedAt
+	if candidate.UpdatedAt.Before(req.SourceUpdatedAt) {
+		candidate.UpdatedAt = req.SourceUpdatedAt
+	}
 	s.sources[key] = candidate
 	return nil
 }

@@ -109,8 +109,6 @@ func TestLoadExpandsOnlyExplicitYAMLReferences(t *testing.T) {
 	writeConfigFile(t, path, `
 worker:
   namespace: explicit-yaml
-coordinator:
-  direct_hostports: 127.0.0.1:8888
 mysql:
   dsn: ${MYSQL_DSN}
 abase:
@@ -185,40 +183,37 @@ func TestLoadDoesNotExpandPlaceholdersInYAMLComments(t *testing.T) {
 }
 
 func TestProfilesUseConfiguredOpenAIModel(t *testing.T) {
-	root := filepath.Join("..", "..", "..", "..", "cmd", "cloud_agent", "aic_agent_sdk_worker", "conf")
-	for _, name := range []string{"worker.local.yml", "worker.remote.yml"} {
-		data, err := os.ReadFile(filepath.Join(root, name))
-		if err != nil {
-			t.Fatal(err)
-		}
-		var cfg Config
-		if err := yaml.Unmarshal(data, &cfg); err != nil {
-			t.Fatal(err)
-		}
-		if got := cfg.Models["default"].ModelEndpointID; got != "${OPENAI_MODEL}" {
-			t.Fatalf("%s endpoint = %q", name, got)
-		}
-		if got := cfg.Models["default"].ModelAPIKey; got != "${DEEPSEEK_API_KEY}" {
-			t.Fatalf("%s api key placeholder = %q", name, got)
-		}
+	path := filepath.Join("..", "..", "..", "..", "cmd", "cloud_agent", "conf", "worker.local.yml")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cfg Config
+	if err := yaml.Unmarshal(data, &cfg); err != nil {
+		t.Fatal(err)
+	}
+	if got := cfg.Models["default"].ModelEndpointID; got != "${OPENAI_MODEL}" {
+		t.Fatalf("endpoint = %q", got)
+	}
+	if got := cfg.Models["default"].ModelAPIKey; got != "${OPENAI_API_KEY}" {
+		t.Fatalf("api key placeholder = %q", got)
 	}
 }
 
 func TestTrackedProfilesLoadAndValidate(t *testing.T) {
 	t.Setenv("AGENT_WORKER_MYSQL_DSN", "local-dsn")
-	t.Setenv("AIC_AGENT_SDK_WORKSPACE_ROOT", "/tmp/workspace")
+	t.Setenv("DEEP_AGENT_SDK_WORKSPACE_ROOT", "/tmp/workspace")
 	t.Setenv("DEEPSEEK_API_KEY", "local-model-key")
+	t.Setenv("OPENAI_API_KEY", "local-model-key")
 	t.Setenv("OPENAI_BASE_URL", "https://super-relay.byted.org/v1")
 	t.Setenv("OPENAI_MODEL", "model_api/experimental_0630")
-	root := filepath.Join("..", "..", "..", "..", "cmd", "cloud_agent", "aic_agent_sdk_worker", "conf")
-	for _, name := range []string{"worker.local.yml", "worker.remote.yml"} {
-		cfg, err := Load([]string{"-conf", filepath.Join(root, name)})
-		if err != nil {
-			t.Fatalf("load %s: %v", name, err)
-		}
-		if cfg.Models["default"].ModelEndpointID != "model_api/experimental_0630" {
-			t.Fatalf("%s model = %+v", name, cfg.Models["default"])
-		}
+	path := filepath.Join("..", "..", "..", "..", "cmd", "cloud_agent", "conf", "worker.local.yml")
+	cfg, err := Load([]string{"-conf", path})
+	if err != nil {
+		t.Fatalf("load worker.local.yml: %v", err)
+	}
+	if cfg.Models["default"].ModelEndpointID != "model_api/experimental_0630" {
+		t.Fatalf("model = %+v", cfg.Models["default"])
 	}
 }
 
@@ -243,8 +238,6 @@ func TestLoadNormalizesDurationsAndBackend(t *testing.T) {
 worker:
   namespace: local
   scan_interval_ms: 250
-coordinator:
-  direct_hostports: 127.0.0.1:8888
 mysql:
   dsn: dsn
 abase:
@@ -281,17 +274,13 @@ func TestValidateRequiresRedisForHistorySequence(t *testing.T) {
 	}
 }
 
-func TestValidateAllowsAbase(t *testing.T) {
+func TestValidateAllowsRedis(t *testing.T) {
 	cfg := validConfig()
-	cfg.Abase = AbaseConfig{
-		PSM:        "bytedance.abase2.example",
-		PrimaryPSM: "bytedance.abase2.example_primary",
-		Table:      "aic_agent_sdk",
-	}
+	cfg.Abase = AbaseConfig{Addr: "127.0.0.1:6379"}
 	if err := validate(cfg); err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Abase.RedisMode() != "abase" {
+	if cfg.Abase.RedisMode() != "redis" {
 		t.Fatalf("mode = %q", cfg.Abase.RedisMode())
 	}
 }
@@ -349,8 +338,6 @@ func validYAML(namespace, dsn string) string {
 	return `
 worker:
   namespace: ` + namespace + `
-coordinator:
-  direct_hostports: 127.0.0.1:8888
 mysql:
   dsn: ` + dsn + `
 abase:

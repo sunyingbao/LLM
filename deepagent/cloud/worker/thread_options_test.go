@@ -15,7 +15,7 @@ func TestBuildThreadLevelConfigUsesEightyFivePercentOfContextWindow(t *testing.T
 
 	opts := b.buildThreadLevelConfig(context.Background(), threadSpec{
 		ThreadID: "thread-1",
-	}, threadResources{}, ResolvedThreadProfile{}, ResolvedTurnProfile{Model: ModelProfile{ContextWindow: 100000}})
+	}, threadResources{}, ResolvedTurnProfile{Model: ModelProfile{ContextWindow: 100000}})
 
 	limiter, ok := opts.CompactionStrategy.(agentthread.AutoCompactLimiter)
 	if !ok {
@@ -31,9 +31,8 @@ func TestBuildThreadLevelConfigKeepsExplicitAutoCompactLimit(t *testing.T) {
 
 	opts := b.buildThreadLevelConfig(context.Background(), threadSpec{
 		ThreadID: "thread-1",
-	}, threadResources{}, ResolvedThreadProfile{
-		Compaction: CompactionConfig{AutoCompactLimitTokens: 12345},
-	}, ResolvedTurnProfile{Model: ModelProfile{ContextWindow: 100000}})
+		Profile:  ResolvedThreadProfile{Compaction: CompactionConfig{AutoCompactLimitTokens: 12345}},
+	}, threadResources{}, ResolvedTurnProfile{Model: ModelProfile{ContextWindow: 100000}})
 
 	limiter, ok := opts.CompactionStrategy.(agentthread.AutoCompactLimiter)
 	if !ok {
@@ -49,9 +48,8 @@ func TestBuildThreadLevelConfigPassesCompactPromptAppend(t *testing.T) {
 
 	opts := b.buildThreadLevelConfig(context.Background(), threadSpec{
 		ThreadID: "thread-1",
-	}, threadResources{}, ResolvedThreadProfile{
-		Compaction: CompactionConfig{PromptAppend: "Preserve unresolved verification risks."},
-	}, ResolvedTurnProfile{Model: ModelProfile{ContextWindow: 100000}})
+		Profile:  ResolvedThreadProfile{Compaction: CompactionConfig{PromptAppend: "Preserve unresolved verification risks."}},
+	}, threadResources{}, ResolvedTurnProfile{Model: ModelProfile{ContextWindow: 100000}})
 
 	strategy, ok := opts.CompactionStrategy.(*compact.CodexStrategy)
 	if !ok {

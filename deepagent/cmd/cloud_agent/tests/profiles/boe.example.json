@@ -1,10 +1,10 @@
 {
   "name": "boe",
-  "base_url": "https://replace-with-aic-agent-sdk-api-host",
+  "base_url": "https://replace-with-deep-agent-sdk-api-host",
   "headers": {
     "x-use-boe": "1",
     "x-tt-env": "boe_aic_agent_sdk",
-    "X-AIC-Agent-SDK-Test-UID": "1234"
+    "X-Deep-Agent-SDK-Test-UID": "1234"
   },
   "timeouts": {
     "request_ms": 10000,

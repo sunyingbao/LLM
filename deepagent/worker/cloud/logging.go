@@ -8,145 +8,18 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	"code.byted.org/gopkg/ctxvalues"
-	"code.byted.org/gopkg/logs/v2"
 	"code.byted.org/kite/kitutil"
 	"code.byted.org/kite/kitutil/logid"
-	ac "code.byted.org/overpass/ad_creative_aic_agent_coordinator/kitex_gen/agent_coordinator"
+	"eino-cli/deepagent/coordinator"
 )
 
 const (
 	logMessagePayloadPreviewBytes = 2048
 	logThreadSummaryLimit         = 20
 )
-
-func (w *Worker) newScanLogContext(ctx context.Context) context.Context {
-	scanLogID := logid.GetNginxID()
-	ctx = contextWithLogID(ctx, scanLogID)
-	return logs.CtxAddKVs(ctx,
-		"log_context", "scan",
-		"logid_source", "generated",
-		"namespace", w.Namespace,
-		"worker_env", w.Env,
-		"scan_limit", w.ScanLimit,
-	)
-}
-
-func (w *Worker) newClaimLogContext(ctx context.Context, thread *ac.Thread) context.Context {
-	var threadID int64
-	if thread != nil {
-		threadID = thread.GetThreadId()
-	}
-	ctx = ensureContextLogID(ctx)
-	scanLogID := currentContextLogID(ctx)
-	return logs.CtxAddKVs(ctx,
-		"log_context", "claim",
-		"logid_source", "scan",
-		"scan_logid", scanLogID,
-		"namespace", w.Namespace,
-		"thread_id", threadID,
-		"thread_logid", threadProducerLogID(thread),
-	)
-}
-
-func (w *Worker) newThreadLogContext(ctx context.Context, thread *ac.Thread) context.Context {
-	var threadID int64
-	if thread != nil {
-		threadID = thread.GetThreadId()
-	}
-	threadLogID := strings.TrimSpace(threadProducerLogID(thread))
-	logIDSource := "thread"
-	if threadLogID == "" {
-		threadLogID = logid.GetNginxID()
-		logIDSource = "generated"
-	}
-
-	ctx = contextWithLogID(ctx, threadLogID)
-	ctx = contextWithThreadLogMeta(ctx, thread)
-	return logs.CtxAddKVs(ctx,
-		"log_context", "thread",
-		"logid_source", logIDSource,
-		"namespace", w.Namespace,
-		"thread_id", threadID,
-	)
-}
-
-func (w *Worker) newRunLogContext(ctx context.Context, claim *claimResult) context.Context {
-	var thread *ac.Thread
-	var lease *ac.Lease
-	var pendingMessages []*ac.Message
-	if claim != nil {
-		thread = claim.thread
-		lease = claim.lease
-		pendingMessages = claim.pendingMessages
-	}
-	var threadID int64
-	if thread != nil {
-		threadID = thread.GetThreadId()
-	}
-	parentLogID := currentContextLogID(ctx)
-	logID := strings.TrimSpace(threadProducerLogID(thread))
-	logIDSource := "thread"
-	if logID == "" {
-		logID = logid.GetNginxID()
-		logIDSource = "generated"
-	}
-
-	ctx = contextWithLogID(ctx, logID)
-	ctx = contextWithThreadLogMeta(ctx, thread)
-	return logs.CtxAddKVs(ctx,
-		"log_context", "run",
-		"logid_source", logIDSource,
-		"parent_logid", parentLogID,
-		"activation_logid", logID,
-		"namespace", w.Namespace,
-		"thread_id", threadID,
-		"thread_logid", threadProducerLogID(thread),
-		"lease_deadline_at_ms", lease.GetLeaseDeadlineAtMs(),
-		"pending_message_count", len(pendingMessages),
-		"first_pending_message_id", firstMessageID(pendingMessages),
-		"first_pending_message_logid", firstMessageLogID(pendingMessages),
-	)
-}
-
-func (w *Worker) newPullLogContext(ctx context.Context, lease *ac.Lease) context.Context {
-	ctx = ensureContextLogID(ctx)
-	runLogID := currentContextLogID(ctx)
-	return logs.CtxAddKVs(ctx,
-		"log_context", "pull_message",
-		"logid_source", "inherited",
-		"run_logid", runLogID,
-		"namespace", w.Namespace,
-		"thread_id", lease.GetThreadId(),
-		"pull_limit", w.MessageLimit,
-	)
-}
-
-func (w *Worker) newMessageLogContext(ctx context.Context, thread *ac.Thread, message *ac.Message) context.Context {
-	parentLogID := currentContextLogID(ctx)
-	messageLogID := messageProducerLogID(message)
-	logIDSource := "producer"
-	if messageLogID == "" {
-		messageLogID = logid.GetNginxID()
-		logIDSource = "generated"
-	}
-
-	ctx = contextWithLogID(ctx, messageLogID)
-	ctx = contextWithMessageLogMeta(ctx, message)
-	senderType, senderID := messageSender(message)
-	return logs.CtxAddKVs(ctx,
-		"log_context", "message",
-		"logid_source", logIDSource,
-		"parent_logid", parentLogID,
-		"namespace", w.Namespace,
-		"thread_id", thread.GetThreadId(),
-		"input_message_id", message.GetMessageId(),
-		"message_type", message.GetMessageType(),
-		"sender_type", senderType,
-		"sender_id", senderID,
-	)
-}
 
 func contextWithLogID(ctx context.Context, logID string) context.Context {
 	logID = strings.TrimSpace(logID)
@@ -177,40 +50,39 @@ func currentContextLogID(ctx context.Context) string {
 	return ""
 }
 
-func messageProducerLogID(message *ac.Message) string {
+func messageProducerLogID(message *coordinator.Message) string {
 	if message == nil {
 		return ""
 	}
-	return message.GetMetadata()["logid"]
+	return message.Metadata["logid"]
 }
 
-func threadProducerLogID(thread *ac.Thread) string {
+func threadProducerLogID(thread *coordinator.Thread) string {
 	if thread == nil {
 		return ""
 	}
-	return thread.GetMetadata()["logid"]
+	return thread.Metadata["logid"]
 }
 
-func messageSender(message *ac.Message) (string, string) {
-	sender := message.GetSender()
-	if sender == nil {
+func messageSender(message *coordinator.Message) (senderType string, senderID string) {
+	if message == nil || message.Sender == nil {
 		return "", ""
 	}
-	return fmt.Sprint(sender.GetSenderType()), sender.GetSenderId()
+	return strings.ToUpper(string(message.Sender.Type)), message.Sender.ID
 }
 
-func messageIDs(messages []*ac.Message) []int64 {
+func messageIDs(messages []*coordinator.Message) []int64 {
 	ids := make([]int64, 0, len(messages))
 	for _, message := range messages {
 		if message == nil {
 			continue
 		}
-		ids = append(ids, message.GetMessageId())
+		ids = append(ids, message.MessageID)
 	}
 	return ids
 }
 
-func firstMessage(messages []*ac.Message) *ac.Message {
+func firstMessage(messages []*coordinator.Message) *coordinator.Message {
 	for _, message := range messages {
 		if message != nil {
 			return message
@@ -219,34 +91,34 @@ func firstMessage(messages []*ac.Message) *ac.Message {
 	return nil
 }
 
-func firstMessageID(messages []*ac.Message) int64 {
+func firstMessageID(messages []*coordinator.Message) int64 {
 	message := firstMessage(messages)
 	if message == nil {
 		return 0
 	}
-	return message.GetMessageId()
+	return message.MessageID
 }
 
-func firstMessageLogID(messages []*ac.Message) string {
+func firstMessageLogID(messages []*coordinator.Message) string {
 	return messageProducerLogID(firstMessage(messages))
 }
 
-func messageLogSummary(message *ac.Message) string {
+func messageLogSummary(message *coordinator.Message) string {
 	if message == nil {
 		return "{}"
 	}
 	summary := map[string]interface{}{
-		"message_id":    message.GetMessageId(),
-		"thread_id":     message.GetThreadId(),
-		"message_type":  message.GetMessageType(),
-		"status":        fmt.Sprint(message.GetStatus()),
+		"message_id":    message.MessageID,
+		"thread_id":     message.ThreadID,
+		"message_type":  message.MessageType,
+		"status":        strings.ToUpper(string(message.Status)),
 		"logid":         messageProducerLogID(message),
-		"k_env":         message.GetMetadata()[metadataKeyKEnv],
-		"payload_bytes": len(message.GetPayload()),
+		"k_env":         message.Metadata[metadataKeyKEnv],
+		"payload_bytes": len(message.Payload),
 	}
 	data, err := json.Marshal(summary)
 	if err != nil {
-		return fmt.Sprintf("message_id=%d thread_id=%d summary_error=%v", message.GetMessageId(), message.GetThreadId(), err)
+		return fmt.Sprintf("message_id=%d thread_id=%d summary_error=%v", message.MessageID, message.ThreadID, err)
 	}
 	return string(data)
 }
@@ -263,7 +135,7 @@ func metadataKeys(metadata map[string]string) []string {
 	return keys
 }
 
-func threadSummaries(threads []*ac.Thread) []map[string]interface{} {
+func threadSummaries(threads []*coordinator.Thread) []map[string]interface{} {
 	limit := len(threads)
 	if limit > logThreadSummaryLimit {
 		limit = logThreadSummaryLimit
@@ -274,21 +146,21 @@ func threadSummaries(threads []*ac.Thread) []map[string]interface{} {
 			continue
 		}
 		summaries = append(summaries, map[string]interface{}{
-			"thread_id":            thread.GetThreadId(),
-			"status":               fmt.Sprint(thread.GetStatus()),
-			"session_id":           thread.GetSessionId(),
-			"title":                thread.GetTitle(),
-			"lease_owner_hint":     thread.GetLeaseOwnerHint(),
-			"lease_deadline_at_ms": thread.GetLeaseDeadlineAtMs(),
-			"env":                  thread.GetEnv(),
+			"thread_id":            thread.ThreadID,
+			"status":               strings.ToUpper(string(thread.Status)),
+			"session_id":           thread.SessionID,
+			"title":                thread.Title,
+			"lease_owner_hint":     thread.LeaseOwnerHint,
+			"lease_deadline_at_ms": timeToMillis(thread.LeaseDeadlineAt),
+			"env":                  thread.Env,
 		})
 	}
 	return summaries
 }
 
-func messagePreview(message *ac.Message) string {
+func messagePreview(message *coordinator.Message) string {
 	senderType, senderID := messageSender(message)
-	payload := message.GetPayload()
+	payload := message.Payload
 	payloadPreview := payload
 	truncated := false
 	if len(payloadPreview) > logMessagePayloadPreviewBytes {
@@ -297,20 +169,34 @@ func messagePreview(message *ac.Message) string {
 	}
 
 	preview := map[string]interface{}{
-		"message_id":        message.GetMessageId(),
-		"thread_id":         message.GetThreadId(),
-		"message_type":      message.GetMessageType(),
-		"status":            fmt.Sprint(message.GetStatus()),
+		"message_id":        message.MessageID,
+		"thread_id":         message.ThreadID,
+		"message_type":      message.MessageType,
+		"status":            strings.ToUpper(string(message.Status)),
 		"sender_type":       senderType,
 		"sender_id":         senderID,
-		"metadata":          message.GetMetadata(),
+		"metadata":          message.Metadata,
 		"payload_preview":   string(payloadPreview),
 		"payload_bytes":     len(payload),
 		"payload_truncated": truncated,
 	}
 	data, err := json.Marshal(preview)
 	if err != nil {
-		return fmt.Sprintf("message_id=%d thread_id=%d payload_bytes=%d preview_error=%v", message.GetMessageId(), message.GetThreadId(), len(payload), err)
+		return fmt.Sprintf("message_id=%d thread_id=%d payload_bytes=%d preview_error=%v", message.MessageID, message.ThreadID, len(payload), err)
 	}
 	return string(data)
+}
+
+func leaseDeadlineAtMS(lease *coordinator.Lease) (milliseconds int64) {
+	if lease == nil {
+		return 0
+	}
+	return timeToMillis(lease.LeaseDeadlineAt)
+}
+
+func timeToMillis(value time.Time) (milliseconds int64) {
+	if value.IsZero() {
+		return 0
+	}
+	return value.UnixMilli()
 }

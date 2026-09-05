@@ -5,21 +5,21 @@ package worker
 import (
 	"testing"
 
-	ac "code.byted.org/overpass/ad_creative_aic_agent_coordinator/kitex_gen/agent_coordinator"
+	"eino-cli/deepagent/coordinator"
 )
 
 func TestThreadInfoFromCoordinatorCopiesStableView(t *testing.T) {
 	sessionID := "session-1"
 	env := "boe"
-	thread := &ac.Thread{
-		ThreadId:  42,
+	thread := &coordinator.Thread{
+		ThreadID:  42,
 		Namespace: "demo",
-		SessionId: &sessionID,
-		Status:    ac.ThreadStatus_RUNNING,
-		Env:       &env,
-		UserId:    1001,
+		SessionID: sessionID,
+		Status:    coordinator.ThreadStatusRunning,
+		Env:       env,
+		UserID:    1001,
 		Metadata:  map[string]string{"project_name": "demo-project"},
-		Profile:   &ac.ThreadProfile{Role: "main", Cwd: "/workspace"},
+		Profile:   &coordinator.Profile{Role: "main", Cwd: "/workspace"},
 	}
 
 	info := threadInfoFromCoordinator(thread)

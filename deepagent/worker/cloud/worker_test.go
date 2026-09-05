@@ -14,11 +14,8 @@ import (
 
 	"code.byted.org/gopkg/ctxvalues"
 	"code.byted.org/gopkg/metainfo"
-	"code.byted.org/kite/kitex/client/callopt"
 	"code.byted.org/kite/kitutil"
-	ac "code.byted.org/overpass/ad_creative_aic_agent_coordinator/kitex_gen/agent_coordinator"
-	acsvc "code.byted.org/overpass/ad_creative_aic_agent_coordinator/kitex_gen/agent_coordinator/agentcoordinatorservice"
-	"code.byted.org/overpass/ad_creative_aic_agent_coordinator/kitex_gen/base"
+	"eino-cli/deepagent/coordinator"
 	"eino-cli/deepagent/worker"
 )
 
@@ -85,16 +82,16 @@ func TestRunClaimAppendsAcksAndReleases(t *testing.T) {
 	pulls := 0
 	items := make(chan agentworker.ThreadOutputItem, 4)
 	client := &fakeClient{
-		pullPendingMessagesFunc: func(req *ac.PullPendingMessagesRequest) []*ac.Message {
+		pullPendingMessagesFunc: func(req coordinator.ReadPendingInputsRequest) []*coordinator.Message {
 			pulls++
-			if req.GetLeaseToken() != "lease-token" {
-				t.Fatalf("pull lease token=%q, want lease-token", req.GetLeaseToken())
+			if req.LeaseToken != "lease-token" {
+				t.Fatalf("pull lease token=%q, want lease-token", req.LeaseToken)
 			}
-			if req.GetLimit() == 0 {
+			if req.Limit == 0 {
 				t.Fatalf("pull limit should be set")
 			}
 			if pulls == 1 {
-				return []*ac.Message{{MessageId: 1002, ThreadId: 42, Status: ac.MessageStatus_PENDING}}
+				return []*coordinator.Message{{MessageID: 1002, ThreadID: 42, Status: coordinator.MessageStatusPending}}
 			}
 			return nil
 		},
@@ -108,9 +105,9 @@ func TestRunClaimAppendsAcksAndReleases(t *testing.T) {
 		RenewInterval: time.Hour,
 		IdleTimeout:   time.Second,
 		MessageLimit:  10,
-		AgentThreadFactory: AgentThreadFactory(func(ctx context.Context, threadInfo *ac.Thread) (agentworker.AgentThread, error) {
-			if threadInfo.GetThreadId() != 42 {
-				t.Fatalf("factory thread_id=%d, want 42", threadInfo.GetThreadId())
+		AgentThreadFactory: AgentThreadFactory(func(ctx context.Context, threadInfo *coordinator.Thread) (agentworker.AgentThread, error) {
+			if threadInfo.ThreadID != 42 {
+				t.Fatalf("factory thread_id=%d, want 42", threadInfo.ThreadID)
 			}
 			return &testAgentThreadRuntime{
 				InitFunc: func(ctx context.Context) (*agentworker.ThreadOutput, error) {
@@ -138,10 +135,10 @@ func TestRunClaimAppendsAcksAndReleases(t *testing.T) {
 	}
 
 	err := worker.runClaim(context.Background(), context.Background(), &claimResult{
-		thread: &ac.Thread{ThreadId: 42, Namespace: "test_ns", Status: ac.ThreadStatus_RUNNING},
-		lease:  &ac.Lease{ThreadId: 42, LeaseToken: "lease-token"},
-		pendingMessages: []*ac.Message{
-			{MessageId: 1001, ThreadId: 42, Status: ac.MessageStatus_PENDING},
+		thread: &coordinator.Thread{ThreadID: 42, Namespace: "test_ns", Status: coordinator.ThreadStatusRunning},
+		lease:  &coordinator.Lease{ThreadID: 42, LeaseToken: "lease-token"},
+		pendingMessages: []*coordinator.Message{
+			{MessageID: 1001, ThreadID: 42, Status: coordinator.MessageStatusPending},
 		},
 	})
 	if err != nil {
@@ -162,30 +159,30 @@ func TestRunClaimAppendsAcksAndReleases(t *testing.T) {
 		t.Fatalf("append requests=%d, want 2", len(client.appendEventsRequests))
 	}
 	appended := client.appendEventsRequests[0]
-	if appended.GetNamespace() != "test_ns" || appended.GetThreadId() != 42 {
-		t.Fatalf("append request ownership mismatch: namespace=%q thread_id=%d", appended.GetNamespace(), appended.GetThreadId())
+	if appended.Namespace != "test_ns" || appended.ThreadID != 42 {
+		t.Fatalf("append request ownership mismatch: namespace=%q thread_id=%d", appended.Namespace, appended.ThreadID)
 	}
-	if len(appended.GetEvents()) != 1 || appended.GetEvents()[0].GetEventType() != "agent_result" {
-		t.Fatalf("append events=%v, want agent_result", appended.GetEvents())
+	if len(appended.Events) != 1 || appended.Events[0].EventType != "agent_result" {
+		t.Fatalf("append events=%v, want agent_result", appended.Events)
 	}
-	if appended.GetEvents()[0].GetThreadId() != 42 {
-		t.Fatalf("event thread_id=%d, want worker to fill 42", appended.GetEvents()[0].GetThreadId())
+	if appended.Events[0].ThreadID != 42 {
+		t.Fatalf("event thread_id=%d, want worker to fill 42", appended.Events[0].ThreadID)
 	}
-	if appended.GetEvents()[0].GetTurnId() != "turn_1001" || client.appendEventsRequests[1].GetEvents()[0].GetTurnId() != "turn_1002" {
-		t.Fatalf("event turn ids=%s,%s want turn_1001,turn_1002", appended.GetEvents()[0].GetTurnId(), client.appendEventsRequests[1].GetEvents()[0].GetTurnId())
+	if appended.Events[0].TurnID != "turn_1001" || client.appendEventsRequests[1].Events[0].TurnID != "turn_1002" {
+		t.Fatalf("event turn ids=%s,%s want turn_1001,turn_1002", appended.Events[0].TurnID, client.appendEventsRequests[1].Events[0].TurnID)
 	}
 
 	if len(client.ackRequests) != 2 {
 		t.Fatalf("ack requests=%d, want 2", len(client.ackRequests))
 	}
 	ack := client.ackRequests[0]
-	if ack.GetNamespace() != "test_ns" || ack.GetThreadId() != 42 || ack.GetLeaseToken() != "lease-token" {
-		t.Fatalf("ack request mismatch: namespace=%q thread_id=%d lease=%q", ack.GetNamespace(), ack.GetThreadId(), ack.GetLeaseToken())
+	if ack.Namespace != "test_ns" || ack.ThreadID != 42 || ack.LeaseToken != "lease-token" {
+		t.Fatalf("ack request mismatch: namespace=%q thread_id=%d lease=%q", ack.Namespace, ack.ThreadID, ack.LeaseToken)
 	}
-	if got := ack.GetMessageIds(); len(got) != 1 || got[0] != 1001 {
+	if got := ack.MessageIDs; len(got) != 1 || got[0] != 1001 {
 		t.Fatalf("ack message ids=%v, want [1001]", got)
 	}
-	if got := client.ackRequests[1].GetMessageIds(); len(got) != 1 || got[0] != 1002 {
+	if got := client.ackRequests[1].MessageIDs; len(got) != 1 || got[0] != 1002 {
 		t.Fatalf("second ack message ids=%v, want [1002]", got)
 	}
 
@@ -193,11 +190,11 @@ func TestRunClaimAppendsAcksAndReleases(t *testing.T) {
 		t.Fatalf("release requests=%d, want 1", len(client.releaseRequests))
 	}
 	release := client.releaseRequests[0]
-	if release.GetNamespace() != "test_ns" || release.GetThreadId() != 42 || release.GetLeaseToken() != "lease-token" {
-		t.Fatalf("release request mismatch: namespace=%q thread_id=%d lease=%q", release.GetNamespace(), release.GetThreadId(), release.GetLeaseToken())
+	if release.Namespace != "test_ns" || release.ThreadID != 42 || release.LeaseToken != "lease-token" {
+		t.Fatalf("release request mismatch: namespace=%q thread_id=%d lease=%q", release.Namespace, release.ThreadID, release.LeaseToken)
 	}
-	if release.GetReason() != "test complete" {
-		t.Fatalf("release reason=%q, want test complete", release.GetReason())
+	if release.Reason != "test complete" {
+		t.Fatalf("release reason=%q, want test complete", release.Reason)
 	}
 }
 
@@ -210,7 +207,7 @@ func TestRunClaimAcksMessageWithRuntimeTurnID(t *testing.T) {
 		RenewInterval: time.Hour,
 		IdleTimeout:   time.Second,
 		MessageLimit:  10,
-		AgentThreadFactory: AgentThreadFactory(func(ctx context.Context, threadInfo *ac.Thread) (agentworker.AgentThread, error) {
+		AgentThreadFactory: AgentThreadFactory(func(ctx context.Context, threadInfo *coordinator.Thread) (agentworker.AgentThread, error) {
 			return &testAgentThreadRuntime{
 				InitFunc: func(ctx context.Context) (*agentworker.ThreadOutput, error) {
 					return &agentworker.ThreadOutput{Items: items}, nil
@@ -224,10 +221,10 @@ func TestRunClaimAcksMessageWithRuntimeTurnID(t *testing.T) {
 	}
 
 	err := worker.runClaim(context.Background(), context.Background(), &claimResult{
-		thread: &ac.Thread{ThreadId: 42, Namespace: "test_ns", Status: ac.ThreadStatus_RUNNING},
-		lease:  &ac.Lease{ThreadId: 42, LeaseToken: "lease-token"},
-		pendingMessages: []*ac.Message{
-			{MessageId: 1001, ThreadId: 42, Status: ac.MessageStatus_PENDING},
+		thread: &coordinator.Thread{ThreadID: 42, Namespace: "test_ns", Status: coordinator.ThreadStatusRunning},
+		lease:  &coordinator.Lease{ThreadID: 42, LeaseToken: "lease-token"},
+		pendingMessages: []*coordinator.Message{
+			{MessageID: 1001, ThreadID: 42, Status: coordinator.MessageStatusPending},
 		},
 	})
 	if err != nil {
@@ -236,7 +233,7 @@ func TestRunClaimAcksMessageWithRuntimeTurnID(t *testing.T) {
 	if len(client.ackRequests) != 1 {
 		t.Fatalf("ack requests=%d, want 1", len(client.ackRequests))
 	}
-	if got := client.ackRequests[0].GetTriggerTurnId(); got != "turn_1001" {
+	if got := client.ackRequests[0].TriggerRunID; got != "turn_1001" {
 		t.Fatalf("ack trigger_turn_id=%q, want turn_1001", got)
 	}
 }
@@ -250,7 +247,7 @@ func TestRunClaimDrainsOutputWhilePostMessageWaits(t *testing.T) {
 	active.Store(true)
 
 	client := &fakeClient{
-		appendEventsFunc: func(ctx context.Context, req *ac.AppendEventsRequest) error {
+		appendEventsFunc: func(ctx context.Context, req coordinator.PublishEventsRequest) error {
 			if eventAppendedClosed.CompareAndSwap(false, true) {
 				close(eventAppended)
 			}
@@ -263,7 +260,7 @@ func TestRunClaimDrainsOutputWhilePostMessageWaits(t *testing.T) {
 		RenewInterval: time.Hour,
 		IdleTimeout:   time.Second,
 		MessageLimit:  10,
-		AgentThreadFactory: AgentThreadFactory(func(ctx context.Context, threadInfo *ac.Thread) (agentworker.AgentThread, error) {
+		AgentThreadFactory: AgentThreadFactory(func(ctx context.Context, threadInfo *coordinator.Thread) (agentworker.AgentThread, error) {
 			return &testAgentThreadRuntime{
 				InitFunc: func(ctx context.Context) (*agentworker.ThreadOutput, error) {
 					return &agentworker.ThreadOutput{Items: items}, nil
@@ -299,10 +296,10 @@ func TestRunClaimDrainsOutputWhilePostMessageWaits(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 	err := worker.runClaim(ctx, context.Background(), &claimResult{
-		thread: &ac.Thread{ThreadId: 42, Namespace: "test_ns", Status: ac.ThreadStatus_RUNNING},
-		lease:  &ac.Lease{ThreadId: 42, LeaseToken: "lease-token"},
-		pendingMessages: []*ac.Message{
-			{MessageId: 1001, ThreadId: 42, Status: ac.MessageStatus_PENDING},
+		thread: &coordinator.Thread{ThreadID: 42, Namespace: "test_ns", Status: coordinator.ThreadStatusRunning},
+		lease:  &coordinator.Lease{ThreadID: 42, LeaseToken: "lease-token"},
+		pendingMessages: []*coordinator.Message{
+			{MessageID: 1001, ThreadID: 42, Status: coordinator.MessageStatusPending},
 		},
 	})
 	if err != nil {
@@ -311,10 +308,10 @@ func TestRunClaimDrainsOutputWhilePostMessageWaits(t *testing.T) {
 	if len(client.appendEventsRequests) != 1 {
 		t.Fatalf("append requests=%d, want previous turn event appended", len(client.appendEventsRequests))
 	}
-	if len(client.ackRequests) != 1 || client.ackRequests[0].GetMessageIds()[0] != 1001 {
+	if len(client.ackRequests) != 1 || client.ackRequests[0].MessageIDs[0] != 1001 {
 		t.Fatalf("ack requests=%v, want message 1001 acked", client.ackRequests)
 	}
-	if len(client.releaseRequests) != 1 || client.releaseRequests[0].GetReason() != "done" {
+	if len(client.releaseRequests) != 1 || client.releaseRequests[0].Reason != "done" {
 		t.Fatalf("release requests=%v, want done release", client.releaseRequests)
 	}
 }
@@ -330,13 +327,13 @@ func TestRunClaimAcksCurrentMessageBeforeReleaseOnRuntimeYield(t *testing.T) {
 		Kind:         "approval",
 	}
 	client := &fakeClient{
-		ackThreadMessagesFunc: func(ctx context.Context, req *ac.AckThreadMessagesRequest) error {
+		ackThreadMessagesFunc: func(ctx context.Context, req coordinator.ConfirmInputDeliveryRequest) error {
 			if ackedClosed.CompareAndSwap(false, true) {
 				close(acked)
 			}
 			return nil
 		},
-		releaseThreadFunc: func(ctx context.Context, req *ac.ReleaseThreadRequest) error {
+		releaseThreadFunc: func(ctx context.Context, req coordinator.ReleaseThreadRequest) error {
 			select {
 			case <-acked:
 			default:
@@ -351,7 +348,7 @@ func TestRunClaimAcksCurrentMessageBeforeReleaseOnRuntimeYield(t *testing.T) {
 		RenewInterval: time.Hour,
 		IdleTimeout:   time.Second,
 		MessageLimit:  10,
-		AgentThreadFactory: AgentThreadFactory(func(ctx context.Context, threadInfo *ac.Thread) (agentworker.AgentThread, error) {
+		AgentThreadFactory: AgentThreadFactory(func(ctx context.Context, threadInfo *coordinator.Thread) (agentworker.AgentThread, error) {
 			return &testAgentThreadRuntime{
 				InitFunc: func(ctx context.Context) (*agentworker.ThreadOutput, error) {
 					return &agentworker.ThreadOutput{Items: items}, nil
@@ -368,23 +365,23 @@ func TestRunClaimAcksCurrentMessageBeforeReleaseOnRuntimeYield(t *testing.T) {
 	}
 
 	err := worker.runClaim(context.Background(), context.Background(), &claimResult{
-		thread: &ac.Thread{ThreadId: 42, Namespace: "test_ns", Status: ac.ThreadStatus_RUNNING},
-		lease:  &ac.Lease{ThreadId: 42, LeaseToken: "lease-token"},
-		pendingMessages: []*ac.Message{
-			{MessageId: 1001, ThreadId: 42, Status: ac.MessageStatus_PENDING},
+		thread: &coordinator.Thread{ThreadID: 42, Namespace: "test_ns", Status: coordinator.ThreadStatusRunning},
+		lease:  &coordinator.Lease{ThreadID: 42, LeaseToken: "lease-token"},
+		pendingMessages: []*coordinator.Message{
+			{MessageID: 1001, ThreadID: 42, Status: coordinator.MessageStatusPending},
 		},
 	})
 	if err != nil {
 		t.Fatalf("runClaim error: %v", err)
 	}
-	if len(client.ackRequests) != 1 || client.ackRequests[0].GetMessageIds()[0] != 1001 {
+	if len(client.ackRequests) != 1 || client.ackRequests[0].MessageIDs[0] != 1001 {
 		t.Fatalf("ack requests=%v, want message 1001 acked", client.ackRequests)
 	}
 	if len(client.releaseRequests) != 1 {
 		t.Fatalf("release requests=%d, want 1", len(client.releaseRequests))
 	}
-	if client.releaseRequests[0].ReleaseToStatus == nil || *client.releaseRequests[0].ReleaseToStatus != ac.ThreadStatus_BLOCKED {
-		t.Fatalf("release_to_status=%v, want BLOCKED", client.releaseRequests[0].ReleaseToStatus)
+	if client.releaseRequests[0].Status != coordinator.ThreadStatusBlocked {
+		t.Fatalf("release_to_status=%v, want BLOCKED", client.releaseRequests[0].Status)
 	}
 }
 
@@ -403,7 +400,7 @@ func TestRunClaimDrainsReadyOutputAfterRuntimeYield(t *testing.T) {
 		RenewInterval: time.Hour,
 		IdleTimeout:   time.Second,
 		MessageLimit:  10,
-		AgentThreadFactory: AgentThreadFactory(func(ctx context.Context, threadInfo *ac.Thread) (agentworker.AgentThread, error) {
+		AgentThreadFactory: AgentThreadFactory(func(ctx context.Context, threadInfo *coordinator.Thread) (agentworker.AgentThread, error) {
 			return &testAgentThreadRuntime{
 				InitFunc: func(ctx context.Context) (*agentworker.ThreadOutput, error) {
 					return &agentworker.ThreadOutput{Items: items}, nil
@@ -425,10 +422,10 @@ func TestRunClaimDrainsReadyOutputAfterRuntimeYield(t *testing.T) {
 	}
 
 	err := worker.runClaim(context.Background(), context.Background(), &claimResult{
-		thread: &ac.Thread{ThreadId: 42, Namespace: "test_ns", Status: ac.ThreadStatus_RUNNING},
-		lease:  &ac.Lease{ThreadId: 42, LeaseToken: "lease-token"},
-		pendingMessages: []*ac.Message{
-			{MessageId: 1001, ThreadId: 42, Status: ac.MessageStatus_PENDING},
+		thread: &coordinator.Thread{ThreadID: 42, Namespace: "test_ns", Status: coordinator.ThreadStatusRunning},
+		lease:  &coordinator.Lease{ThreadID: 42, LeaseToken: "lease-token"},
+		pendingMessages: []*coordinator.Message{
+			{MessageID: 1001, ThreadID: 42, Status: coordinator.MessageStatusPending},
 		},
 	})
 	if err != nil {
@@ -437,10 +434,10 @@ func TestRunClaimDrainsReadyOutputAfterRuntimeYield(t *testing.T) {
 	if len(client.appendEventsRequests) != 1 {
 		t.Fatalf("append requests=%d, want tail event appended", len(client.appendEventsRequests))
 	}
-	if got := client.appendEventsRequests[0].GetEvents()[0].GetEventType(); got != "approval_visible_after_yield" {
+	if got := client.appendEventsRequests[0].Events[0].EventType; got != "approval_visible_after_yield" {
 		t.Fatalf("appended event type=%q, want approval_visible_after_yield", got)
 	}
-	if len(client.releaseRequests) != 1 || client.releaseRequests[0].ReleaseToStatus == nil || *client.releaseRequests[0].ReleaseToStatus != ac.ThreadStatus_BLOCKED {
+	if len(client.releaseRequests) != 1 || client.releaseRequests[0].Status != coordinator.ThreadStatusBlocked {
 		t.Fatalf("release requests=%v, want BLOCKED release", client.releaseRequests)
 	}
 }
@@ -455,7 +452,7 @@ func TestRunClaimAckFailureOverridesRuntimeYield(t *testing.T) {
 		Kind:         "approval",
 	}
 	client := &fakeClient{
-		ackThreadMessagesFunc: func(ctx context.Context, req *ac.AckThreadMessagesRequest) error {
+		ackThreadMessagesFunc: func(ctx context.Context, req coordinator.ConfirmInputDeliveryRequest) error {
 			return ackErr
 		},
 	}
@@ -465,7 +462,7 @@ func TestRunClaimAckFailureOverridesRuntimeYield(t *testing.T) {
 		RenewInterval: time.Hour,
 		IdleTimeout:   time.Second,
 		MessageLimit:  10,
-		AgentThreadFactory: AgentThreadFactory(func(ctx context.Context, threadInfo *ac.Thread) (agentworker.AgentThread, error) {
+		AgentThreadFactory: AgentThreadFactory(func(ctx context.Context, threadInfo *coordinator.Thread) (agentworker.AgentThread, error) {
 			return &testAgentThreadRuntime{
 				InitFunc: func(ctx context.Context) (*agentworker.ThreadOutput, error) {
 					return &agentworker.ThreadOutput{Items: items}, nil
@@ -482,10 +479,10 @@ func TestRunClaimAckFailureOverridesRuntimeYield(t *testing.T) {
 	}
 
 	err := worker.runClaim(context.Background(), context.Background(), &claimResult{
-		thread: &ac.Thread{ThreadId: 42, Namespace: "test_ns", Status: ac.ThreadStatus_RUNNING},
-		lease:  &ac.Lease{ThreadId: 42, LeaseToken: "lease-token"},
-		pendingMessages: []*ac.Message{
-			{MessageId: 1001, ThreadId: 42, Status: ac.MessageStatus_PENDING},
+		thread: &coordinator.Thread{ThreadID: 42, Namespace: "test_ns", Status: coordinator.ThreadStatusRunning},
+		lease:  &coordinator.Lease{ThreadID: 42, LeaseToken: "lease-token"},
+		pendingMessages: []*coordinator.Message{
+			{MessageID: 1001, ThreadID: 42, Status: coordinator.MessageStatusPending},
 		},
 	})
 	if !errors.Is(err, ackErr) {
@@ -494,11 +491,11 @@ func TestRunClaimAckFailureOverridesRuntimeYield(t *testing.T) {
 	if len(client.releaseRequests) != 1 {
 		t.Fatalf("release requests=%d, want 1", len(client.releaseRequests))
 	}
-	if got := client.releaseRequests[0].GetReason(); got != ackMessageFailedReason {
+	if got := client.releaseRequests[0].Reason; got != ackMessageFailedReason {
 		t.Fatalf("release reason=%q, want %q", got, ackMessageFailedReason)
 	}
-	if client.releaseRequests[0].ReleaseToStatus != nil {
-		t.Fatalf("release_to_status=%v, want nil on input failure", client.releaseRequests[0].ReleaseToStatus)
+	if client.releaseRequests[0].Status != "" {
+		t.Fatalf("release_to_status=%v, want nil on input failure", client.releaseRequests[0].Status)
 	}
 }
 
@@ -516,7 +513,7 @@ func TestRunClaimPullFailureDoesNotOverrideRuntimeBlock(t *testing.T) {
 		Kind:         "approval",
 	}
 	client := &fakeClient{
-		pullPendingMessagesResultFunc: func(req *ac.PullPendingMessagesRequest) ([]*ac.Message, error) {
+		pullPendingMessagesResultFunc: func(req coordinator.ReadPendingInputsRequest) ([]*coordinator.Message, error) {
 			if pullAttemptedClosed.CompareAndSwap(false, true) {
 				close(pullAttempted)
 				return nil, pullErr
@@ -531,7 +528,7 @@ func TestRunClaimPullFailureDoesNotOverrideRuntimeBlock(t *testing.T) {
 		MessagePollInterval: time.Millisecond,
 		IdleTimeout:         time.Second,
 		MessageLimit:        10,
-		AgentThreadFactory: AgentThreadFactory(func(ctx context.Context, threadInfo *ac.Thread) (agentworker.AgentThread, error) {
+		AgentThreadFactory: AgentThreadFactory(func(ctx context.Context, threadInfo *coordinator.Thread) (agentworker.AgentThread, error) {
 			return &testAgentThreadRuntime{
 				InitFunc: func(ctx context.Context) (*agentworker.ThreadOutput, error) {
 					return &agentworker.ThreadOutput{Items: items}, nil
@@ -561,10 +558,10 @@ func TestRunClaimPullFailureDoesNotOverrideRuntimeBlock(t *testing.T) {
 	}
 
 	err := worker.runClaim(context.Background(), context.Background(), &claimResult{
-		thread: &ac.Thread{ThreadId: 42, Namespace: "test_ns", Status: ac.ThreadStatus_RUNNING},
-		lease:  &ac.Lease{ThreadId: 42, LeaseToken: "lease-token"},
-		pendingMessages: []*ac.Message{
-			{MessageId: 1001, ThreadId: 42, Status: ac.MessageStatus_PENDING},
+		thread: &coordinator.Thread{ThreadID: 42, Namespace: "test_ns", Status: coordinator.ThreadStatusRunning},
+		lease:  &coordinator.Lease{ThreadID: 42, LeaseToken: "lease-token"},
+		pendingMessages: []*coordinator.Message{
+			{MessageID: 1001, ThreadID: 42, Status: coordinator.MessageStatusPending},
 		},
 	})
 	if err != nil {
@@ -574,13 +571,13 @@ func TestRunClaimPullFailureDoesNotOverrideRuntimeBlock(t *testing.T) {
 		t.Fatalf("release requests=%d, want 1", len(client.releaseRequests))
 	}
 	release := client.releaseRequests[0]
-	if got := release.GetReason(); got != "waiting for approval" {
+	if got := release.Reason; got != "waiting for approval" {
 		t.Fatalf("release reason=%q, want waiting for approval", got)
 	}
-	if release.ReleaseToStatus == nil || *release.ReleaseToStatus != ac.ThreadStatus_BLOCKED {
-		t.Fatalf("release_to_status=%v, want BLOCKED", release.ReleaseToStatus)
+	if release.Status != coordinator.ThreadStatusBlocked {
+		t.Fatalf("release_to_status=%v, want BLOCKED", release.Status)
 	}
-	if len(client.ackRequests) != 1 || client.ackRequests[0].GetMessageIds()[0] != 1001 {
+	if len(client.ackRequests) != 1 || client.ackRequests[0].MessageIDs[0] != 1001 {
 		t.Fatalf("ack requests=%v, want message 1001 acked", client.ackRequests)
 	}
 }
@@ -591,13 +588,13 @@ func TestRunClaimPullFailureRetriesAndProcessesLaterMessage(t *testing.T) {
 	var active atomic.Bool
 	active.Store(true)
 	client := &fakeClient{
-		pullPendingMessagesResultFunc: func(req *ac.PullPendingMessagesRequest) ([]*ac.Message, error) {
+		pullPendingMessagesResultFunc: func(req coordinator.ReadPendingInputsRequest) ([]*coordinator.Message, error) {
 			call := pullCalls.Add(1)
 			if call == 1 {
 				return nil, errors.New("temporary pull failure")
 			}
 			if call == 2 {
-				return []*ac.Message{{MessageId: 1002, ThreadId: 42, Status: ac.MessageStatus_PENDING}}, nil
+				return []*coordinator.Message{{MessageID: 1002, ThreadID: 42, Status: coordinator.MessageStatusPending}}, nil
 			}
 			return nil, nil
 		},
@@ -610,7 +607,7 @@ func TestRunClaimPullFailureRetriesAndProcessesLaterMessage(t *testing.T) {
 		MessagePollInterval: time.Millisecond,
 		IdleTimeout:         time.Second,
 		MessageLimit:        10,
-		AgentThreadFactory: AgentThreadFactory(func(ctx context.Context, threadInfo *ac.Thread) (agentworker.AgentThread, error) {
+		AgentThreadFactory: AgentThreadFactory(func(ctx context.Context, threadInfo *coordinator.Thread) (agentworker.AgentThread, error) {
 			return &testAgentThreadRuntime{
 				InitFunc: func(ctx context.Context) (*agentworker.ThreadOutput, error) {
 					return &agentworker.ThreadOutput{Items: items}, nil
@@ -635,10 +632,10 @@ func TestRunClaimPullFailureRetriesAndProcessesLaterMessage(t *testing.T) {
 	}
 
 	err := worker.runClaim(context.Background(), context.Background(), &claimResult{
-		thread: &ac.Thread{ThreadId: 42, Namespace: "test_ns", Status: ac.ThreadStatus_RUNNING},
-		lease:  &ac.Lease{ThreadId: 42, LeaseToken: "lease-token"},
-		pendingMessages: []*ac.Message{
-			{MessageId: 1001, ThreadId: 42, Status: ac.MessageStatus_PENDING},
+		thread: &coordinator.Thread{ThreadID: 42, Namespace: "test_ns", Status: coordinator.ThreadStatusRunning},
+		lease:  &coordinator.Lease{ThreadID: 42, LeaseToken: "lease-token"},
+		pendingMessages: []*coordinator.Message{
+			{MessageID: 1001, ThreadID: 42, Status: coordinator.MessageStatusPending},
 		},
 	})
 	if err != nil {
@@ -653,16 +650,16 @@ func TestRunClaimPullFailureRetriesAndProcessesLaterMessage(t *testing.T) {
 	if got := pullCalls.Load(); got < 2 {
 		t.Fatalf("pull calls=%d, want at least 2", got)
 	}
-	if len(client.releaseRequests) != 1 || client.releaseRequests[0].GetReason() != "done" {
+	if len(client.releaseRequests) != 1 || client.releaseRequests[0].Reason != "done" {
 		t.Fatalf("release requests=%v, want done release", client.releaseRequests)
 	}
 }
 
-func TestResolveClaimActionSemanticPriority(t *testing.T) {
+func TestClaimCompletionSemanticPriority(t *testing.T) {
 	coordinator := &claimCoordinator{}
 	block := &agentworker.PendingBlock{TurnID: "turn_1", InterruptID: "interrupt_1", CheckpointID: "checkpoint_1", Kind: "approval"}
 
-	closeAction := coordinator.resolveClaimAction(
+	closeAction := coordinator.selectAction(
 		newReleaseAction(defaultGracefulReleaseReason, nil),
 		&inputStopReason{kind: inputStopCloseHandled, reason: defaultCloseThreadReason, closeMessageID: 1001},
 		&runtimeYield{reason: "waiting for approval", block: block},
@@ -671,7 +668,7 @@ func TestResolveClaimActionSemanticPriority(t *testing.T) {
 		t.Fatalf("close action=%+v, want complete close", closeAction)
 	}
 
-	failedAction := coordinator.resolveClaimAction(
+	failedAction := coordinator.selectAction(
 		newReleaseAction(defaultGracefulReleaseReason, nil),
 		&inputStopReason{kind: inputStopFailed, reason: defaultErrorReleaseReason, err: errors.New("ack failed")},
 		&runtimeYield{reason: "waiting for approval", block: block},
@@ -680,7 +677,7 @@ func TestResolveClaimActionSemanticPriority(t *testing.T) {
 		t.Fatalf("failed action=%+v, want failed release without block", failedAction)
 	}
 
-	yieldAction := coordinator.resolveClaimAction(
+	yieldAction := coordinator.selectAction(
 		newReleaseAction(defaultGracefulReleaseReason, nil),
 		nil,
 		&runtimeYield{reason: "waiting for approval", block: block},
@@ -694,7 +691,7 @@ func TestRunClaimDoesNotAckWhenEnqueueFails(t *testing.T) {
 	items := make(chan agentworker.ThreadOutputItem, 1)
 	var releaseCtxCanceled atomic.Bool
 	client := &fakeClient{
-		releaseThreadFunc: func(ctx context.Context, req *ac.ReleaseThreadRequest) error {
+		releaseThreadFunc: func(ctx context.Context, req coordinator.ReleaseThreadRequest) error {
 			if err := ctx.Err(); err != nil {
 				releaseCtxCanceled.Store(true)
 			}
@@ -707,7 +704,7 @@ func TestRunClaimDoesNotAckWhenEnqueueFails(t *testing.T) {
 		RenewInterval: time.Hour,
 		IdleTimeout:   time.Second,
 		MessageLimit:  10,
-		AgentThreadFactory: AgentThreadFactory(func(ctx context.Context, threadInfo *ac.Thread) (agentworker.AgentThread, error) {
+		AgentThreadFactory: AgentThreadFactory(func(ctx context.Context, threadInfo *coordinator.Thread) (agentworker.AgentThread, error) {
 			return &testAgentThreadRuntime{
 				InitFunc: func(ctx context.Context) (*agentworker.ThreadOutput, error) {
 					return &agentworker.ThreadOutput{Items: items}, nil
@@ -720,10 +717,10 @@ func TestRunClaimDoesNotAckWhenEnqueueFails(t *testing.T) {
 	}
 
 	err := worker.runClaim(context.Background(), context.Background(), &claimResult{
-		thread: &ac.Thread{ThreadId: 42, Namespace: "test_ns", Status: ac.ThreadStatus_RUNNING},
-		lease:  &ac.Lease{ThreadId: 42, LeaseToken: "lease-token"},
-		pendingMessages: []*ac.Message{
-			{MessageId: 1001, ThreadId: 42, Status: ac.MessageStatus_PENDING},
+		thread: &coordinator.Thread{ThreadID: 42, Namespace: "test_ns", Status: coordinator.ThreadStatusRunning},
+		lease:  &coordinator.Lease{ThreadID: 42, LeaseToken: "lease-token"},
+		pendingMessages: []*coordinator.Message{
+			{MessageID: 1001, ThreadID: 42, Status: coordinator.MessageStatusPending},
 		},
 	})
 	if err == nil || !strings.Contains(err.Error(), agentworker.ErrThreadBackpressure.Error()) {
@@ -732,7 +729,7 @@ func TestRunClaimDoesNotAckWhenEnqueueFails(t *testing.T) {
 	if len(client.ackRequests) != 0 {
 		t.Fatalf("ack requests=%d, want 0", len(client.ackRequests))
 	}
-	if len(client.releaseRequests) != 1 || client.releaseRequests[0].GetReason() != postMessageFailedReason {
+	if len(client.releaseRequests) != 1 || client.releaseRequests[0].Reason != postMessageFailedReason {
 		t.Fatalf("release requests=%v, want error release", client.releaseRequests)
 	}
 	if releaseCtxCanceled.Load() {
@@ -747,16 +744,16 @@ func TestRunClaimReleasesWithBuildFailureReason(t *testing.T) {
 		Namespace:     "test_ns",
 		Client:        client,
 		RenewInterval: time.Hour,
-		AgentThreadFactory: AgentThreadFactory(func(ctx context.Context, threadInfo *ac.Thread) (agentworker.AgentThread, error) {
+		AgentThreadFactory: AgentThreadFactory(func(ctx context.Context, threadInfo *coordinator.Thread) (agentworker.AgentThread, error) {
 			return nil, buildErr
 		}),
 	}
 
 	err := worker.runClaim(context.Background(), context.Background(), &claimResult{
-		thread: &ac.Thread{ThreadId: 42, Namespace: "test_ns", Status: ac.ThreadStatus_RUNNING},
-		lease:  &ac.Lease{ThreadId: 42, LeaseToken: "lease-token"},
-		pendingMessages: []*ac.Message{
-			{MessageId: 1001, ThreadId: 42, Status: ac.MessageStatus_PENDING, Metadata: map[string]string{"logid": "message-logid"}},
+		thread: &coordinator.Thread{ThreadID: 42, Namespace: "test_ns", Status: coordinator.ThreadStatusRunning},
+		lease:  &coordinator.Lease{ThreadID: 42, LeaseToken: "lease-token"},
+		pendingMessages: []*coordinator.Message{
+			{MessageID: 1001, ThreadID: 42, Status: coordinator.MessageStatusPending, Metadata: map[string]string{"logid": "message-logid"}},
 		},
 	})
 	if !errors.Is(err, buildErr) {
@@ -765,7 +762,7 @@ func TestRunClaimReleasesWithBuildFailureReason(t *testing.T) {
 	if len(client.ackRequests) != 0 {
 		t.Fatalf("ack requests=%d, want 0", len(client.ackRequests))
 	}
-	if len(client.releaseRequests) != 1 || client.releaseRequests[0].GetReason() != buildThreadFailedReason {
+	if len(client.releaseRequests) != 1 || client.releaseRequests[0].Reason != buildThreadFailedReason {
 		t.Fatalf("release requests=%v, want build failure release", client.releaseRequests)
 	}
 }
@@ -778,7 +775,7 @@ func TestRunClaimReleasesWithInitFailureReason(t *testing.T) {
 		Namespace:     "test_ns",
 		Client:        client,
 		RenewInterval: time.Hour,
-		AgentThreadFactory: AgentThreadFactory(func(ctx context.Context, threadInfo *ac.Thread) (agentworker.AgentThread, error) {
+		AgentThreadFactory: AgentThreadFactory(func(ctx context.Context, threadInfo *coordinator.Thread) (agentworker.AgentThread, error) {
 			return &testAgentThreadRuntime{
 				InitFunc: func(ctx context.Context) (*agentworker.ThreadOutput, error) {
 					return nil, initErr
@@ -792,10 +789,10 @@ func TestRunClaimReleasesWithInitFailureReason(t *testing.T) {
 	}
 
 	err := worker.runClaim(context.Background(), context.Background(), &claimResult{
-		thread: &ac.Thread{ThreadId: 42, Namespace: "test_ns", Status: ac.ThreadStatus_RUNNING},
-		lease:  &ac.Lease{ThreadId: 42, LeaseToken: "lease-token"},
-		pendingMessages: []*ac.Message{
-			{MessageId: 1001, ThreadId: 42, Status: ac.MessageStatus_PENDING, Metadata: map[string]string{"logid": "message-logid"}},
+		thread: &coordinator.Thread{ThreadID: 42, Namespace: "test_ns", Status: coordinator.ThreadStatusRunning},
+		lease:  &coordinator.Lease{ThreadID: 42, LeaseToken: "lease-token"},
+		pendingMessages: []*coordinator.Message{
+			{MessageID: 1001, ThreadID: 42, Status: coordinator.MessageStatusPending, Metadata: map[string]string{"logid": "message-logid"}},
 		},
 	})
 	if !errors.Is(err, initErr) {
@@ -807,7 +804,7 @@ func TestRunClaimReleasesWithInitFailureReason(t *testing.T) {
 	if len(client.ackRequests) != 0 {
 		t.Fatalf("ack requests=%d, want 0", len(client.ackRequests))
 	}
-	if len(client.releaseRequests) != 1 || client.releaseRequests[0].GetReason() != initThreadFailedReason {
+	if len(client.releaseRequests) != 1 || client.releaseRequests[0].Reason != initThreadFailedReason {
 		t.Fatalf("release requests=%v, want init failure release", client.releaseRequests)
 	}
 }
@@ -822,7 +819,7 @@ func TestRunClaimLeavesClosedThreadMessagePendingAndReleases(t *testing.T) {
 		RenewInterval: time.Hour,
 		IdleTimeout:   time.Second,
 		MessageLimit:  10,
-		AgentThreadFactory: AgentThreadFactory(func(ctx context.Context, threadInfo *ac.Thread) (agentworker.AgentThread, error) {
+		AgentThreadFactory: AgentThreadFactory(func(ctx context.Context, threadInfo *coordinator.Thread) (agentworker.AgentThread, error) {
 			return &testAgentThreadRuntime{
 				InitFunc: func(ctx context.Context) (*agentworker.ThreadOutput, error) {
 					return &agentworker.ThreadOutput{Items: items}, nil
@@ -836,11 +833,11 @@ func TestRunClaimLeavesClosedThreadMessagePendingAndReleases(t *testing.T) {
 	}
 
 	err := worker.runClaim(context.Background(), context.Background(), &claimResult{
-		thread: &ac.Thread{ThreadId: 42, Namespace: "test_ns", Status: ac.ThreadStatus_RUNNING},
-		lease:  &ac.Lease{ThreadId: 42, LeaseToken: "lease-token"},
-		pendingMessages: []*ac.Message{
-			{MessageId: 1001, ThreadId: 42, Status: ac.MessageStatus_PENDING},
-			{MessageId: 1002, ThreadId: 42, Status: ac.MessageStatus_PENDING},
+		thread: &coordinator.Thread{ThreadID: 42, Namespace: "test_ns", Status: coordinator.ThreadStatusRunning},
+		lease:  &coordinator.Lease{ThreadID: 42, LeaseToken: "lease-token"},
+		pendingMessages: []*coordinator.Message{
+			{MessageID: 1001, ThreadID: 42, Status: coordinator.MessageStatusPending},
+			{MessageID: 1002, ThreadID: 42, Status: coordinator.MessageStatusPending},
 		},
 	})
 	if err != nil {
@@ -852,7 +849,7 @@ func TestRunClaimLeavesClosedThreadMessagePendingAndReleases(t *testing.T) {
 	if len(client.ackRequests) != 0 {
 		t.Fatalf("ack requests=%v, want none", client.ackRequests)
 	}
-	if len(client.releaseRequests) != 1 || client.releaseRequests[0].GetReason() != defaultThreadClosedReason {
+	if len(client.releaseRequests) != 1 || client.releaseRequests[0].Reason != defaultThreadClosedReason {
 		t.Fatalf("release requests=%v, want thread closed release", client.releaseRequests)
 	}
 	if len(client.pullRequests) != 0 {
@@ -869,7 +866,7 @@ func TestRunClaimDoesNotCompleteCloseControlBehindClosedMessage(t *testing.T) {
 		Client:        client,
 		RenewInterval: time.Hour,
 		MessageLimit:  10,
-		AgentThreadFactory: AgentThreadFactory(func(ctx context.Context, threadInfo *ac.Thread) (agentworker.AgentThread, error) {
+		AgentThreadFactory: AgentThreadFactory(func(ctx context.Context, threadInfo *coordinator.Thread) (agentworker.AgentThread, error) {
 			return &testAgentThreadRuntime{
 				InitFunc: func(ctx context.Context) (*agentworker.ThreadOutput, error) {
 					return &agentworker.ThreadOutput{Items: items}, nil
@@ -882,11 +879,11 @@ func TestRunClaimDoesNotCompleteCloseControlBehindClosedMessage(t *testing.T) {
 	}
 
 	err := worker.runClaim(context.Background(), context.Background(), &claimResult{
-		thread: &ac.Thread{ThreadId: 42, Namespace: "test_ns", Status: ac.ThreadStatus_CLOSING},
-		lease:  &ac.Lease{ThreadId: 42, LeaseToken: "lease-token"},
-		pendingMessages: []*ac.Message{
-			{MessageId: 1001, ThreadId: 42, MessageType: "text", Status: ac.MessageStatus_PENDING},
-			{MessageId: 9002, ThreadId: 42, MessageType: MessageTypeControlCloseThread, Payload: closePayload, Status: ac.MessageStatus_PENDING},
+		thread: &coordinator.Thread{ThreadID: 42, Namespace: "test_ns", Status: coordinator.ThreadStatusClosing},
+		lease:  &coordinator.Lease{ThreadID: 42, LeaseToken: "lease-token"},
+		pendingMessages: []*coordinator.Message{
+			{MessageID: 1001, ThreadID: 42, MessageType: "text", Status: coordinator.MessageStatusPending},
+			{MessageID: 9002, ThreadID: 42, MessageType: MessageTypeControlCloseThread, Payload: closePayload, Status: coordinator.MessageStatusPending},
 		},
 	})
 	if err != nil {
@@ -898,7 +895,7 @@ func TestRunClaimDoesNotCompleteCloseControlBehindClosedMessage(t *testing.T) {
 	if len(client.completeCloseRequests) != 0 {
 		t.Fatalf("complete close requests=%v, want none", client.completeCloseRequests)
 	}
-	if len(client.releaseRequests) != 1 || client.releaseRequests[0].GetReason() != defaultThreadClosedReason {
+	if len(client.releaseRequests) != 1 || client.releaseRequests[0].Reason != defaultThreadClosedReason {
 		t.Fatalf("release requests=%v, want thread closed release", client.releaseRequests)
 	}
 }
@@ -907,7 +904,7 @@ func TestRunClaimReturnsReleaseError(t *testing.T) {
 	items := make(chan agentworker.ThreadOutputItem, 1)
 	releaseErr := errors.New("release failed")
 	client := &fakeClient{
-		releaseThreadFunc: func(ctx context.Context, req *ac.ReleaseThreadRequest) error {
+		releaseThreadFunc: func(ctx context.Context, req coordinator.ReleaseThreadRequest) error {
 			return releaseErr
 		},
 	}
@@ -917,7 +914,7 @@ func TestRunClaimReturnsReleaseError(t *testing.T) {
 		RenewInterval: time.Hour,
 		IdleTimeout:   time.Second,
 		MessageLimit:  10,
-		AgentThreadFactory: AgentThreadFactory(func(ctx context.Context, threadInfo *ac.Thread) (agentworker.AgentThread, error) {
+		AgentThreadFactory: AgentThreadFactory(func(ctx context.Context, threadInfo *coordinator.Thread) (agentworker.AgentThread, error) {
 			return &testAgentThreadRuntime{
 				InitFunc: func(ctx context.Context) (*agentworker.ThreadOutput, error) {
 					return &agentworker.ThreadOutput{Items: items}, nil
@@ -930,10 +927,10 @@ func TestRunClaimReturnsReleaseError(t *testing.T) {
 	}
 
 	err := worker.runClaim(context.Background(), context.Background(), &claimResult{
-		thread: &ac.Thread{ThreadId: 42, Namespace: "test_ns", Status: ac.ThreadStatus_RUNNING},
-		lease:  &ac.Lease{ThreadId: 42, LeaseToken: "lease-token"},
-		pendingMessages: []*ac.Message{
-			{MessageId: 1001, ThreadId: 42, Status: ac.MessageStatus_PENDING},
+		thread: &coordinator.Thread{ThreadID: 42, Namespace: "test_ns", Status: coordinator.ThreadStatusRunning},
+		lease:  &coordinator.Lease{ThreadID: 42, LeaseToken: "lease-token"},
+		pendingMessages: []*coordinator.Message{
+			{MessageID: 1001, ThreadID: 42, Status: coordinator.MessageStatusPending},
 		},
 	})
 	if !errors.Is(err, releaseErr) || !errors.Is(err, agentworker.ErrThreadBackpressure) {
@@ -952,7 +949,7 @@ func TestRunClaimDropsInvalidRuntimeEventAndContinues(t *testing.T) {
 		RenewInterval: time.Hour,
 		IdleTimeout:   time.Second,
 		MessageLimit:  10,
-		AgentThreadFactory: AgentThreadFactory(func(ctx context.Context, threadInfo *ac.Thread) (agentworker.AgentThread, error) {
+		AgentThreadFactory: AgentThreadFactory(func(ctx context.Context, threadInfo *coordinator.Thread) (agentworker.AgentThread, error) {
 			return &testAgentThreadRuntime{
 				InitFunc: func(ctx context.Context) (*agentworker.ThreadOutput, error) {
 					return &agentworker.ThreadOutput{Items: items}, nil
@@ -965,10 +962,10 @@ func TestRunClaimDropsInvalidRuntimeEventAndContinues(t *testing.T) {
 	}
 
 	err := worker.runClaim(context.Background(), context.Background(), &claimResult{
-		thread: &ac.Thread{ThreadId: 42, Namespace: "test_ns", Status: ac.ThreadStatus_RUNNING},
-		lease:  &ac.Lease{ThreadId: 42, LeaseToken: "lease-token"},
-		pendingMessages: []*ac.Message{
-			{MessageId: 1001, ThreadId: 42, Status: ac.MessageStatus_PENDING},
+		thread: &coordinator.Thread{ThreadID: 42, Namespace: "test_ns", Status: coordinator.ThreadStatusRunning},
+		lease:  &coordinator.Lease{ThreadID: 42, LeaseToken: "lease-token"},
+		pendingMessages: []*coordinator.Message{
+			{MessageID: 1001, ThreadID: 42, Status: coordinator.MessageStatusPending},
 		},
 	})
 	if err != nil {
@@ -980,7 +977,7 @@ func TestRunClaimDropsInvalidRuntimeEventAndContinues(t *testing.T) {
 	if len(client.appendEventsRequests) != 0 {
 		t.Fatalf("append requests=%d, want invalid event dropped before append", len(client.appendEventsRequests))
 	}
-	if len(client.releaseRequests) != 1 || client.releaseRequests[0].GetReason() != "done" {
+	if len(client.releaseRequests) != 1 || client.releaseRequests[0].Reason != "done" {
 		t.Fatalf("release requests=%v, want done release", client.releaseRequests)
 	}
 }
@@ -990,7 +987,7 @@ func TestRunClaimDropsEventAfterAppendRetriesAndContinues(t *testing.T) {
 	items <- agentworker.ThreadOutputItem{Event: &agentworker.Event{TurnID: "turn_1001", Type: "agent_result", Payload: []byte("ok")}}
 	items <- agentworker.ThreadOutputItem{Yield: &agentworker.ThreadYield{Reason: "done"}}
 	client := &fakeClient{
-		appendEventsFunc: func(ctx context.Context, req *ac.AppendEventsRequest) error {
+		appendEventsFunc: func(ctx context.Context, req coordinator.PublishEventsRequest) error {
 			return errors.New("temporary append failure")
 		},
 	}
@@ -1000,7 +997,7 @@ func TestRunClaimDropsEventAfterAppendRetriesAndContinues(t *testing.T) {
 		RenewInterval: time.Hour,
 		IdleTimeout:   time.Second,
 		MessageLimit:  10,
-		AgentThreadFactory: AgentThreadFactory(func(ctx context.Context, threadInfo *ac.Thread) (agentworker.AgentThread, error) {
+		AgentThreadFactory: AgentThreadFactory(func(ctx context.Context, threadInfo *coordinator.Thread) (agentworker.AgentThread, error) {
 			return &testAgentThreadRuntime{
 				InitFunc: func(ctx context.Context) (*agentworker.ThreadOutput, error) {
 					return &agentworker.ThreadOutput{Items: items}, nil
@@ -1013,10 +1010,10 @@ func TestRunClaimDropsEventAfterAppendRetriesAndContinues(t *testing.T) {
 	}
 
 	err := worker.runClaim(context.Background(), context.Background(), &claimResult{
-		thread: &ac.Thread{ThreadId: 42, Namespace: "test_ns", Status: ac.ThreadStatus_RUNNING},
-		lease:  &ac.Lease{ThreadId: 42, LeaseToken: "lease-token"},
-		pendingMessages: []*ac.Message{
-			{MessageId: 1001, ThreadId: 42, Status: ac.MessageStatus_PENDING},
+		thread: &coordinator.Thread{ThreadID: 42, Namespace: "test_ns", Status: coordinator.ThreadStatusRunning},
+		lease:  &coordinator.Lease{ThreadID: 42, LeaseToken: "lease-token"},
+		pendingMessages: []*coordinator.Message{
+			{MessageID: 1001, ThreadID: 42, Status: coordinator.MessageStatusPending},
 		},
 	})
 	if err != nil {
@@ -1025,7 +1022,7 @@ func TestRunClaimDropsEventAfterAppendRetriesAndContinues(t *testing.T) {
 	if len(client.appendEventsRequests) != defaultAppendEventAttempts {
 		t.Fatalf("append attempts=%d, want %d", len(client.appendEventsRequests), defaultAppendEventAttempts)
 	}
-	if len(client.releaseRequests) != 1 || client.releaseRequests[0].GetReason() != "done" {
+	if len(client.releaseRequests) != 1 || client.releaseRequests[0].Reason != "done" {
 		t.Fatalf("release requests=%v, want done release", client.releaseRequests)
 	}
 }
@@ -1041,7 +1038,7 @@ func TestRunClaimDoesNotIdleReleaseWhileThreadActive(t *testing.T) {
 		IdleTimeout:         10 * time.Millisecond,
 		MessagePollInterval: 5 * time.Millisecond,
 		MessageLimit:        10,
-		AgentThreadFactory: AgentThreadFactory(func(ctx context.Context, threadInfo *ac.Thread) (agentworker.AgentThread, error) {
+		AgentThreadFactory: AgentThreadFactory(func(ctx context.Context, threadInfo *coordinator.Thread) (agentworker.AgentThread, error) {
 			return &testAgentThreadRuntime{
 				InitFunc: func(ctx context.Context) (*agentworker.ThreadOutput, error) {
 					return &agentworker.ThreadOutput{Items: items}, nil
@@ -1067,10 +1064,10 @@ func TestRunClaimDoesNotIdleReleaseWhileThreadActive(t *testing.T) {
 
 	start := time.Now()
 	err := worker.runClaim(context.Background(), context.Background(), &claimResult{
-		thread: &ac.Thread{ThreadId: 42, Namespace: "test_ns", Status: ac.ThreadStatus_RUNNING},
-		lease:  &ac.Lease{ThreadId: 42, LeaseToken: "lease-token"},
-		pendingMessages: []*ac.Message{
-			{MessageId: 1001, ThreadId: 42, Status: ac.MessageStatus_PENDING},
+		thread: &coordinator.Thread{ThreadID: 42, Namespace: "test_ns", Status: coordinator.ThreadStatusRunning},
+		lease:  &coordinator.Lease{ThreadID: 42, LeaseToken: "lease-token"},
+		pendingMessages: []*coordinator.Message{
+			{MessageID: 1001, ThreadID: 42, Status: coordinator.MessageStatusPending},
 		},
 	})
 	if err != nil {
@@ -1079,7 +1076,7 @@ func TestRunClaimDoesNotIdleReleaseWhileThreadActive(t *testing.T) {
 	if elapsed := time.Since(start); elapsed < 45*time.Millisecond {
 		t.Fatalf("claim released before active run completed: elapsed=%s", elapsed)
 	}
-	if len(client.releaseRequests) != 1 || client.releaseRequests[0].GetReason() != "run done" {
+	if len(client.releaseRequests) != 1 || client.releaseRequests[0].Reason != "run done" {
 		t.Fatalf("release requests=%v, want run done", client.releaseRequests)
 	}
 }
@@ -1095,7 +1092,7 @@ func TestRunClaimIdleTimeoutStartsAfterThreadBecomesInactive(t *testing.T) {
 		IdleTimeout:         20 * time.Millisecond,
 		MessagePollInterval: 5 * time.Millisecond,
 		MessageLimit:        10,
-		AgentThreadFactory: AgentThreadFactory(func(ctx context.Context, threadInfo *ac.Thread) (agentworker.AgentThread, error) {
+		AgentThreadFactory: AgentThreadFactory(func(ctx context.Context, threadInfo *coordinator.Thread) (agentworker.AgentThread, error) {
 			return &testAgentThreadRuntime{
 				InitFunc: func(ctx context.Context) (*agentworker.ThreadOutput, error) {
 					return &agentworker.ThreadOutput{Items: items}, nil
@@ -1121,10 +1118,10 @@ func TestRunClaimIdleTimeoutStartsAfterThreadBecomesInactive(t *testing.T) {
 
 	start := time.Now()
 	err := worker.runClaim(context.Background(), context.Background(), &claimResult{
-		thread: &ac.Thread{ThreadId: 42, Namespace: "test_ns", Status: ac.ThreadStatus_RUNNING},
-		lease:  &ac.Lease{ThreadId: 42, LeaseToken: "lease-token"},
-		pendingMessages: []*ac.Message{
-			{MessageId: 1001, ThreadId: 42, Status: ac.MessageStatus_PENDING},
+		thread: &coordinator.Thread{ThreadID: 42, Namespace: "test_ns", Status: coordinator.ThreadStatusRunning},
+		lease:  &coordinator.Lease{ThreadID: 42, LeaseToken: "lease-token"},
+		pendingMessages: []*coordinator.Message{
+			{MessageID: 1001, ThreadID: 42, Status: coordinator.MessageStatusPending},
 		},
 	})
 	if err != nil {
@@ -1133,7 +1130,7 @@ func TestRunClaimIdleTimeoutStartsAfterThreadBecomesInactive(t *testing.T) {
 	if elapsed := time.Since(start); elapsed < 45*time.Millisecond {
 		t.Fatalf("idle timeout started before runtime became inactive: elapsed=%s", elapsed)
 	}
-	if len(client.releaseRequests) != 1 || client.releaseRequests[0].GetReason() != defaultReleaseReason {
+	if len(client.releaseRequests) != 1 || client.releaseRequests[0].Reason != defaultReleaseReason {
 		t.Fatalf("release requests=%v, want idle release", client.releaseRequests)
 	}
 }
@@ -1143,7 +1140,7 @@ func TestRunClaimShutdownDrainStopsPullAndPendingDelivery(t *testing.T) {
 	acceptCtx, stopAccept := context.WithCancel(context.Background())
 	items := make(chan agentworker.ThreadOutputItem)
 	client := &fakeClient{
-		pullPendingMessagesFunc: func(req *ac.PullPendingMessagesRequest) []*ac.Message {
+		pullPendingMessagesFunc: func(req coordinator.ReadPendingInputsRequest) []*coordinator.Message {
 			t.Fatalf("pull should stop during shutdown drain")
 			return nil
 		},
@@ -1157,7 +1154,7 @@ func TestRunClaimShutdownDrainStopsPullAndPendingDelivery(t *testing.T) {
 		MessagePollInterval:  5 * time.Millisecond,
 		MessageLimit:         10,
 		ShutdownDrainTimeout: time.Second,
-		AgentThreadFactory: AgentThreadFactory(func(ctx context.Context, threadInfo *ac.Thread) (agentworker.AgentThread, error) {
+		AgentThreadFactory: AgentThreadFactory(func(ctx context.Context, threadInfo *coordinator.Thread) (agentworker.AgentThread, error) {
 			return &testAgentThreadRuntime{
 				InitFunc: func(ctx context.Context) (*agentworker.ThreadOutput, error) {
 					return &agentworker.ThreadOutput{Items: items}, nil
@@ -1185,11 +1182,11 @@ func TestRunClaimShutdownDrainStopsPullAndPendingDelivery(t *testing.T) {
 	}
 
 	err := worker.runClaim(context.Background(), acceptCtx, &claimResult{
-		thread: &ac.Thread{ThreadId: 42, Namespace: "test_ns", Status: ac.ThreadStatus_RUNNING},
-		lease:  &ac.Lease{ThreadId: 42, LeaseToken: "lease-token"},
-		pendingMessages: []*ac.Message{
-			{MessageId: 1001, ThreadId: 42, Status: ac.MessageStatus_PENDING},
-			{MessageId: 1002, ThreadId: 42, Status: ac.MessageStatus_PENDING},
+		thread: &coordinator.Thread{ThreadID: 42, Namespace: "test_ns", Status: coordinator.ThreadStatusRunning},
+		lease:  &coordinator.Lease{ThreadID: 42, LeaseToken: "lease-token"},
+		pendingMessages: []*coordinator.Message{
+			{MessageID: 1001, ThreadID: 42, Status: coordinator.MessageStatusPending},
+			{MessageID: 1002, ThreadID: 42, Status: coordinator.MessageStatusPending},
 		},
 	})
 	if err != nil {
@@ -1198,16 +1195,16 @@ func TestRunClaimShutdownDrainStopsPullAndPendingDelivery(t *testing.T) {
 	if len(handled) != 1 || handled[0] != 1001 {
 		t.Fatalf("handled messages=%v, want only [1001]", handled)
 	}
-	if len(client.ackRequests) != 1 || client.ackRequests[0].GetMessageIds()[0] != 1001 {
+	if len(client.ackRequests) != 1 || client.ackRequests[0].MessageIDs[0] != 1001 {
 		t.Fatalf("ack requests=%v, want only message 1001", client.ackRequests)
 	}
 	if len(client.pullRequests) != 0 {
 		t.Fatalf("pull requests=%d, want 0", len(client.pullRequests))
 	}
-	if len(client.releaseRequests) != 1 || client.releaseRequests[0].GetReason() != defaultGracefulReleaseReason {
+	if len(client.releaseRequests) != 1 || client.releaseRequests[0].Reason != defaultGracefulReleaseReason {
 		t.Fatalf("release requests=%v, want graceful release", client.releaseRequests)
 	}
-	if got := client.releaseRequests[0].ReleaseToStatus; got != nil {
+	if got := client.releaseRequests[0].Status; got != "" {
 		t.Fatalf("release_to_status=%v, want nil", got)
 	}
 }
@@ -1233,7 +1230,7 @@ func TestRunClaimShutdownDrainKeepsReadyRuntimeYield(t *testing.T) {
 		RenewInterval:        time.Hour,
 		MessagePollInterval:  5 * time.Millisecond,
 		ShutdownDrainTimeout: time.Second,
-		AgentThreadFactory: AgentThreadFactory(func(ctx context.Context, threadInfo *ac.Thread) (agentworker.AgentThread, error) {
+		AgentThreadFactory: AgentThreadFactory(func(ctx context.Context, threadInfo *coordinator.Thread) (agentworker.AgentThread, error) {
 			return &testAgentThreadRuntime{
 				InitFunc: func(ctx context.Context) (*agentworker.ThreadOutput, error) {
 					return &agentworker.ThreadOutput{Items: items}, nil
@@ -1246,8 +1243,8 @@ func TestRunClaimShutdownDrainKeepsReadyRuntimeYield(t *testing.T) {
 	}
 
 	err := worker.runClaim(context.Background(), acceptCtx, &claimResult{
-		thread: &ac.Thread{ThreadId: 42, Namespace: "test_ns", Status: ac.ThreadStatus_RUNNING},
-		lease:  &ac.Lease{ThreadId: 42, LeaseToken: "lease-token"},
+		thread: &coordinator.Thread{ThreadID: 42, Namespace: "test_ns", Status: coordinator.ThreadStatusRunning},
+		lease:  &coordinator.Lease{ThreadID: 42, LeaseToken: "lease-token"},
 	})
 	if err != nil {
 		t.Fatalf("runClaim error: %v", err)
@@ -1255,11 +1252,11 @@ func TestRunClaimShutdownDrainKeepsReadyRuntimeYield(t *testing.T) {
 	if len(client.releaseRequests) != 1 {
 		t.Fatalf("release requests=%d, want 1", len(client.releaseRequests))
 	}
-	if got := client.releaseRequests[0].GetReason(); got != "waiting for approval" {
+	if got := client.releaseRequests[0].Reason; got != "waiting for approval" {
 		t.Fatalf("release reason=%q, want runtime yield reason", got)
 	}
-	if client.releaseRequests[0].ReleaseToStatus == nil || *client.releaseRequests[0].ReleaseToStatus != ac.ThreadStatus_BLOCKED {
-		t.Fatalf("release_to_status=%v, want BLOCKED", client.releaseRequests[0].ReleaseToStatus)
+	if client.releaseRequests[0].Status != coordinator.ThreadStatusBlocked {
+		t.Fatalf("release_to_status=%v, want BLOCKED", client.releaseRequests[0].Status)
 	}
 }
 
@@ -1276,7 +1273,7 @@ func TestRunClaimShutdownDrainTimeoutInterruptsBeforeRelease(t *testing.T) {
 		MessagePollInterval:           5 * time.Millisecond,
 		ShutdownDrainTimeout:          20 * time.Millisecond,
 		ShutdownInterruptDrainTimeout: 20 * time.Millisecond,
-		AgentThreadFactory: AgentThreadFactory(func(ctx context.Context, threadInfo *ac.Thread) (agentworker.AgentThread, error) {
+		AgentThreadFactory: AgentThreadFactory(func(ctx context.Context, threadInfo *coordinator.Thread) (agentworker.AgentThread, error) {
 			return &testAgentThreadRuntime{
 				InitFunc: func(ctx context.Context) (*agentworker.ThreadOutput, error) {
 					return &agentworker.ThreadOutput{Items: items}, nil
@@ -1293,8 +1290,8 @@ func TestRunClaimShutdownDrainTimeoutInterruptsBeforeRelease(t *testing.T) {
 	}
 
 	err := worker.runClaim(context.Background(), acceptCtx, &claimResult{
-		thread: &ac.Thread{ThreadId: 42, Namespace: "test_ns", Status: ac.ThreadStatus_RUNNING},
-		lease:  &ac.Lease{ThreadId: 42, LeaseToken: "lease-token"},
+		thread: &coordinator.Thread{ThreadID: 42, Namespace: "test_ns", Status: coordinator.ThreadStatusRunning},
+		lease:  &coordinator.Lease{ThreadID: 42, LeaseToken: "lease-token"},
 	})
 	if err != nil {
 		t.Fatalf("runClaim error: %v", err)
@@ -1308,10 +1305,10 @@ func TestRunClaimShutdownDrainTimeoutInterruptsBeforeRelease(t *testing.T) {
 	if len(client.appendEventsRequests) != 0 {
 		t.Fatalf("append requests=%d, want 0; worker SDK must not emit business events", len(client.appendEventsRequests))
 	}
-	if len(client.releaseRequests) != 1 || client.releaseRequests[0].GetReason() != defaultShutdownTimeoutReason {
+	if len(client.releaseRequests) != 1 || client.releaseRequests[0].Reason != defaultShutdownTimeoutReason {
 		t.Fatalf("release requests=%v, want shutdown timeout release", client.releaseRequests)
 	}
-	if got := client.releaseRequests[0].ReleaseToStatus; got != nil {
+	if got := client.releaseRequests[0].Status; got != "" {
 		t.Fatalf("release_to_status=%v, want nil", got)
 	}
 }
@@ -1327,7 +1324,7 @@ func TestRunClaimCloseControlStopDoesNotWaitFullInterruptDrain(t *testing.T) {
 		MessagePollInterval:     5 * time.Millisecond,
 		InterruptDrainTimeout:   time.Second,
 		RuntimeInterruptTimeout: 25 * time.Millisecond,
-		AgentThreadFactory: AgentThreadFactory(func(ctx context.Context, threadInfo *ac.Thread) (agentworker.AgentThread, error) {
+		AgentThreadFactory: AgentThreadFactory(func(ctx context.Context, threadInfo *coordinator.Thread) (agentworker.AgentThread, error) {
 			return &testAgentThreadRuntime{
 				InitFunc: func(ctx context.Context) (*agentworker.ThreadOutput, error) {
 					return &agentworker.ThreadOutput{Items: items}, nil
@@ -1353,10 +1350,10 @@ func TestRunClaimCloseControlStopDoesNotWaitFullInterruptDrain(t *testing.T) {
 
 	start := time.Now()
 	err := worker.runClaim(context.Background(), context.Background(), &claimResult{
-		thread: &ac.Thread{ThreadId: 42, Namespace: "test_ns", Status: ac.ThreadStatus_CLOSING},
-		lease:  &ac.Lease{ThreadId: 42, LeaseToken: "lease-token"},
-		pendingMessages: []*ac.Message{
-			{MessageId: 9002, ThreadId: 42, MessageType: MessageTypeControlCloseThread, Payload: closePayload, Status: ac.MessageStatus_PENDING},
+		thread: &coordinator.Thread{ThreadID: 42, Namespace: "test_ns", Status: coordinator.ThreadStatusClosing},
+		lease:  &coordinator.Lease{ThreadID: 42, LeaseToken: "lease-token"},
+		pendingMessages: []*coordinator.Message{
+			{MessageID: 9002, ThreadID: 42, MessageType: MessageTypeControlCloseThread, Payload: closePayload, Status: coordinator.MessageStatusPending},
 		},
 	})
 	if err != nil {
@@ -1365,7 +1362,7 @@ func TestRunClaimCloseControlStopDoesNotWaitFullInterruptDrain(t *testing.T) {
 	if elapsed := time.Since(start); elapsed > 300*time.Millisecond {
 		t.Fatalf("close control waited too long after coordinator stop: elapsed=%s", elapsed)
 	}
-	if len(client.completeCloseRequests) != 1 || client.completeCloseRequests[0].GetControlMessageId() != 9002 {
+	if len(client.completeCloseRequests) != 1 || client.completeCloseRequests[0].ControlMessageID != 9002 {
 		t.Fatalf("complete close requests=%v, want close control completion", client.completeCloseRequests)
 	}
 	if len(client.releaseRequests) != 0 {
@@ -1387,7 +1384,7 @@ func TestRunClaimShutdownInterruptDrainConsumesOutput(t *testing.T) {
 		MessagePollInterval:           5 * time.Millisecond,
 		ShutdownDrainTimeout:          20 * time.Millisecond,
 		ShutdownInterruptDrainTimeout: time.Second,
-		AgentThreadFactory: AgentThreadFactory(func(ctx context.Context, threadInfo *ac.Thread) (agentworker.AgentThread, error) {
+		AgentThreadFactory: AgentThreadFactory(func(ctx context.Context, threadInfo *coordinator.Thread) (agentworker.AgentThread, error) {
 			return &testAgentThreadRuntime{
 				InitFunc: func(ctx context.Context) (*agentworker.ThreadOutput, error) {
 					return &agentworker.ThreadOutput{Items: items}, nil
@@ -1408,13 +1405,13 @@ func TestRunClaimShutdownInterruptDrainConsumesOutput(t *testing.T) {
 	}
 
 	err := worker.runClaim(context.Background(), acceptCtx, &claimResult{
-		thread: &ac.Thread{ThreadId: 42, Namespace: "test_ns", Status: ac.ThreadStatus_RUNNING},
-		lease:  &ac.Lease{ThreadId: 42, LeaseToken: "lease-token"},
+		thread: &coordinator.Thread{ThreadID: 42, Namespace: "test_ns", Status: coordinator.ThreadStatusRunning},
+		lease:  &coordinator.Lease{ThreadID: 42, LeaseToken: "lease-token"},
 	})
 	if err != nil {
 		t.Fatalf("runClaim error: %v", err)
 	}
-	if len(client.releaseRequests) != 1 || client.releaseRequests[0].GetReason() != "runtime interrupted by shutdown" {
+	if len(client.releaseRequests) != 1 || client.releaseRequests[0].Reason != "runtime interrupted by shutdown" {
 		t.Fatalf("release requests=%v, want output yield reason", client.releaseRequests)
 	}
 }
@@ -1433,7 +1430,7 @@ func TestRunClaimShutdownInterruptDrainWaitsForDelayedRuntimeOutput(t *testing.T
 		MessagePollInterval:           5 * time.Millisecond,
 		ShutdownDrainTimeout:          20 * time.Millisecond,
 		ShutdownInterruptDrainTimeout: time.Second,
-		AgentThreadFactory: AgentThreadFactory(func(ctx context.Context, threadInfo *ac.Thread) (agentworker.AgentThread, error) {
+		AgentThreadFactory: AgentThreadFactory(func(ctx context.Context, threadInfo *coordinator.Thread) (agentworker.AgentThread, error) {
 			return &testAgentThreadRuntime{
 				InitFunc: func(ctx context.Context) (*agentworker.ThreadOutput, error) {
 					return &agentworker.ThreadOutput{Items: items}, nil
@@ -1468,8 +1465,8 @@ func TestRunClaimShutdownInterruptDrainWaitsForDelayedRuntimeOutput(t *testing.T
 
 	start := time.Now()
 	err := worker.runClaim(context.Background(), acceptCtx, &claimResult{
-		thread: &ac.Thread{ThreadId: 42, Namespace: "test_ns", Status: ac.ThreadStatus_RUNNING},
-		lease:  &ac.Lease{ThreadId: 42, LeaseToken: "lease-token"},
+		thread: &coordinator.Thread{ThreadID: 42, Namespace: "test_ns", Status: coordinator.ThreadStatusRunning},
+		lease:  &coordinator.Lease{ThreadID: 42, LeaseToken: "lease-token"},
 	})
 	if err != nil {
 		t.Fatalf("runClaim error: %v", err)
@@ -1480,11 +1477,11 @@ func TestRunClaimShutdownInterruptDrainWaitsForDelayedRuntimeOutput(t *testing.T
 	if len(client.appendEventsRequests) != 1 {
 		t.Fatalf("append requests=%d, want 1", len(client.appendEventsRequests))
 	}
-	event := client.appendEventsRequests[0].GetEvents()[0]
-	if event.GetTurnId() != "turn_1001" || event.GetEventType() != "business_turn_interrupted" {
-		t.Fatalf("event turn=%q type=%q", event.GetTurnId(), event.GetEventType())
+	event := client.appendEventsRequests[0].Events[0]
+	if event.TurnID != "turn_1001" || event.EventType != "business_turn_interrupted" {
+		t.Fatalf("event turn=%q type=%q", event.TurnID, event.EventType)
 	}
-	if len(client.releaseRequests) != 1 || client.releaseRequests[0].GetReason() != "business observed shutdown interrupt" {
+	if len(client.releaseRequests) != 1 || client.releaseRequests[0].Reason != "business observed shutdown interrupt" {
 		t.Fatalf("release requests=%v, want business yield reason", client.releaseRequests)
 	}
 }
@@ -1496,8 +1493,8 @@ func TestRunClaimCancelControlInterruptsAndContinuesAfterInactive(t *testing.T) 
 	cancelPayload, _ := json.Marshal(CancelInputControlPayload{CutoffMessageID: 1001, Reason: "user_cancel"})
 	client := &fakeClient{}
 	ops := make([]string, 0, 3)
-	client.ackThreadMessagesFunc = func(ctx context.Context, req *ac.AckThreadMessagesRequest) error {
-		ids := req.GetMessageIds()
+	client.ackThreadMessagesFunc = func(ctx context.Context, req coordinator.ConfirmInputDeliveryRequest) error {
+		ids := req.MessageIDs
 		if len(ids) > 0 {
 			ops = append(ops, "ack:"+strconv.FormatInt(ids[0], 10))
 		}
@@ -1513,7 +1510,7 @@ func TestRunClaimCancelControlInterruptsAndContinuesAfterInactive(t *testing.T) 
 		MessagePollInterval:     5 * time.Millisecond,
 		InterruptDrainTimeout:   time.Second,
 		RuntimeInterruptTimeout: 25 * time.Millisecond,
-		AgentThreadFactory: AgentThreadFactory(func(ctx context.Context, threadInfo *ac.Thread) (agentworker.AgentThread, error) {
+		AgentThreadFactory: AgentThreadFactory(func(ctx context.Context, threadInfo *coordinator.Thread) (agentworker.AgentThread, error) {
 			return &testAgentThreadRuntime{
 				InitFunc: func(ctx context.Context) (*agentworker.ThreadOutput, error) {
 					return &agentworker.ThreadOutput{Items: items}, nil
@@ -1540,12 +1537,12 @@ func TestRunClaimCancelControlInterruptsAndContinuesAfterInactive(t *testing.T) 
 	}
 
 	err := worker.runClaim(context.Background(), context.Background(), &claimResult{
-		thread: &ac.Thread{ThreadId: 42, Namespace: "test_ns", Status: ac.ThreadStatus_RUNNING},
-		lease:  &ac.Lease{ThreadId: 42, LeaseToken: "lease-token"},
-		pendingMessages: []*ac.Message{
-			{MessageId: 9001, ThreadId: 42, MessageType: MessageTypeControlCancelInput, Payload: cancelPayload, Status: ac.MessageStatus_PENDING},
-			{MessageId: 1001, ThreadId: 42, MessageType: "text", Status: ac.MessageStatus_PENDING},
-			{MessageId: 1002, ThreadId: 42, MessageType: "text", Status: ac.MessageStatus_PENDING},
+		thread: &coordinator.Thread{ThreadID: 42, Namespace: "test_ns", Status: coordinator.ThreadStatusRunning},
+		lease:  &coordinator.Lease{ThreadID: 42, LeaseToken: "lease-token"},
+		pendingMessages: []*coordinator.Message{
+			{MessageID: 9001, ThreadID: 42, MessageType: MessageTypeControlCancelInput, Payload: cancelPayload, Status: coordinator.MessageStatusPending},
+			{MessageID: 1001, ThreadID: 42, MessageType: "text", Status: coordinator.MessageStatusPending},
+			{MessageID: 1002, ThreadID: 42, MessageType: "text", Status: coordinator.MessageStatusPending},
 		},
 	})
 	if err != nil {
@@ -1560,13 +1557,13 @@ func TestRunClaimCancelControlInterruptsAndContinuesAfterInactive(t *testing.T) 
 	if len(handled) != 1 || handled[0] != "1002" {
 		t.Fatalf("handled=%v, want only message 1002", handled)
 	}
-	if len(client.ackRequests) != 2 || client.ackRequests[0].GetMessageIds()[0] != 9001 || client.ackRequests[1].GetMessageIds()[0] != 1002 {
+	if len(client.ackRequests) != 2 || client.ackRequests[0].MessageIDs[0] != 9001 || client.ackRequests[1].MessageIDs[0] != 1002 {
 		t.Fatalf("ack requests=%v, want control then 1002", client.ackRequests)
 	}
 	if strings.Join(ops, ",") != "interrupt,ack:9001,ack:1002" {
 		t.Fatalf("ops=%v, want interrupt before control ack", ops)
 	}
-	if len(client.releaseRequests) != 1 || client.releaseRequests[0].GetReason() != "done" {
+	if len(client.releaseRequests) != 1 || client.releaseRequests[0].Reason != "done" {
 		t.Fatalf("release requests=%v, want done", client.releaseRequests)
 	}
 }
@@ -1580,7 +1577,7 @@ func TestRunClaimCancelControlParseFailureAcksAndReleases(t *testing.T) {
 		Client:                client,
 		RenewInterval:         time.Hour,
 		InterruptDrainTimeout: 20 * time.Millisecond,
-		AgentThreadFactory: AgentThreadFactory(func(ctx context.Context, threadInfo *ac.Thread) (agentworker.AgentThread, error) {
+		AgentThreadFactory: AgentThreadFactory(func(ctx context.Context, threadInfo *coordinator.Thread) (agentworker.AgentThread, error) {
 			return &testAgentThreadRuntime{
 				InitFunc: func(ctx context.Context) (*agentworker.ThreadOutput, error) {
 					return &agentworker.ThreadOutput{Items: make(chan agentworker.ThreadOutputItem)}, nil
@@ -1598,11 +1595,11 @@ func TestRunClaimCancelControlParseFailureAcksAndReleases(t *testing.T) {
 	}
 
 	err := worker.runClaim(context.Background(), context.Background(), &claimResult{
-		thread: &ac.Thread{ThreadId: 42, Namespace: "test_ns", Status: ac.ThreadStatus_RUNNING},
-		lease:  &ac.Lease{ThreadId: 42, LeaseToken: "lease-token"},
-		pendingMessages: []*ac.Message{
-			{MessageId: 9001, ThreadId: 42, MessageType: MessageTypeControlCancelInput, Payload: []byte("{bad"), Status: ac.MessageStatus_PENDING},
-			{MessageId: 1002, ThreadId: 42, MessageType: "text", Status: ac.MessageStatus_PENDING},
+		thread: &coordinator.Thread{ThreadID: 42, Namespace: "test_ns", Status: coordinator.ThreadStatusRunning},
+		lease:  &coordinator.Lease{ThreadID: 42, LeaseToken: "lease-token"},
+		pendingMessages: []*coordinator.Message{
+			{MessageID: 9001, ThreadID: 42, MessageType: MessageTypeControlCancelInput, Payload: []byte("{bad"), Status: coordinator.MessageStatusPending},
+			{MessageID: 1002, ThreadID: 42, MessageType: "text", Status: coordinator.MessageStatusPending},
 		},
 	})
 	if err == nil {
@@ -1614,10 +1611,10 @@ func TestRunClaimCancelControlParseFailureAcksAndReleases(t *testing.T) {
 	if !closeCalled.Load() {
 		t.Fatalf("runtime Close was not called")
 	}
-	if len(client.ackRequests) != 1 || client.ackRequests[0].GetMessageIds()[0] != 9001 {
+	if len(client.ackRequests) != 1 || client.ackRequests[0].MessageIDs[0] != 9001 {
 		t.Fatalf("ack requests=%v, want only cancel control ack", client.ackRequests)
 	}
-	if len(client.releaseRequests) != 1 || client.releaseRequests[0].GetReason() != controlInputFailedReason {
+	if len(client.releaseRequests) != 1 || client.releaseRequests[0].Reason != controlInputFailedReason {
 		t.Fatalf("release requests=%v, want error release", client.releaseRequests)
 	}
 }
@@ -1670,7 +1667,7 @@ func TestRunClaimCancelControlInterruptTimeoutLeavesControlPendingAndReleases(t 
 		IdleTimeout:           time.Hour,
 		MessagePollInterval:   5 * time.Millisecond,
 		InterruptDrainTimeout: 20 * time.Millisecond,
-		AgentThreadFactory: AgentThreadFactory(func(ctx context.Context, threadInfo *ac.Thread) (agentworker.AgentThread, error) {
+		AgentThreadFactory: AgentThreadFactory(func(ctx context.Context, threadInfo *coordinator.Thread) (agentworker.AgentThread, error) {
 			return &testAgentThreadRuntime{
 				InitFunc: func(ctx context.Context) (*agentworker.ThreadOutput, error) {
 					return &agentworker.ThreadOutput{Items: make(chan agentworker.ThreadOutputItem)}, nil
@@ -1691,10 +1688,10 @@ func TestRunClaimCancelControlInterruptTimeoutLeavesControlPendingAndReleases(t 
 	}
 
 	err := worker.runClaim(context.Background(), context.Background(), &claimResult{
-		thread: &ac.Thread{ThreadId: 42, Namespace: "test_ns", Status: ac.ThreadStatus_RUNNING},
-		lease:  &ac.Lease{ThreadId: 42, LeaseToken: "lease-token"},
-		pendingMessages: []*ac.Message{
-			{MessageId: 9001, ThreadId: 42, MessageType: MessageTypeControlCancelInput, Payload: cancelPayload, Status: ac.MessageStatus_PENDING},
+		thread: &coordinator.Thread{ThreadID: 42, Namespace: "test_ns", Status: coordinator.ThreadStatusRunning},
+		lease:  &coordinator.Lease{ThreadID: 42, LeaseToken: "lease-token"},
+		pendingMessages: []*coordinator.Message{
+			{MessageID: 9001, ThreadID: 42, MessageType: MessageTypeControlCancelInput, Payload: cancelPayload, Status: coordinator.MessageStatusPending},
 		},
 	})
 	if err != nil {
@@ -1709,7 +1706,7 @@ func TestRunClaimCancelControlInterruptTimeoutLeavesControlPendingAndReleases(t 
 	if len(client.ackRequests) != 0 {
 		t.Fatalf("ack requests=%v, want cancel control left pending for retry", client.ackRequests)
 	}
-	if len(client.releaseRequests) != 1 || client.releaseRequests[0].GetReason() != defaultInterruptTimeoutReason {
+	if len(client.releaseRequests) != 1 || client.releaseRequests[0].Reason != defaultInterruptTimeoutReason {
 		t.Fatalf("release requests=%v, want timeout release", client.releaseRequests)
 	}
 }
@@ -1729,7 +1726,7 @@ func TestRunClaimCloseControlCompletesCloseWithoutRelease(t *testing.T) {
 		MessagePollInterval:     5 * time.Millisecond,
 		InterruptDrainTimeout:   time.Second,
 		RuntimeInterruptTimeout: 25 * time.Millisecond,
-		AgentThreadFactory: AgentThreadFactory(func(ctx context.Context, threadInfo *ac.Thread) (agentworker.AgentThread, error) {
+		AgentThreadFactory: AgentThreadFactory(func(ctx context.Context, threadInfo *coordinator.Thread) (agentworker.AgentThread, error) {
 			return &testAgentThreadRuntime{
 				PostMessageFunc: func(ctx context.Context, input *agentworker.Message) error {
 					postCalled.Store(true)
@@ -1755,11 +1752,11 @@ func TestRunClaimCloseControlCompletesCloseWithoutRelease(t *testing.T) {
 	}
 
 	err := worker.runClaim(context.Background(), context.Background(), &claimResult{
-		thread: &ac.Thread{ThreadId: 42, Namespace: "test_ns", Status: ac.ThreadStatus_CLOSING},
-		lease:  &ac.Lease{ThreadId: 42, LeaseToken: "lease-token"},
-		pendingMessages: []*ac.Message{
-			{MessageId: 9002, ThreadId: 42, MessageType: MessageTypeControlCloseThread, Payload: closePayload, Status: ac.MessageStatus_PENDING},
-			{MessageId: 1002, ThreadId: 42, MessageType: "text", Status: ac.MessageStatus_PENDING},
+		thread: &coordinator.Thread{ThreadID: 42, Namespace: "test_ns", Status: coordinator.ThreadStatusClosing},
+		lease:  &coordinator.Lease{ThreadID: 42, LeaseToken: "lease-token"},
+		pendingMessages: []*coordinator.Message{
+			{MessageID: 9002, ThreadID: 42, MessageType: MessageTypeControlCloseThread, Payload: closePayload, Status: coordinator.MessageStatusPending},
+			{MessageID: 1002, ThreadID: 42, MessageType: "text", Status: coordinator.MessageStatusPending},
 		},
 	})
 	if err != nil {
@@ -1777,10 +1774,10 @@ func TestRunClaimCloseControlCompletesCloseWithoutRelease(t *testing.T) {
 	if got := closeCalls.Load(); got != 1 {
 		t.Fatalf("runtime Close calls=%d, want 1", got)
 	}
-	if len(client.ackRequests) != 1 || client.ackRequests[0].GetMessageIds()[0] != 9002 {
-		t.Fatalf("ack requests=%v, want close control ack", client.ackRequests)
+	if len(client.ackRequests) != 0 {
+		t.Fatalf("ack requests=%v, close acknowledgement belongs to ConfirmThreadClosed", client.ackRequests)
 	}
-	if len(client.completeCloseRequests) != 1 || client.completeCloseRequests[0].GetControlMessageId() != 9002 || client.completeCloseRequests[0].GetReason() != "user_close" {
+	if len(client.completeCloseRequests) != 1 || client.completeCloseRequests[0].ControlMessageID != 9002 || client.completeCloseRequests[0].Reason != "user_close" {
 		t.Fatalf("complete close requests=%v", client.completeCloseRequests)
 	}
 	if len(client.releaseRequests) != 0 {
@@ -1794,25 +1791,25 @@ func TestRunClaimCloseControlParseFailureStillCompletesClose(t *testing.T) {
 		Namespace:     "test_ns",
 		Client:        client,
 		RenewInterval: time.Hour,
-		AgentThreadFactory: AgentThreadFactory(func(ctx context.Context, threadInfo *ac.Thread) (agentworker.AgentThread, error) {
+		AgentThreadFactory: AgentThreadFactory(func(ctx context.Context, threadInfo *coordinator.Thread) (agentworker.AgentThread, error) {
 			return &testAgentThreadRuntime{}, nil
 		}),
 	}
 
 	err := worker.runClaim(context.Background(), context.Background(), &claimResult{
-		thread: &ac.Thread{ThreadId: 42, Namespace: "test_ns", Status: ac.ThreadStatus_CLOSING},
-		lease:  &ac.Lease{ThreadId: 42, LeaseToken: "lease-token"},
-		pendingMessages: []*ac.Message{
-			{MessageId: 9002, ThreadId: 42, MessageType: MessageTypeControlCloseThread, Payload: []byte("{bad"), Status: ac.MessageStatus_PENDING},
+		thread: &coordinator.Thread{ThreadID: 42, Namespace: "test_ns", Status: coordinator.ThreadStatusClosing},
+		lease:  &coordinator.Lease{ThreadID: 42, LeaseToken: "lease-token"},
+		pendingMessages: []*coordinator.Message{
+			{MessageID: 9002, ThreadID: 42, MessageType: MessageTypeControlCloseThread, Payload: []byte("{bad"), Status: coordinator.MessageStatusPending},
 		},
 	})
 	if err != nil {
 		t.Fatalf("runClaim error: %v", err)
 	}
-	if len(client.ackRequests) != 1 || client.ackRequests[0].GetMessageIds()[0] != 9002 {
-		t.Fatalf("ack requests=%v, want close control ack", client.ackRequests)
+	if len(client.ackRequests) != 0 {
+		t.Fatalf("ack requests=%v, close acknowledgement belongs to ConfirmThreadClosed", client.ackRequests)
 	}
-	if len(client.completeCloseRequests) != 1 || client.completeCloseRequests[0].GetReason() != defaultCloseThreadReason {
+	if len(client.completeCloseRequests) != 1 || client.completeCloseRequests[0].Reason != defaultCloseThreadReason {
 		t.Fatalf("complete close requests=%v, want default reason", client.completeCloseRequests)
 	}
 	if len(client.releaseRequests) != 0 {
@@ -1820,19 +1817,19 @@ func TestRunClaimCloseControlParseFailureStillCompletesClose(t *testing.T) {
 	}
 }
 
-func TestRPCErrorReportsBaseRespWithTransportError(t *testing.T) {
-	resp := &ac.ReleaseThreadResponse{BaseResp: &base.BaseResp{StatusCode: 409, StatusMessage: "lease mismatch"}}
-	err := rpcError("ReleaseThread", resp, errors.New("remote error"))
-	if err == nil || !strings.Contains(err.Error(), "status_code=409") || !strings.Contains(err.Error(), "lease mismatch") || !strings.Contains(err.Error(), "remote error") {
-		t.Fatalf("rpcError=%v, want status code, message and transport error", err)
+func TestCoordinatorErrorPreservesOperationAndCause(t *testing.T) {
+	cause := errors.New("lease mismatch")
+	err := coordinatorError("ReleaseThread", cause)
+	if err == nil || !strings.Contains(err.Error(), "ReleaseThread") || !errors.Is(err, cause) {
+		t.Fatalf("coordinatorError=%v, want operation and wrapped cause", err)
 	}
 }
 
 func TestNewMessageLogContextUsesProducerLogID(t *testing.T) {
 	worker := &Worker{Namespace: "test_ns"}
-	ctx := worker.newMessageLogContext(context.Background(), &ac.Thread{ThreadId: 42}, &ac.Message{
-		MessageId: 1001,
-		ThreadId:  42,
+	ctx := worker.newMessageLogContext(context.Background(), &coordinator.Thread{ThreadID: 42}, &coordinator.Message{
+		MessageID: 1001,
+		ThreadID:  42,
 		Metadata:  map[string]string{"logid": "producer-logid", metadataKeyKEnv: "message_env"},
 	})
 
@@ -1851,8 +1848,8 @@ func TestNewMessageLogContextUsesProducerLogID(t *testing.T) {
 
 func TestNewThreadLogContextUsesThreadLogID(t *testing.T) {
 	worker := &Worker{Namespace: "test_ns"}
-	ctx := worker.newThreadLogContext(context.Background(), &ac.Thread{
-		ThreadId: 42,
+	ctx := worker.newThreadLogContext(context.Background(), &coordinator.Thread{
+		ThreadID: 42,
 		Metadata: map[string]string{
 			"logid":                     "thread-logid",
 			metadataKeyBytedCtxMetaInfo: `{"persist_a":"value-a"}`,
@@ -1879,7 +1876,7 @@ func TestNewThreadLogContextUsesThreadLogID(t *testing.T) {
 
 func TestNewThreadLogContextGeneratesLogIDWhenMissing(t *testing.T) {
 	worker := &Worker{Namespace: "test_ns"}
-	ctx := worker.newThreadLogContext(context.Background(), &ac.Thread{ThreadId: 42})
+	ctx := worker.newThreadLogContext(context.Background(), &coordinator.Thread{ThreadID: 42})
 
 	got, ok := ctxvalues.LogID(ctx)
 	if !ok || got == "" {
@@ -1896,9 +1893,9 @@ func TestNewThreadLogContextGeneratesLogIDWhenMissing(t *testing.T) {
 
 func TestNewMessageLogContextGeneratesLogIDWhenMissing(t *testing.T) {
 	worker := &Worker{Namespace: "test_ns"}
-	ctx := worker.newMessageLogContext(context.Background(), &ac.Thread{ThreadId: 42}, &ac.Message{
-		MessageId: 1001,
-		ThreadId:  42,
+	ctx := worker.newMessageLogContext(context.Background(), &coordinator.Thread{ThreadID: 42}, &coordinator.Message{
+		MessageID: 1001,
+		ThreadID:  42,
 	})
 
 	got, ok := ctxvalues.LogID(ctx)
@@ -1922,8 +1919,8 @@ func TestClaimLogContextInheritsScanLogID(t *testing.T) {
 		t.Fatalf("scan logid=%q ok=%t, want generated scan logid", scanLogID, ok)
 	}
 
-	claimCtx := worker.newClaimLogContext(scanCtx, &ac.Thread{
-		ThreadId: 42,
+	claimCtx := worker.newClaimLogContext(scanCtx, &coordinator.Thread{
+		ThreadID: 42,
 		Metadata: map[string]string{"logid": "thread-logid", metadataKeyKEnv: "thread_env"},
 	})
 	if got, ok := ctxvalues.LogID(claimCtx); !ok || got != scanLogID {
@@ -1940,18 +1937,18 @@ func TestClaimLogContextInheritsScanLogID(t *testing.T) {
 func TestRunLogContextUsesThreadLogID(t *testing.T) {
 	worker := &Worker{Namespace: "test_ns"}
 	ctx := worker.newRunLogContext(context.Background(), &claimResult{
-		thread: &ac.Thread{
-			ThreadId: 42,
+		thread: &coordinator.Thread{
+			ThreadID: 42,
 			Metadata: map[string]string{
 				"logid":                     "thread-logid",
 				metadataKeyBytedCtxMetaInfo: `{"persist_a":"value-a"}`,
 				metadataKeyKEnv:             "thread_env",
 			},
 		},
-		lease: &ac.Lease{ThreadId: 42, LeaseToken: "lease-token"},
-		pendingMessages: []*ac.Message{{
-			MessageId: 1001,
-			ThreadId:  42,
+		lease: &coordinator.Lease{ThreadID: 42, LeaseToken: "lease-token"},
+		pendingMessages: []*coordinator.Message{{
+			MessageID: 1001,
+			ThreadID:  42,
 			Metadata:  map[string]string{"logid": "message-logid"},
 		}},
 	})
@@ -1972,11 +1969,11 @@ func TestRunLogContextUsesThreadLogID(t *testing.T) {
 func TestRunLogContextFallsBackToThreadLogID(t *testing.T) {
 	worker := &Worker{Namespace: "test_ns"}
 	ctx := worker.newRunLogContext(context.Background(), &claimResult{
-		thread: &ac.Thread{
-			ThreadId: 42,
+		thread: &coordinator.Thread{
+			ThreadID: 42,
 			Metadata: map[string]string{"logid": "thread-logid"},
 		},
-		lease: &ac.Lease{ThreadId: 42, LeaseToken: "lease-token"},
+		lease: &coordinator.Lease{ThreadID: 42, LeaseToken: "lease-token"},
 	})
 	if got, ok := ctxvalues.LogID(ctx); !ok || got != "thread-logid" {
 		t.Fatalf("run ctxvalues logid=%q ok=%t, want thread-logid", got, ok)
@@ -1989,7 +1986,7 @@ func TestRunLogContextFallsBackToThreadLogID(t *testing.T) {
 func TestPullLogContextInheritsRunLogID(t *testing.T) {
 	worker := &Worker{Namespace: "test_ns", MessageLimit: 20}
 	runCtx := contextWithLogID(context.Background(), "run-logid")
-	pullCtx := worker.newPullLogContext(runCtx, &ac.Lease{ThreadId: 42, LeaseToken: "lease-token"})
+	pullCtx := worker.newPullLogContext(runCtx, &coordinator.Lease{ThreadID: 42, LeaseToken: "lease-token"})
 
 	if got, ok := ctxvalues.LogID(pullCtx); !ok || got != "run-logid" {
 		t.Fatalf("pull ctxvalues logid=%q ok=%t, want run-logid", got, ok)
@@ -2007,13 +2004,13 @@ func TestRunClaimRestoresMessageRequestMetaInfo(t *testing.T) {
 	var gotEnvOK bool
 	var gotMetadata map[string]string
 	client := &fakeClient{
-		ackThreadMessagesFunc: func(ctx context.Context, req *ac.AckThreadMessagesRequest) error {
+		ackThreadMessagesFunc: func(ctx context.Context, req coordinator.ConfirmInputDeliveryRequest) error {
 			if gotEnv, ok := kitutil.GetCtxEnv(ctx); ok {
 				t.Fatalf("ack env=%q ok=%t, want no restored request env on AC RPC", gotEnv, ok)
 			}
 			return nil
 		},
-		releaseThreadFunc: func(ctx context.Context, req *ac.ReleaseThreadRequest) error {
+		releaseThreadFunc: func(ctx context.Context, req coordinator.ReleaseThreadRequest) error {
 			if gotEnv, ok := kitutil.GetCtxEnv(ctx); ok {
 				t.Fatalf("release env=%q ok=%t, want no restored request env on AC RPC", gotEnv, ok)
 			}
@@ -2024,7 +2021,7 @@ func TestRunClaimRestoresMessageRequestMetaInfo(t *testing.T) {
 		Namespace:     "test_ns",
 		Client:        client,
 		RenewInterval: time.Hour,
-		AgentThreadFactory: AgentThreadFactory(func(ctx context.Context, threadInfo *ac.Thread) (agentworker.AgentThread, error) {
+		AgentThreadFactory: AgentThreadFactory(func(ctx context.Context, threadInfo *coordinator.Thread) (agentworker.AgentThread, error) {
 			return &testAgentThreadRuntime{
 				InitFunc: func(ctx context.Context) (*agentworker.ThreadOutput, error) {
 					return &agentworker.ThreadOutput{Items: items}, nil
@@ -2041,13 +2038,13 @@ func TestRunClaimRestoresMessageRequestMetaInfo(t *testing.T) {
 	}
 
 	err := worker.runClaim(context.Background(), context.Background(), &claimResult{
-		thread: &ac.Thread{ThreadId: 42, Namespace: "test_ns", Status: ac.ThreadStatus_RUNNING},
-		lease:  &ac.Lease{ThreadId: 42, LeaseToken: "lease-token"},
-		pendingMessages: []*ac.Message{{
-			MessageId:   1001,
-			ThreadId:    42,
+		thread: &coordinator.Thread{ThreadID: 42, Namespace: "test_ns", Status: coordinator.ThreadStatusRunning},
+		lease:  &coordinator.Lease{ThreadID: 42, LeaseToken: "lease-token"},
+		pendingMessages: []*coordinator.Message{{
+			MessageID:   1001,
+			ThreadID:    42,
 			MessageType: "text",
-			Status:      ac.MessageStatus_PENDING,
+			Status:      coordinator.MessageStatusPending,
 			Metadata: map[string]string{
 				metadataKeyBytedCtxMetaInfo: `{"persist_a":"value-a"}`,
 				metadataKeyKEnv:             "message_env",
@@ -2074,10 +2071,10 @@ func TestRunClaimInitUsesThreadRequestContext(t *testing.T) {
 	items <- agentworker.ThreadOutputItem{Yield: &agentworker.ThreadYield{Reason: "done"}}
 	close(items)
 	client := &fakeClient{}
-	thread := &ac.Thread{
-		ThreadId:  42,
+	thread := &coordinator.Thread{
+		ThreadID:  42,
 		Namespace: "test_ns",
-		Status:    ac.ThreadStatus_RUNNING,
+		Status:    coordinator.ThreadStatusRunning,
 		Metadata: map[string]string{
 			"logid":                     "thread-logid",
 			metadataKeyBytedCtxMetaInfo: `{"persist_a":"value-a"}`,
@@ -2088,7 +2085,7 @@ func TestRunClaimInitUsesThreadRequestContext(t *testing.T) {
 		Namespace:     "test_ns",
 		Client:        client,
 		RenewInterval: time.Hour,
-		AgentThreadFactory: AgentThreadFactory(func(ctx context.Context, threadInfo *ac.Thread) (agentworker.AgentThread, error) {
+		AgentThreadFactory: AgentThreadFactory(func(ctx context.Context, threadInfo *coordinator.Thread) (agentworker.AgentThread, error) {
 			gotLogID, ok := kitutil.GetCtxLogID(ctx)
 			if !ok || gotLogID != "thread-logid" {
 				t.Fatalf("factory logid=%q ok=%t, want thread-logid", gotLogID, ok)
@@ -2123,7 +2120,7 @@ func TestRunClaimInitUsesThreadRequestContext(t *testing.T) {
 
 	err := worker.runClaim(worker.newThreadLogContext(context.Background(), thread), context.Background(), &claimResult{
 		thread: thread,
-		lease:  &ac.Lease{ThreadId: 42, LeaseToken: "lease-token"},
+		lease:  &coordinator.Lease{ThreadID: 42, LeaseToken: "lease-token"},
 	})
 	if err != nil {
 		t.Fatalf("runClaim error: %v", err)
@@ -2138,7 +2135,7 @@ func TestRunClaimIgnoresMalformedRequestMetaInfo(t *testing.T) {
 		Namespace:     "test_ns",
 		Client:        client,
 		RenewInterval: time.Hour,
-		AgentThreadFactory: AgentThreadFactory(func(ctx context.Context, threadInfo *ac.Thread) (agentworker.AgentThread, error) {
+		AgentThreadFactory: AgentThreadFactory(func(ctx context.Context, threadInfo *coordinator.Thread) (agentworker.AgentThread, error) {
 			return &testAgentThreadRuntime{
 				InitFunc: func(ctx context.Context) (*agentworker.ThreadOutput, error) {
 					return &agentworker.ThreadOutput{Items: items}, nil
@@ -2153,13 +2150,13 @@ func TestRunClaimIgnoresMalformedRequestMetaInfo(t *testing.T) {
 	}
 
 	err := worker.runClaim(context.Background(), context.Background(), &claimResult{
-		thread: &ac.Thread{ThreadId: 42, Namespace: "test_ns", Status: ac.ThreadStatus_RUNNING},
-		lease:  &ac.Lease{ThreadId: 42, LeaseToken: "lease-token"},
-		pendingMessages: []*ac.Message{{
-			MessageId:   1001,
-			ThreadId:    42,
+		thread: &coordinator.Thread{ThreadID: 42, Namespace: "test_ns", Status: coordinator.ThreadStatusRunning},
+		lease:  &coordinator.Lease{ThreadID: 42, LeaseToken: "lease-token"},
+		pendingMessages: []*coordinator.Message{{
+			MessageID:   1001,
+			ThreadID:    42,
 			MessageType: "text",
-			Status:      ac.MessageStatus_PENDING,
+			Status:      coordinator.MessageStatusPending,
 			Metadata:    map[string]string{metadataKeyBytedCtxMetaInfo: "{bad"},
 		}},
 	})
@@ -2177,7 +2174,7 @@ func TestScanRunnableThreadsSetsEnv(t *testing.T) {
 		Namespace: "test_ns",
 		Env:       "boe_test_lane",
 		Client:    client,
-		AgentThreadFactory: AgentThreadFactory(func(ctx context.Context, threadInfo *ac.Thread) (agentworker.AgentThread, error) {
+		AgentThreadFactory: AgentThreadFactory(func(ctx context.Context, threadInfo *coordinator.Thread) (agentworker.AgentThread, error) {
 			return &testAgentThreadRuntime{}, nil
 		}),
 	}
@@ -2191,16 +2188,16 @@ func TestScanRunnableThreadsSetsEnv(t *testing.T) {
 	if len(client.scanRequests) != 1 {
 		t.Fatalf("scan requests=%d, want 1", len(client.scanRequests))
 	}
-	if got := client.scanRequests[0].GetEnv(); got != "boe_test_lane" {
+	if got := client.scanRequests[0].Env; got != "boe_test_lane" {
 		t.Fatalf("scan env=%q, want boe_test_lane", got)
 	}
 }
 
 func TestRunUsesThreadRequestContextForInit(t *testing.T) {
-	thread := &ac.Thread{
-		ThreadId:  42,
+	thread := &coordinator.Thread{
+		ThreadID:  42,
 		Namespace: "test_ns",
-		Status:    ac.ThreadStatus_READY,
+		Status:    coordinator.ThreadStatusReady,
 		Metadata: map[string]string{
 			"logid":                     "activation-logid",
 			metadataKeyBytedCtxMetaInfo: `{"persist_a":"value-a"}`,
@@ -2211,25 +2208,24 @@ func TestRunUsesThreadRequestContextForInit(t *testing.T) {
 	var scanned atomic.Bool
 	var releasedClosed atomic.Bool
 	client := &fakeClient{
-		scanRunnableThreadsFunc: func(req *ac.ScanRunnableThreadsRequest) []*ac.Thread {
+		scanRunnableThreadsFunc: func(req coordinator.ScanRunnableThreadsRequest) []*coordinator.Thread {
 			if scanned.Swap(true) {
 				return nil
 			}
-			return []*ac.Thread{thread}
+			return []*coordinator.Thread{thread}
 		},
-		claimThreadFunc: func(ctx context.Context, req *ac.ClaimThreadRequest) *ac.ClaimThreadResponse {
+		claimThreadFunc: func(ctx context.Context, req coordinator.ClaimThreadRequest) coordinator.ClaimThreadResult {
 			if gotEnv, ok := kitutil.GetCtxEnv(ctx); ok {
 				t.Fatalf("claim env=%q ok=%t, want no restored request env on AC RPC", gotEnv, ok)
 			}
 			claimed := *thread
-			claimed.Status = ac.ThreadStatus_RUNNING
-			return &ac.ClaimThreadResponse{
-				BaseResp: okBaseResp(),
-				Thread:   &claimed,
-				Lease:    &ac.Lease{ThreadId: 42, LeaseToken: "lease-token"},
+			claimed.Status = coordinator.ThreadStatusRunning
+			return coordinator.ClaimThreadResult{
+				Thread: &claimed,
+				Lease:  &coordinator.Lease{ThreadID: 42, LeaseToken: "lease-token"},
 			}
 		},
-		releaseThreadFunc: func(ctx context.Context, req *ac.ReleaseThreadRequest) error {
+		releaseThreadFunc: func(ctx context.Context, req coordinator.ReleaseThreadRequest) error {
 			if gotEnv, ok := kitutil.GetCtxEnv(ctx); ok {
 				t.Fatalf("release env=%q ok=%t, want no restored request env on AC RPC", gotEnv, ok)
 			}
@@ -2245,7 +2241,7 @@ func TestRunUsesThreadRequestContextForInit(t *testing.T) {
 		Concurrency:   1,
 		ScanInterval:  time.Hour,
 		RenewInterval: time.Hour,
-		AgentThreadFactory: AgentThreadFactory(func(ctx context.Context, threadInfo *ac.Thread) (agentworker.AgentThread, error) {
+		AgentThreadFactory: AgentThreadFactory(func(ctx context.Context, threadInfo *coordinator.Thread) (agentworker.AgentThread, error) {
 			gotLogID, ok := kitutil.GetCtxLogID(ctx)
 			if !ok || gotLogID != "activation-logid" {
 				t.Fatalf("factory logid=%q ok=%t, want activation-logid", gotLogID, ok)
@@ -2305,21 +2301,21 @@ func TestRunUsesThreadRequestContextForInit(t *testing.T) {
 }
 
 func TestRunClaimsWithScanLogIDAndInitializesWithThreadLogID(t *testing.T) {
-	thread := &ac.Thread{
-		ThreadId:  42,
+	thread := &coordinator.Thread{
+		ThreadID:  42,
 		Namespace: "test_ns",
-		Status:    ac.ThreadStatus_READY,
+		Status:    coordinator.ThreadStatusReady,
 		Metadata: map[string]string{
 			"logid":                     "thread-logid",
 			metadataKeyBytedCtxMetaInfo: `{"persist_a":"value-a"}`,
 			metadataKeyKEnv:             "thread_env",
 		},
 	}
-	firstPendingMessage := &ac.Message{
-		MessageId:   1001,
-		ThreadId:    42,
+	firstPendingMessage := &coordinator.Message{
+		MessageID:   1001,
+		ThreadID:    42,
 		MessageType: "text",
-		Status:      ac.MessageStatus_PENDING,
+		Status:      coordinator.MessageStatusPending,
 		Metadata:    map[string]string{"logid": "message-logid"},
 	}
 	released := make(chan struct{})
@@ -2327,13 +2323,13 @@ func TestRunClaimsWithScanLogIDAndInitializesWithThreadLogID(t *testing.T) {
 	var claimScanLogID string
 	var releasedClosed atomic.Bool
 	client := &fakeClient{
-		scanRunnableThreadsFunc: func(req *ac.ScanRunnableThreadsRequest) []*ac.Thread {
+		scanRunnableThreadsFunc: func(req coordinator.ScanRunnableThreadsRequest) []*coordinator.Thread {
 			if scanned.Swap(true) {
 				return nil
 			}
-			return []*ac.Thread{thread}
+			return []*coordinator.Thread{thread}
 		},
-		claimThreadFunc: func(ctx context.Context, req *ac.ClaimThreadRequest) *ac.ClaimThreadResponse {
+		claimThreadFunc: func(ctx context.Context, req coordinator.ClaimThreadRequest) coordinator.ClaimThreadResult {
 			gotLogID, ok := kitutil.GetCtxLogID(ctx)
 			if !ok || gotLogID == "" {
 				t.Fatalf("claim logid=%q ok=%t, want inherited scan logid", gotLogID, ok)
@@ -2346,15 +2342,14 @@ func TestRunClaimsWithScanLogIDAndInitializesWithThreadLogID(t *testing.T) {
 				t.Fatalf("claim env=%q ok=%t, want no restored request env on AC RPC", gotEnv, ok)
 			}
 			claimed := *thread
-			claimed.Status = ac.ThreadStatus_RUNNING
-			return &ac.ClaimThreadResponse{
-				BaseResp:        okBaseResp(),
+			claimed.Status = coordinator.ThreadStatusRunning
+			return coordinator.ClaimThreadResult{
 				Thread:          &claimed,
-				Lease:           &ac.Lease{ThreadId: 42, LeaseToken: "lease-token"},
-				PendingMessages: []*ac.Message{firstPendingMessage},
+				Lease:           &coordinator.Lease{ThreadID: 42, LeaseToken: "lease-token"},
+				PendingMessages: []*coordinator.Message{firstPendingMessage},
 			}
 		},
-		releaseThreadFunc: func(ctx context.Context, req *ac.ReleaseThreadRequest) error {
+		releaseThreadFunc: func(ctx context.Context, req coordinator.ReleaseThreadRequest) error {
 			if gotEnv, ok := kitutil.GetCtxEnv(ctx); ok {
 				t.Fatalf("release env=%q ok=%t, want no restored request env on AC RPC", gotEnv, ok)
 			}
@@ -2370,7 +2365,7 @@ func TestRunClaimsWithScanLogIDAndInitializesWithThreadLogID(t *testing.T) {
 		Concurrency:   1,
 		ScanInterval:  time.Hour,
 		RenewInterval: time.Hour,
-		AgentThreadFactory: AgentThreadFactory(func(ctx context.Context, threadInfo *ac.Thread) (agentworker.AgentThread, error) {
+		AgentThreadFactory: AgentThreadFactory(func(ctx context.Context, threadInfo *coordinator.Thread) (agentworker.AgentThread, error) {
 			gotLogID, ok := kitutil.GetCtxLogID(ctx)
 			if !ok || gotLogID != "thread-logid" {
 				t.Fatalf("factory logid=%q ok=%t, want thread logid", gotLogID, ok)
@@ -2431,25 +2426,24 @@ func TestRunClaimsBeforeNextScan(t *testing.T) {
 	claimStarted := make(chan struct{})
 	allowClaim := make(chan struct{})
 	client := &fakeClient{
-		scanRunnableThreadsFunc: func(req *ac.ScanRunnableThreadsRequest) []*ac.Thread {
+		scanRunnableThreadsFunc: func(req coordinator.ScanRunnableThreadsRequest) []*coordinator.Thread {
 			atomic.AddInt32(&scanCalls, 1)
 			if atomic.LoadInt32(&claimCalls) == 0 {
-				return []*ac.Thread{{ThreadId: 42, Namespace: "test_ns", Status: ac.ThreadStatus_READY}}
+				return []*coordinator.Thread{{ThreadID: 42, Namespace: "test_ns", Status: coordinator.ThreadStatusReady}}
 			}
 			return nil
 		},
-		claimThreadFunc: func(ctx context.Context, req *ac.ClaimThreadRequest) *ac.ClaimThreadResponse {
+		claimThreadFunc: func(ctx context.Context, req coordinator.ClaimThreadRequest) coordinator.ClaimThreadResult {
 			if atomic.CompareAndSwapInt32(&claimStartedClosed, 0, 1) {
 				close(claimStarted)
 			}
 			<-allowClaim
 			atomic.AddInt32(&claimCalls, 1)
-			return &ac.ClaimThreadResponse{
-				BaseResp: okBaseResp(),
-				Thread:   &ac.Thread{ThreadId: 42, Namespace: "test_ns", Status: ac.ThreadStatus_RUNNING},
-				Lease:    &ac.Lease{ThreadId: 42, LeaseToken: "lease-token"},
-				PendingMessages: []*ac.Message{
-					{MessageId: 1001, ThreadId: 42, Status: ac.MessageStatus_PENDING},
+			return coordinator.ClaimThreadResult{
+				Thread: &coordinator.Thread{ThreadID: 42, Namespace: "test_ns", Status: coordinator.ThreadStatusRunning},
+				Lease:  &coordinator.Lease{ThreadID: 42, LeaseToken: "lease-token"},
+				PendingMessages: []*coordinator.Message{
+					{MessageID: 1001, ThreadID: 42, Status: coordinator.MessageStatusPending},
 				},
 			}
 		},
@@ -2465,7 +2459,7 @@ func TestRunClaimsBeforeNextScan(t *testing.T) {
 		ScanInterval:  10 * time.Millisecond,
 		RenewInterval: time.Hour,
 		IdleTimeout:   20 * time.Millisecond,
-		AgentThreadFactory: AgentThreadFactory(func(ctx context.Context, threadInfo *ac.Thread) (agentworker.AgentThread, error) {
+		AgentThreadFactory: AgentThreadFactory(func(ctx context.Context, threadInfo *coordinator.Thread) (agentworker.AgentThread, error) {
 			atomic.AddInt32(&factoryCalls, 1)
 			return &testAgentThreadRuntime{
 				InitFunc: func(ctx context.Context) (*agentworker.ThreadOutput, error) {
@@ -2536,19 +2530,18 @@ func TestRunCoolsDownAfterNonEmptyScanWithFastClaimMiss(t *testing.T) {
 	var scanCalls int32
 	var claimCalls int32
 	firstScan := make(chan struct{})
-	thread := &ac.Thread{ThreadId: 42, Namespace: "test_ns", Status: ac.ThreadStatus_READY}
+	thread := &coordinator.Thread{ThreadID: 42, Namespace: "test_ns", Status: coordinator.ThreadStatusReady}
 	client := &fakeClient{
-		scanRunnableThreadsFunc: func(req *ac.ScanRunnableThreadsRequest) []*ac.Thread {
+		scanRunnableThreadsFunc: func(req coordinator.ScanRunnableThreadsRequest) []*coordinator.Thread {
 			if atomic.AddInt32(&scanCalls, 1) == 1 {
 				close(firstScan)
 			}
-			return []*ac.Thread{thread}
+			return []*coordinator.Thread{thread}
 		},
-		claimThreadFunc: func(ctx context.Context, req *ac.ClaimThreadRequest) *ac.ClaimThreadResponse {
+		claimThreadFunc: func(ctx context.Context, req coordinator.ClaimThreadRequest) coordinator.ClaimThreadResult {
 			atomic.AddInt32(&claimCalls, 1)
-			return &ac.ClaimThreadResponse{
-				BaseResp: okBaseResp(),
-				Thread:   &ac.Thread{ThreadId: req.GetThreadId(), Namespace: "test_ns", Status: ac.ThreadStatus_READY},
+			return coordinator.ClaimThreadResult{
+				Thread: &coordinator.Thread{ThreadID: req.ThreadID, Namespace: "test_ns", Status: coordinator.ThreadStatusReady},
 			}
 		},
 	}
@@ -2558,7 +2551,7 @@ func TestRunCoolsDownAfterNonEmptyScanWithFastClaimMiss(t *testing.T) {
 		Concurrency:   1,
 		ScanInterval:  time.Hour,
 		RenewInterval: time.Hour,
-		AgentThreadFactory: AgentThreadFactory(func(ctx context.Context, threadInfo *ac.Thread) (agentworker.AgentThread, error) {
+		AgentThreadFactory: AgentThreadFactory(func(ctx context.Context, threadInfo *coordinator.Thread) (agentworker.AgentThread, error) {
 			return &testAgentThreadRuntime{}, nil
 		}),
 	}
@@ -2605,7 +2598,7 @@ func TestRunEmptyScanStillSleepsAndCancelStopsWorker(t *testing.T) {
 	var scanCalls int32
 	firstScan := make(chan struct{})
 	client := &fakeClient{
-		scanRunnableThreadsFunc: func(req *ac.ScanRunnableThreadsRequest) []*ac.Thread {
+		scanRunnableThreadsFunc: func(req coordinator.ScanRunnableThreadsRequest) []*coordinator.Thread {
 			if atomic.AddInt32(&scanCalls, 1) == 1 {
 				close(firstScan)
 			}
@@ -2618,7 +2611,7 @@ func TestRunEmptyScanStillSleepsAndCancelStopsWorker(t *testing.T) {
 		Concurrency:   1,
 		ScanInterval:  time.Hour,
 		RenewInterval: time.Hour,
-		AgentThreadFactory: AgentThreadFactory(func(ctx context.Context, threadInfo *ac.Thread) (agentworker.AgentThread, error) {
+		AgentThreadFactory: AgentThreadFactory(func(ctx context.Context, threadInfo *coordinator.Thread) (agentworker.AgentThread, error) {
 			return &testAgentThreadRuntime{}, nil
 		}),
 	}
@@ -2659,10 +2652,10 @@ func TestRunNextScanAfterCooldownDoesNotWaitForActiveClaim(t *testing.T) {
 	initStarted := make(chan struct{})
 	allowInit := make(chan struct{})
 	client := &fakeClient{
-		scanRunnableThreadsFunc: func(req *ac.ScanRunnableThreadsRequest) []*ac.Thread {
+		scanRunnableThreadsFunc: func(req coordinator.ScanRunnableThreadsRequest) []*coordinator.Thread {
 			switch atomic.AddInt32(&scanCalls, 1) {
 			case 1:
-				return []*ac.Thread{{ThreadId: 42, Namespace: "test_ns", Status: ac.ThreadStatus_READY}}
+				return []*coordinator.Thread{{ThreadID: 42, Namespace: "test_ns", Status: coordinator.ThreadStatusReady}}
 			case 2:
 				if atomic.CompareAndSwapInt32(&secondScanClosed, 0, 1) {
 					close(secondScan)
@@ -2670,11 +2663,10 @@ func TestRunNextScanAfterCooldownDoesNotWaitForActiveClaim(t *testing.T) {
 			}
 			return nil
 		},
-		claimThreadFunc: func(ctx context.Context, req *ac.ClaimThreadRequest) *ac.ClaimThreadResponse {
-			return &ac.ClaimThreadResponse{
-				BaseResp: okBaseResp(),
-				Thread:   &ac.Thread{ThreadId: req.GetThreadId(), Namespace: "test_ns", Status: ac.ThreadStatus_RUNNING},
-				Lease:    &ac.Lease{ThreadId: req.GetThreadId(), LeaseToken: "lease-token"},
+		claimThreadFunc: func(ctx context.Context, req coordinator.ClaimThreadRequest) coordinator.ClaimThreadResult {
+			return coordinator.ClaimThreadResult{
+				Thread: &coordinator.Thread{ThreadID: req.ThreadID, Namespace: "test_ns", Status: coordinator.ThreadStatusRunning},
+				Lease:  &coordinator.Lease{ThreadID: req.ThreadID, LeaseToken: "lease-token"},
 			}
 		},
 	}
@@ -2684,7 +2676,7 @@ func TestRunNextScanAfterCooldownDoesNotWaitForActiveClaim(t *testing.T) {
 		Concurrency:   2,
 		ScanInterval:  30 * time.Millisecond,
 		RenewInterval: time.Hour,
-		AgentThreadFactory: AgentThreadFactory(func(ctx context.Context, threadInfo *ac.Thread) (agentworker.AgentThread, error) {
+		AgentThreadFactory: AgentThreadFactory(func(ctx context.Context, threadInfo *coordinator.Thread) (agentworker.AgentThread, error) {
 			return &testAgentThreadRuntime{
 				InitFunc: func(ctx context.Context) (*agentworker.ThreadOutput, error) {
 					close(initStarted)
@@ -2732,9 +2724,9 @@ func TestRunNextScanAfterCooldownDoesNotWaitForActiveClaim(t *testing.T) {
 
 func TestMessagePreviewTruncatesPayload(t *testing.T) {
 	payload := strings.Repeat("x", logMessagePayloadPreviewBytes+10)
-	preview := messagePreview(&ac.Message{
-		MessageId:   1001,
-		ThreadId:    42,
+	preview := messagePreview(&coordinator.Message{
+		MessageID:   1001,
+		ThreadID:    42,
 		MessageType: "text",
 		Payload:     []byte(payload),
 		Metadata:    map[string]string{"logid": "producer-logid"},
@@ -2756,7 +2748,7 @@ func TestMessagePreviewTruncatesPayload(t *testing.T) {
 }
 
 func TestMessagePreviewHandlesNilSenderAndMetadata(t *testing.T) {
-	preview := messagePreview(&ac.Message{MessageId: 1001, ThreadId: 42})
+	preview := messagePreview(&coordinator.Message{MessageID: 1001, ThreadID: 42})
 
 	var decoded map[string]interface{}
 	if err := json.Unmarshal([]byte(preview), &decoded); err != nil {
@@ -2767,152 +2759,109 @@ func TestMessagePreviewHandlesNilSenderAndMetadata(t *testing.T) {
 	}
 }
 
-var _ acsvc.Client = (*fakeClient)(nil)
+var _ CoordinatorClient = (*fakeClient)(nil)
 
 type fakeClient struct {
-	appendEventsRequests          []*ac.AppendEventsRequest
-	ackRequests                   []*ac.AckThreadMessagesRequest
-	releaseRequests               []*ac.ReleaseThreadRequest
-	completeCloseRequests         []*ac.CompleteCloseThreadRequest
-	pullRequests                  []*ac.PullPendingMessagesRequest
-	scanRequests                  []*ac.ScanRunnableThreadsRequest
-	pullPendingMessagesFunc       func(req *ac.PullPendingMessagesRequest) []*ac.Message
-	pullPendingMessagesResultFunc func(req *ac.PullPendingMessagesRequest) ([]*ac.Message, error)
-	scanRunnableThreadsFunc       func(req *ac.ScanRunnableThreadsRequest) []*ac.Thread
-	claimThreadFunc               func(ctx context.Context, req *ac.ClaimThreadRequest) *ac.ClaimThreadResponse
-	releaseThreadFunc             func(ctx context.Context, req *ac.ReleaseThreadRequest) error
-	ackThreadMessagesFunc         func(ctx context.Context, req *ac.AckThreadMessagesRequest) error
-	appendEventsFunc              func(ctx context.Context, req *ac.AppendEventsRequest) error
+	renewThreadLeaseFunc          func(context.Context, coordinator.RenewThreadLeaseRequest) (*coordinator.Lease, error)
+	appendEventsRequests          []coordinator.PublishEventsRequest
+	ackRequests                   []coordinator.ConfirmInputDeliveryRequest
+	releaseRequests               []coordinator.ReleaseThreadRequest
+	completeCloseRequests         []coordinator.ConfirmThreadClosedRequest
+	pullRequests                  []coordinator.ReadPendingInputsRequest
+	scanRequests                  []coordinator.ScanRunnableThreadsRequest
+	pullPendingMessagesFunc       func(req coordinator.ReadPendingInputsRequest) []*coordinator.Message
+	pullPendingMessagesResultFunc func(req coordinator.ReadPendingInputsRequest) ([]*coordinator.Message, error)
+	scanRunnableThreadsFunc       func(req coordinator.ScanRunnableThreadsRequest) []*coordinator.Thread
+	claimThreadFunc               func(ctx context.Context, req coordinator.ClaimThreadRequest) coordinator.ClaimThreadResult
+	releaseThreadFunc             func(ctx context.Context, req coordinator.ReleaseThreadRequest) error
+	ackThreadMessagesFunc         func(ctx context.Context, req coordinator.ConfirmInputDeliveryRequest) error
+	appendEventsFunc              func(ctx context.Context, req coordinator.PublishEventsRequest) error
 }
 
-func okBaseResp() *base.BaseResp {
-	return &base.BaseResp{StatusCode: 0, StatusMessage: "OK"}
+func (f *fakeClient) CreateThread(context.Context, coordinator.CreateThreadRequest) (result coordinator.CreateThreadResult, err error) {
+	return result, nil
 }
 
-func (f *fakeClient) RegisterAgentNamespace(ctx context.Context, req *ac.RegisterAgentNamespaceRequest, callOptions ...callopt.Option) (*ac.RegisterAgentNamespaceResponse, error) {
-	return &ac.RegisterAgentNamespaceResponse{BaseResp: okBaseResp()}, nil
-}
-
-func (f *fakeClient) CreateThread(ctx context.Context, req *ac.CreateThreadRequest, callOptions ...callopt.Option) (*ac.CreateThreadResponse, error) {
-	return &ac.CreateThreadResponse{BaseResp: okBaseResp()}, nil
-}
-
-func (f *fakeClient) GetThread(ctx context.Context, req *ac.GetThreadRequest, callOptions ...callopt.Option) (*ac.GetThreadResponse, error) {
-	return &ac.GetThreadResponse{BaseResp: okBaseResp()}, nil
-}
-
-func (f *fakeClient) ListSessionThreads(ctx context.Context, req *ac.ListSessionThreadsRequest, callOptions ...callopt.Option) (*ac.ListSessionThreadsResponse, error) {
-	return &ac.ListSessionThreadsResponse{BaseResp: okBaseResp()}, nil
-}
-
-func (f *fakeClient) ListSessionEvents(ctx context.Context, req *ac.ListSessionEventsRequest, callOptions ...callopt.Option) (*ac.ListSessionEventsResponse, error) {
-	return &ac.ListSessionEventsResponse{BaseResp: okBaseResp()}, nil
-}
-
-func (f *fakeClient) ListUserThreads(ctx context.Context, req *ac.ListUserThreadsRequest, callOptions ...callopt.Option) (*ac.ListUserThreadsResponse, error) {
-	return &ac.ListUserThreadsResponse{BaseResp: okBaseResp()}, nil
-}
-
-func (f *fakeClient) ScanRunnableThreads(ctx context.Context, req *ac.ScanRunnableThreadsRequest, callOptions ...callopt.Option) (*ac.ScanRunnableThreadsResponse, error) {
+func (f *fakeClient) ScanRunnableThreads(ctx context.Context, req coordinator.ScanRunnableThreadsRequest) (result coordinator.ScanRunnableThreadsResult, err error) {
 	f.scanRequests = append(f.scanRequests, req)
-	threads := []*ac.Thread(nil)
 	if f.scanRunnableThreadsFunc != nil {
-		threads = f.scanRunnableThreadsFunc(req)
+		result.Threads = f.scanRunnableThreadsFunc(req)
 	}
-	return &ac.ScanRunnableThreadsResponse{BaseResp: okBaseResp(), Threads: threads}, nil
+	return result, nil
 }
 
-func (f *fakeClient) SendMessage(ctx context.Context, req *ac.SendMessageRequest, callOptions ...callopt.Option) (*ac.SendMessageResponse, error) {
-	return &ac.SendMessageResponse{BaseResp: okBaseResp()}, nil
+func (f *fakeClient) SubmitInput(context.Context, coordinator.SubmitInputRequest) (result coordinator.SubmitInputResult, err error) {
+	return result, nil
 }
 
-func (f *fakeClient) CancelInput(ctx context.Context, req *ac.CancelInputRequest, callOptions ...callopt.Option) (*ac.CancelInputResponse, error) {
-	return &ac.CancelInputResponse{BaseResp: okBaseResp()}, nil
-}
-
-func (f *fakeClient) ClaimThread(ctx context.Context, req *ac.ClaimThreadRequest, callOptions ...callopt.Option) (*ac.ClaimThreadResponse, error) {
+func (f *fakeClient) ClaimThread(ctx context.Context, req coordinator.ClaimThreadRequest) (result coordinator.ClaimThreadResult, err error) {
 	if f.claimThreadFunc != nil {
 		return f.claimThreadFunc(ctx, req), nil
 	}
-	return &ac.ClaimThreadResponse{BaseResp: okBaseResp()}, nil
+	return result, nil
 }
 
-func (f *fakeClient) RenewThreadLease(ctx context.Context, req *ac.RenewThreadLeaseRequest, callOptions ...callopt.Option) (*ac.RenewThreadLeaseResponse, error) {
-	return &ac.RenewThreadLeaseResponse{BaseResp: okBaseResp(), Lease: &ac.Lease{ThreadId: req.GetThreadId(), LeaseToken: req.GetLeaseToken()}}, nil
+func (f *fakeClient) RenewThreadLease(ctx context.Context, req coordinator.RenewThreadLeaseRequest) (lease *coordinator.Lease, err error) {
+	if f.renewThreadLeaseFunc != nil {
+		return f.renewThreadLeaseFunc(ctx, req)
+	}
+	return &coordinator.Lease{ThreadID: req.ThreadID, LeaseToken: req.LeaseToken}, nil
 }
 
-func (f *fakeClient) PullPendingMessages(ctx context.Context, req *ac.PullPendingMessagesRequest, callOptions ...callopt.Option) (*ac.PullPendingMessagesResponse, error) {
+func (f *fakeClient) ReadPendingInputs(ctx context.Context, req coordinator.ReadPendingInputsRequest) (result coordinator.ReadPendingInputsResult, err error) {
 	f.pullRequests = append(f.pullRequests, req)
-	messages := []*ac.Message(nil)
 	if f.pullPendingMessagesResultFunc != nil {
-		var err error
-		messages, err = f.pullPendingMessagesResultFunc(req)
+		result.Messages, err = f.pullPendingMessagesResultFunc(req)
 		if err != nil {
-			return nil, err
+			return coordinator.ReadPendingInputsResult{}, err
 		}
-		return &ac.PullPendingMessagesResponse{BaseResp: okBaseResp(), PendingMessages: messages}, nil
+		return result, nil
 	}
 	if f.pullPendingMessagesFunc != nil {
-		messages = f.pullPendingMessagesFunc(req)
+		result.Messages = f.pullPendingMessagesFunc(req)
 	}
-	return &ac.PullPendingMessagesResponse{BaseResp: okBaseResp(), PendingMessages: messages}, nil
+	return result, nil
 }
 
-func (f *fakeClient) ListThreadMessages(ctx context.Context, req *ac.ListThreadMessagesRequest, callOptions ...callopt.Option) (*ac.ListThreadMessagesResponse, error) {
-	return &ac.ListThreadMessagesResponse{BaseResp: okBaseResp()}, nil
-}
-
-func (f *fakeClient) BatchGetMessages(ctx context.Context, req *ac.BatchGetMessagesRequest, callOptions ...callopt.Option) (*ac.BatchGetMessagesResponse, error) {
-	return &ac.BatchGetMessagesResponse{BaseResp: okBaseResp()}, nil
-}
-
-func (f *fakeClient) AckThreadMessages(ctx context.Context, req *ac.AckThreadMessagesRequest, callOptions ...callopt.Option) (*ac.AckThreadMessagesResponse, error) {
+func (f *fakeClient) ConfirmInputDelivery(ctx context.Context, req coordinator.ConfirmInputDeliveryRequest) (messages []*coordinator.Message, err error) {
 	f.ackRequests = append(f.ackRequests, req)
 	if f.ackThreadMessagesFunc != nil {
 		if err := f.ackThreadMessagesFunc(ctx, req); err != nil {
 			return nil, err
 		}
 	}
-	return &ac.AckThreadMessagesResponse{BaseResp: okBaseResp()}, nil
+	return nil, nil
 }
 
-func (f *fakeClient) ReleaseThread(ctx context.Context, req *ac.ReleaseThreadRequest, callOptions ...callopt.Option) (*ac.ReleaseThreadResponse, error) {
+func (f *fakeClient) ReleaseThread(ctx context.Context, req coordinator.ReleaseThreadRequest) (thread *coordinator.Thread, err error) {
 	f.releaseRequests = append(f.releaseRequests, req)
 	if f.releaseThreadFunc != nil {
 		if err := f.releaseThreadFunc(ctx, req); err != nil {
 			return nil, err
 		}
 	}
-	return &ac.ReleaseThreadResponse{BaseResp: okBaseResp()}, nil
+	return nil, nil
 }
 
-func (f *fakeClient) ResumeFromBlock(ctx context.Context, req *ac.ResumeFromBlockRequest, callOptions ...callopt.Option) (*ac.ResumeFromBlockResponse, error) {
-	return &ac.ResumeFromBlockResponse{BaseResp: okBaseResp()}, nil
+func (f *fakeClient) RequestThreadClose(context.Context, coordinator.RequestThreadCloseRequest) (result *coordinator.RequestThreadCloseResult, err error) {
+	return nil, nil
 }
 
-func (f *fakeClient) CloseThread(ctx context.Context, req *ac.CloseThreadRequest, callOptions ...callopt.Option) (*ac.CloseThreadResponse, error) {
-	return &ac.CloseThreadResponse{BaseResp: okBaseResp()}, nil
-}
-
-func (f *fakeClient) CompleteCloseThread(ctx context.Context, req *ac.CompleteCloseThreadRequest, callOptions ...callopt.Option) (*ac.CompleteCloseThreadResponse, error) {
+func (f *fakeClient) ConfirmThreadClosed(ctx context.Context, req coordinator.ConfirmThreadClosedRequest) (result *coordinator.ConfirmThreadClosedResult, err error) {
 	f.completeCloseRequests = append(f.completeCloseRequests, req)
-	return &ac.CompleteCloseThreadResponse{BaseResp: okBaseResp()}, nil
+	return nil, nil
 }
 
-func (f *fakeClient) AppendEvents(ctx context.Context, req *ac.AppendEventsRequest, callOptions ...callopt.Option) (*ac.AppendEventsResponse, error) {
+func (f *fakeClient) PublishEvents(ctx context.Context, req coordinator.PublishEventsRequest) (result coordinator.PublishEventsResult, err error) {
 	f.appendEventsRequests = append(f.appendEventsRequests, req)
 	if f.appendEventsFunc != nil {
 		if err := f.appendEventsFunc(ctx, req); err != nil {
-			return nil, err
+			return coordinator.PublishEventsResult{}, err
 		}
 	}
-	return &ac.AppendEventsResponse{BaseResp: okBaseResp()}, nil
+	return result, nil
 }
 
-func (f *fakeClient) ListEvents(ctx context.Context, req *ac.ListEventsRequest, callOptions ...callopt.Option) (*ac.ListEventsResponse, error) {
-	return &ac.ListEventsResponse{BaseResp: okBaseResp()}, nil
-}
-
-func (f *fakeClient) ListTurnEvents(ctx context.Context, req *ac.ListTurnEventsRequest, callOptions ...callopt.Option) (*ac.ListTurnEventsResponse, error) {
-	return &ac.ListTurnEventsResponse{BaseResp: okBaseResp()}, nil
+func (f *fakeClient) ListEvents(context.Context, coordinator.ListEventsRequest) (result coordinator.ListEventsResult, err error) {
+	return result, nil
 }

@@ -58,8 +58,8 @@ const (
 
 	summarizationPrefix = "Another language model started to solve this problem and produced a summary of its thinking process. You also have access to the state of the tools that were used by that language model. Use this to build on the work that has already been done and avoid duplicating work. Here is the summary produced by the other language model, use the information in this summary to assist with your own analysis:"
 
-	postCompactUserMessagesBeginMarker = "<aic_agent_sdk_post_compact_user_messages_json>"
-	postCompactUserMessagesEndMarker   = "</aic_agent_sdk_post_compact_user_messages_json>"
+	postCompactUserMessagesBeginMarker = "<deep_agent_sdk_post_compact_user_messages_json>"
+	postCompactUserMessagesEndMarker   = "</deep_agent_sdk_post_compact_user_messages_json>"
 )
 
 type CodexStrategy struct {

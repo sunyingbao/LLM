@@ -45,7 +45,7 @@ func (f *Factory) NewStore(_ context.Context, threadID string) (compose.CheckPoi
 		}
 		prefix := strings.TrimPrefix(f.storeURI, "redis://")
 		if prefix == "" {
-			prefix = "aic_agent_sdk_worker_checkpoint"
+			prefix = "deep_agent_sdk_worker_checkpoint"
 		}
 		return NewRedisStore(f.redisClient, prefix, threadID), nil
 	default:
@@ -84,5 +84,5 @@ func (s *RedisStore) Set(ctx context.Context, checkpointID string, data []byte) 
 func (s *RedisStore) key(checkpointID string) string {
 	safeID := filepath.Base(checkpointID)
 	safeID = strings.ReplaceAll(safeID, "..", "_")
-	return fmt.Sprintf("aic_agent_sdk_worker:%s:thread:%s:checkpoint:%s", s.prefix, s.threadID, safeID)
+	return fmt.Sprintf("deep_agent_sdk_worker:%s:thread:%s:checkpoint:%s", s.prefix, s.threadID, safeID)
 }

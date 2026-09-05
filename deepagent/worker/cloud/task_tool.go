@@ -8,27 +8,36 @@ import (
 	"strconv"
 	"strings"
 
-	"code.byted.org/gopkg/thrift"
-	"code.byted.org/lang/gg/choose"
 	"code.byted.org/lang/gg/gmap"
 	"code.byted.org/lang/gg/gslice"
-	ac "code.byted.org/overpass/ad_creative_aic_agent_coordinator/kitex_gen/agent_coordinator"
-	acsvc "code.byted.org/overpass/ad_creative_aic_agent_coordinator/kitex_gen/agent_coordinator/agentcoordinatorservice"
-	coordinatorrpc "code.byted.org/overpass/ad_creative_aic_agent_coordinator/rpc/ad_creative_aic_agent_coordinator"
+	"eino-cli/deepagent/coordinator"
 	"eino-cli/deepagent/worker"
 	"eino-cli/deepagent/worker/tasktool"
 )
 
-// CoordinatorTaskHost adapts Agent Coordinator RPCs to tasktool.TaskHost.
+// CoordinatorTaskHost adapts Coordinator operations to tasktool.TaskHost.
 type CoordinatorTaskHost struct {
-	// Namespace is the Agent Coordinator namespace used by all RPC requests.
+	// Namespace is used by all Coordinator requests.
 	Namespace string
 	// Env is written to CreateThreadRequest.Env when creating task threads.
 	Env string
-	// Client optionally overrides the default Agent Coordinator RawCall client.
-	Client acsvc.Client
+	// Client optionally overrides the process-wide Coordinator client.
+	Client CoordinatorClient
 	// UserID is forwarded to CreateThreadRequest.UserId for created threads.
 	UserID int64
+}
+
+var fallbackCoordinatorClient CoordinatorClient
+
+func (h CoordinatorTaskHost) coordinator() (client CoordinatorClient, err error) {
+	client = h.Client
+	if client == nil {
+		client = fallbackCoordinatorClient
+	}
+	if client == nil {
+		return nil, fmt.Errorf("coordinator is required")
+	}
+	return client, nil
 }
 
 func (h CoordinatorTaskHost) CreateThread(ctx context.Context, req tasktool.CreateThreadRequest) (*tasktool.Thread, error) {
@@ -41,47 +50,42 @@ func (h CoordinatorTaskHost) CreateThread(ctx context.Context, req tasktool.Crea
 	}
 	metadata := gmap.Clone(req.Metadata)
 	profile := taskToolProfileForCloud(req.Profile)
-	createReq := &ac.CreateThreadRequest{
+	createReq := coordinator.CreateThreadRequest{
 		Namespace: h.Namespace,
-		UserId:    userID,
-		SessionId: choose.If[*string](req.SessionID == "", nil, thrift.StringPtr(req.SessionID)),
+		UserID:    userID,
+		SessionID: req.SessionID,
 		Metadata:  metadata,
-		Profile:   acThreadProfileFromTaskTool(profile),
-	}
-	if req.Title != "" {
-		createReq.Title = thrift.StringPtr(req.Title)
-	}
-	if h.Env != "" {
-		createReq.Env = thrift.StringPtr(h.Env)
+		Profile:   coordinatorProfileFromTaskTool(profile),
+		Title:     req.Title,
+		Env:       h.Env,
 	}
 	if req.InitialMessage != nil {
-		createReq.InitialMessage = &ac.InitialMessage{
-			Sender: choose.If[*ac.Sender](req.ParentThreadID == "", nil, &ac.Sender{
-				SenderType: ac.SenderType_AGENT,
-				SenderId:   req.ParentThreadID,
-			}),
+		senderType := coordinator.SenderType("")
+		if req.ParentThreadID != "" {
+			senderType = coordinator.SenderTypeAgent
+		}
+		createReq.InitialMessage = &coordinator.InitialMessage{
+			SenderType:  senderType,
+			SenderID:    req.ParentThreadID,
 			MessageType: taskToolMessageType(req.InitialMessage),
 			Payload:     gslice.Clone(req.InitialMessage.Payload),
 			Metadata:    gmap.Clone(req.InitialMessage.Metadata),
 		}
 	}
-	createReq.GetOrSetBase()
 
-	var resp *ac.CreateThreadResponse
-	var err error
-	if h.Client != nil {
-		resp, err = h.Client.CreateThread(ctx, createReq)
-	} else {
-		resp, err = coordinatorrpc.RawCall.CreateThread(ctx, createReq)
-	}
-	if err := rpcError("CreateThread", resp, err); err != nil {
+	client, err := h.coordinator()
+	if err != nil {
 		return nil, err
 	}
-	if resp == nil || resp.GetThread() == nil {
+	result, err := client.CreateThread(ctx, createReq)
+	if err = coordinatorError("CreateThread", err); err != nil {
+		return nil, err
+	}
+	if result.Thread == nil {
 		return nil, fmt.Errorf("CreateThread returned empty thread")
 	}
-	thread := resp.GetThread()
-	outProfile := taskToolProfileFromAC(thread.GetProfile())
+	thread := result.Thread
+	outProfile := taskToolProfileFromCoordinator(thread.Profile)
 	if outProfile.Role == "" {
 		outProfile.Role = profile.Role
 	}
@@ -89,12 +93,12 @@ func (h CoordinatorTaskHost) CreateThread(ctx context.Context, req tasktool.Crea
 		outProfile.Cwd = profile.Cwd
 	}
 	out := &tasktool.Thread{
-		ID:        taskToolInt64String(thread.GetThreadId()),
-		UserID:    thread.GetUserId(),
-		SessionID: thread.GetSessionId(),
-		Title:     thread.GetTitle(),
+		ID:        taskToolInt64String(thread.ThreadID),
+		UserID:    thread.UserID,
+		SessionID: thread.SessionID,
+		Title:     thread.Title,
 		Profile:   outProfile,
-		Metadata:  gmap.Clone(thread.GetMetadata()),
+		Metadata:  gmap.Clone(thread.Metadata),
 	}
 	if out.Title == "" {
 		out.Title = req.Title
@@ -102,8 +106,8 @@ func (h CoordinatorTaskHost) CreateThread(ctx context.Context, req tasktool.Crea
 	if out.Metadata == nil {
 		out.Metadata = gmap.Clone(metadata)
 	}
-	if resp.GetInitialMessage() != nil {
-		out.InitialMessageID = taskToolInt64String(resp.GetInitialMessage().GetMessageId())
+	if result.InitialMessage != nil {
+		out.InitialMessageID = taskToolInt64String(result.InitialMessage.MessageID)
 	}
 	if req.InitialMessage != nil && out.InitialMessageID == "" {
 		return nil, fmt.Errorf("CreateThread returned empty initial_message")
@@ -111,44 +115,44 @@ func (h CoordinatorTaskHost) CreateThread(ctx context.Context, req tasktool.Crea
 	return out, nil
 }
 
-func (h CoordinatorTaskHost) SendMessage(ctx context.Context, req tasktool.SendMessageRequest) (*tasktool.Message, error) {
-	targetThreadID, err := parseTaskToolInt64(req.ThreadID, "thread_id")
+func (h CoordinatorTaskHost) SendMessage(ctx context.Context, req tasktool.SendMessageRequest) (message *tasktool.Message, err error) {
+	targetThreadID, err := parseInt64(req.ThreadID, "thread_id")
 	if err != nil {
 		return nil, err
 	}
 	if req.Message == nil {
 		return nil, fmt.Errorf("message is required")
 	}
-	sendReq := &ac.SendMessageRequest{
-		Namespace: h.Namespace,
-		ThreadId:  targetThreadID,
-		Sender: choose.If[*ac.Sender](req.FromThreadID == "", nil, &ac.Sender{
-			SenderType: ac.SenderType_AGENT,
-			SenderId:   req.FromThreadID,
-		}),
+	senderType := coordinator.SenderType("")
+	if req.FromThreadID != "" {
+		senderType = coordinator.SenderTypeAgent
+	}
+	sendReq := coordinator.SubmitInputRequest{
+		Namespace:   h.Namespace,
+		ThreadID:    targetThreadID,
+		SenderType:  senderType,
+		SenderID:    req.FromThreadID,
 		MessageType: taskToolMessageType(req.Message),
 		Payload:     gslice.Clone(req.Message.Payload),
 		Metadata:    gmap.Clone(req.Message.Metadata),
-		WakeThread:  thrift.BoolPtr(true),
+		WakeThread:  true,
 	}
-	sendReq.GetOrSetBase()
-	var resp *ac.SendMessageResponse
-	if h.Client != nil {
-		resp, err = h.Client.SendMessage(ctx, sendReq)
-	} else {
-		resp, err = coordinatorrpc.RawCall.SendMessage(ctx, sendReq)
-	}
-	if err := rpcError("SendMessage", resp, err); err != nil {
+	client, err := h.coordinator()
+	if err != nil {
 		return nil, err
 	}
-	if resp == nil || resp.GetMessage() == nil {
+	result, err := client.SubmitInput(ctx, sendReq)
+	if err = coordinatorError("SendMessage", err); err != nil {
+		return nil, err
+	}
+	if result.Message == nil {
 		return nil, fmt.Errorf("SendMessage returned empty message")
 	}
-	sent := resp.GetMessage()
+	sent := result.Message
 	return &tasktool.Message{
-		ID:       taskToolInt64String(sent.GetMessageId()),
-		Payload:  gslice.Clone(sent.GetPayload()),
-		Metadata: gmap.Clone(sent.GetMetadata()),
+		ID:       taskToolInt64String(sent.MessageID),
+		Payload:  gslice.Clone(sent.Payload),
+		Metadata: gmap.Clone(sent.Metadata),
 	}, nil
 }
 
@@ -159,33 +163,29 @@ func taskToolMessageType(message *tasktool.Message) string {
 	return string(agentworker.MessageTypeText)
 }
 
-func (h CoordinatorTaskHost) CloseThread(ctx context.Context, req tasktool.CloseThreadRequest) (*tasktool.ClosedThreadRsp, error) {
-	targetThreadID, err := parseTaskToolInt64(req.ThreadID, "thread_id")
+func (h CoordinatorTaskHost) CloseThread(ctx context.Context, req tasktool.CloseThreadRequest) (closed *tasktool.ClosedThreadRsp, err error) {
+	targetThreadID, err := parseInt64(req.ThreadID, "thread_id")
 	if err != nil {
 		return nil, err
 	}
-	closeReq := &ac.CloseThreadRequest{
+	closeReq := coordinator.RequestThreadCloseRequest{
 		Namespace: h.Namespace,
-		ThreadId:  targetThreadID,
+		ThreadID:  targetThreadID,
+		Reason:    strings.TrimSpace(req.Reason),
 	}
-	if reason := strings.TrimSpace(req.Reason); reason != "" {
-		closeReq.Reason = thrift.StringPtr(reason)
+	client, err := h.coordinator()
+	if err != nil {
+		return nil, err
 	}
-	closeReq.GetOrSetBase()
-	var resp *ac.CloseThreadResponse
-	if h.Client != nil {
-		resp, err = h.Client.CloseThread(ctx, closeReq)
-	} else {
-		resp, err = coordinatorrpc.RawCall.CloseThread(ctx, closeReq)
-	}
-	if err := rpcError("CloseThread", resp, err); err != nil {
+	_, err = client.RequestThreadClose(ctx, closeReq)
+	if err = coordinatorError("CloseThread", err); err != nil {
 		return nil, err
 	}
 	return &tasktool.ClosedThreadRsp{}, nil
 }
 
-func (h CoordinatorTaskHost) ListEvents(ctx context.Context, req tasktool.ListEventsRequest) ([]*tasktool.Event, error) {
-	threadID, err := parseTaskToolInt64(req.ThreadID, "thread_id")
+func (h CoordinatorTaskHost) ListEvents(ctx context.Context, req tasktool.ListEventsRequest) (events []*tasktool.Event, err error) {
+	threadID, err := parseInt64(req.ThreadID, "thread_id")
 	if err != nil {
 		return nil, err
 	}
@@ -193,49 +193,39 @@ func (h CoordinatorTaskHost) ListEvents(ctx context.Context, req tasktool.ListEv
 	if limit <= 0 {
 		limit = defaultTaskToolListEventLimit
 	}
-	order := ac.EventListOrder_CREATED_AT_IN_THREAD_SEQ
-	listReq := &ac.ListEventsRequest{
+	listReq := coordinator.ListEventsRequest{
 		Namespace: h.Namespace,
-		ThreadId:  threadID,
-		Limit:     thrift.Int32Ptr(limit),
-		OrderBy:   &order,
+		ThreadID:  threadID,
+		Limit:     limit,
+		Order:     coordinator.ListOrderCreatedAt,
 	}
 	if req.Reverse {
-		direction := ac.EventListDirection_BACKWARD
-		listReq.Direction = &direction
+		listReq.Direction = coordinator.ListDirectionBackward
 	}
-	listReq.GetOrSetBase()
-	var resp *ac.ListEventsResponse
-	if h.Client != nil {
-		resp, err = h.Client.ListEvents(ctx, listReq)
-	} else {
-		resp, err = coordinatorrpc.RawCall.ListEvents(ctx, listReq)
-	}
-	if err := rpcError("ListEvents", resp, err); err != nil {
+	client, err := h.coordinator()
+	if err != nil {
 		return nil, err
 	}
-	if resp == nil {
-		return nil, fmt.Errorf("ListEvents returned empty response")
+	result, err := client.ListEvents(ctx, listReq)
+	if err = coordinatorError("ListEvents", err); err != nil {
+		return nil, err
 	}
-	return taskToolEventsFromAC(resp.GetEvents()), nil
+	return taskToolEventsFromCoordinator(result.Events), nil
 }
 
 const defaultTaskToolListEventLimit = int32(100)
 
-func taskToolEventsFromAC(events []*ac.Event) []*tasktool.Event {
-	out := make([]*tasktool.Event, 0, len(events))
-	for _, ev := range events {
-		if ev == nil {
-			continue
-		}
+func taskToolEventsFromCoordinator(events []coordinator.Event) (out []*tasktool.Event) {
+	out = make([]*tasktool.Event, 0, len(events))
+	for _, event := range events {
 		out = append(out, &tasktool.Event{
-			ID:       taskToolInt64String(ev.GetEventId()),
-			ThreadID: taskToolInt64String(ev.GetThreadId()),
-			TurnID:   ev.GetTurnId(),
-			Type:     ev.GetEventType(),
-			Payload:  gslice.Clone(ev.GetPayload()),
-			Metadata: gmap.Clone(ev.GetMetadata()),
-			TS:       timeFromMs(ev.GetCreatedAtMs()),
+			ID:       taskToolInt64String(event.EventID),
+			ThreadID: taskToolInt64String(event.ThreadID),
+			TurnID:   event.TurnID,
+			Type:     event.EventType,
+			Payload:  gslice.Clone(event.Payload),
+			Metadata: gmap.Clone(event.Metadata),
+			TS:       event.CreatedAt,
 		})
 	}
 	return out
@@ -248,32 +238,31 @@ func taskToolProfileForCloud(profile tasktool.ThreadProfile) tasktool.ThreadProf
 	}
 }
 
-func acThreadProfileFromTaskTool(profile tasktool.ThreadProfile) *ac.ThreadProfile {
+func coordinatorProfileFromTaskTool(profile tasktool.ThreadProfile) (result *coordinator.Profile) {
 	if profile.Empty() {
 		return nil
 	}
-	return &ac.ThreadProfile{
+	return &coordinator.Profile{
 		Role: profile.Role,
 		Cwd:  profile.Cwd,
 	}
 }
 
-func taskToolProfileFromAC(profile *ac.ThreadProfile) tasktool.ThreadProfile {
+func taskToolProfileFromCoordinator(profile *coordinator.Profile) (result tasktool.ThreadProfile) {
 	if profile == nil {
 		return tasktool.ThreadProfile{}
 	}
 	return tasktool.ThreadProfile{
-		Role: profile.GetRole(),
-		Cwd:  profile.GetCwd(),
+		Role: profile.Role,
+		Cwd:  profile.Cwd,
 	}
 }
 
-// ThreadProfileFromWire extracts a tasktool thread profile from an AC thread.
-func ThreadProfileFromWire(thread *ac.Thread) tasktool.ThreadProfile {
+func ThreadProfileFromCoordinator(thread *coordinator.Thread) (result tasktool.ThreadProfile) {
 	if thread == nil {
 		return tasktool.ThreadProfile{}
 	}
-	return taskToolProfileFromAC(thread.GetProfile())
+	return taskToolProfileFromCoordinator(thread.Profile)
 }
 
 func taskToolInt64String(id int64) string {
@@ -281,14 +270,6 @@ func taskToolInt64String(id int64) string {
 		return ""
 	}
 	return strconv.FormatInt(id, 10)
-}
-
-func parseTaskToolInt64(value string, name string) (int64, error) {
-	id, err := strconv.ParseInt(strings.TrimSpace(value), 10, 64)
-	if err != nil || id == 0 {
-		return 0, fmt.Errorf("invalid %s %q", name, value)
-	}
-	return id, nil
 }
 
 func TurnIDFromMessageID(messageID int64) string {

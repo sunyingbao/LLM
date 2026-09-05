@@ -7,7 +7,6 @@ import (
 	"time"
 
 	protoinput "eino-cli/deepagent/cloud/protocol/input"
-	"eino-cli/deepagent/definition"
 	runtimeclient "eino-cli/deepagent/runtime"
 )
 
@@ -30,10 +29,9 @@ func RunWithOptions(t *testing.T, factory Factory, options Options) {
 	ctx := context.Background()
 
 	created, err := client.CreateThread(ctx, runtimeclient.CreateThreadRequest{
-		Runtime:    options.Runtime,
-		Namespace:  options.Namespace,
-		Definition: agentdefinition.Definition{Name: "assistant", Version: "v1"},
-		Title:      "contract thread",
+		Runtime:   options.Runtime,
+		Namespace: options.Namespace,
+		Title:     "contract thread",
 	})
 	if err != nil {
 		t.Fatalf("CreateThread() error = %v", err)
@@ -53,7 +51,7 @@ func RunWithOptions(t *testing.T, factory Factory, options Options) {
 	}
 	child, err := client.CreateThread(ctx, runtimeclient.CreateThreadRequest{
 		Runtime: options.Runtime, Namespace: options.Namespace, ParentRef: &ref,
-		Definition: agentdefinition.Definition{Name: "assistant", Version: "v1"}, Title: "child",
+		Title: "child",
 	})
 	if err != nil || child.Thread.Ref.ThreadID == ref.ThreadID {
 		t.Fatalf("CreateThread(child) result=%+v error=%v", child, err)

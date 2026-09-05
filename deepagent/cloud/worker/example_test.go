@@ -7,12 +7,8 @@ func Example() {
 	//
 	// cfg := worker.Config{
 	//     Host: worker.HostConfig{
-	//         Namespace:   "aic_agent_sdk",
+	//         Namespace:   "deep_agent_sdk",
 	//         Concurrency: 4,
-	//         Coordinator: worker.CoordinatorConfig{
-	//             PSM:     "ad.creative.aic_agent_coordinator",
-	//             Cluster: "default",
-	//         },
 	//     },
 	//     Thread: worker.ThreadConfig{
 	//         WorkDir:   "/data/agent_workdir",
@@ -36,6 +32,7 @@ func Example() {
 	// }
 	//
 	// deps := worker.Deps{
+	//     CoordinatorClient: worker.NewCoordinatorClient(coordinator),
 	//     HistoryStore:      historyProvider,
 	//     CheckpointStore:   checkpointProvider,
 	//     Approvals:         worker.NewApprovalStore(),

@@ -11,7 +11,6 @@ import (
 	"time"
 
 	protoevent "eino-cli/deepagent/cloud/protocol/event"
-	"eino-cli/deepagent/definition"
 	"eino-cli/deepagent/mock/mock_model"
 	sdkruntime "eino-cli/deepagent/runtime"
 	"eino-cli/deepagent/runtime/clienttest"
@@ -19,15 +18,52 @@ import (
 	"github.com/cloudwego/eino/schema"
 	"go.uber.org/mock/gomock"
 
-	"eino-cli/backend/config"
-	memorystore "eino-cli/backend/memory/store"
+	"eino-cli/deepagent/backend/config"
+	memorystore "eino-cli/deepagent/backend/memory/store"
+	deepagents "eino-cli/deepagent/core"
 )
 
-func TestBuildLocalDefinitionResolvesSkillsThroughSDKLoader(t *testing.T) {
+func TestLocalAgentRegistersCoreAndExtensionToolsOnce(t *testing.T) {
+	restore := config.SetRootDirForTest(t.TempDir())
+	t.Cleanup(restore)
+	cfg := &config.Config{DefaultModel: "fixture", Models: map[string]*config.ModelConfig{
+		"fixture": {Name: "fixture", Provider: "openai", Model: "fixture", BaseURL: "http://localhost", APIKey: "test-only"},
+	}}
+	agentConfig, err := buildLocalAgentConfig(context.Background(), cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	agentConfig.SkillLoader = nil
+	chatModel := mock_model.NewMockToolCallingChatModel(gomock.NewController(t))
+	chatModel.EXPECT().WithTools(gomock.Any()).DoAndReturn(func(infos []*schema.ToolInfo) (bound model.ToolCallingChatModel, err error) {
+		names := map[string]bool{}
+		for _, info := range infos {
+			if names[info.Name] {
+				t.Fatalf("duplicate tool %s", info.Name)
+			}
+			names[info.Name] = true
+		}
+		for _, name := range []string{"ls", "read_file", "write_file", "edit_file", "glob", "grep", "execute", "shell", "await_shell", "rg", "delete_file", "semantic_search", "read_lints", "ask_clarification"} {
+			if !names[name] {
+				t.Errorf("missing tool %s", name)
+			}
+		}
+		if names["apply_patch"] || names["upload_files"] || names["download_files"] {
+			t.Error("CLI must keep its restricted file tool surface")
+		}
+		return chatModel, nil
+	})
+	agentConfig.Model = chatModel
+	if _, err = deepagents.New(context.Background(), deepagents.WithConfig(agentConfig)); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestBuildLocalAgentConfigLoadsSkills(t *testing.T) {
 	root := t.TempDir()
 	restore := config.SetRootDirForTest(root)
 	t.Cleanup(restore)
-	skillDir := filepath.Join(root, "backend", "skills", "demo")
+	skillDir := filepath.Join(root, "deepagent", "backend", "skills", "demo")
 	if err := os.MkdirAll(skillDir, 0o755); err != nil {
 		t.Fatalf("mkdir skill: %v", err)
 	}
@@ -40,43 +76,30 @@ func TestBuildLocalDefinitionResolvesSkillsThroughSDKLoader(t *testing.T) {
 			Name: "fixture", Provider: "openai", Model: "fixture", BaseURL: "http://localhost", APIKey: "test-only",
 		}},
 	}
-	definition, resolver, err := buildLocalDefinition(context.Background(), cfg)
+	agentConfig, err := buildLocalAgentConfig(context.Background(), cfg)
 	if err != nil {
-		t.Fatalf("buildLocalDefinition() error=%v", err)
+		t.Fatalf("buildLocalAgentConfig() error=%v", err)
 	}
-	if definition.Skills.Loader != "sgadk-filesystem" {
-		t.Fatalf("skill loader binding=%q", definition.Skills.Loader)
-	}
-	if definition.Sandbox.Backend != "sgadk-workspace" {
-		t.Fatalf("sandbox binding=%q", definition.Sandbox.Backend)
-	}
-	if strings.Contains(definition.Instructions, "<available_skills>") {
-		t.Fatal("Definition instructions duplicated runtime-managed skill catalog")
-	}
-	resolved, err := resolver.Resolve(context.Background(), definition)
-	if err != nil {
-		t.Fatalf("Resolve() error=%v", err)
-	}
-	loaded, err := resolved.SkillLoader.ListSkills(context.Background())
+	loaded, err := agentConfig.SkillLoader.ListSkills(context.Background())
 	if err != nil {
 		t.Fatalf("LoadSkills() error=%v", err)
 	}
 	if len(loaded) != 1 || loaded[0].Name != "demo" {
 		t.Fatalf("loaded skills=%+v", loaded)
 	}
-	if resolved.Backend == nil {
-		t.Fatal("sandbox backend was not resolved")
+	if agentConfig.Backend == nil {
+		t.Fatal("sandbox backend was not configured")
 	}
 }
 
-func TestSGADKMemoryTurnCompletedUpdatesMemoryAsynchronously(t *testing.T) {
+func TestMemoryTurnCompletedUpdatesMemoryAsynchronously(t *testing.T) {
 	root := t.TempDir()
 	restore := config.SetRootDirForTest(root)
 	t.Cleanup(restore)
 	ctrl := gomock.NewController(t)
 	chatModel := mock_model.NewMockToolCallingChatModel(ctrl)
 	chatModel.EXPECT().Generate(gomock.Any(), gomock.Any(), gomock.Any()).Return(schema.AssistantMessage(`{"newFacts":[{"content":"prefers concise answers","category":"preference","confidence":0.9}]}`, nil), nil)
-	completed := sgadkMemoryTurnCompleted()
+	completed := memoryTurnCompleted()
 	completed(context.Background(), "thread-1", "turn-1", chatModel, []*schema.Message{schema.UserMessage("be concise")})
 	store := memorystore.NewStore()
 	deadline := time.Now().Add(2 * time.Second)
@@ -98,9 +121,8 @@ func TestLocalRuntimeHeadlessAcceptanceAndRestartReplay(t *testing.T) {
 	t.Parallel()
 
 	client := clienttest.NewFake()
-	router := &sdkruntime.Router{Local: client, Index: sdkruntime.NewMemoryThreadIndex()}
-	definition := agentdefinition.Definition{Name: "assistant", Version: "v1"}
-	runtime := &LocalRuntime{router: router, sessionID: "session-1", definition: definition, modelName: "fixture"}
+	router := &sdkruntime.Router{Local: client}
+	runtime := &LocalRuntime{router: router, sessionID: "session-1", modelName: "fixture"}
 	firstOutput, err := runUnifiedTurn(context.Background(), runtime, "first")
 	if err != nil || firstOutput != "first" {
 		t.Fatalf("runUnifiedTurn(first) output=%q error=%v", firstOutput, err)
@@ -120,7 +142,7 @@ func TestLocalRuntimeHeadlessAcceptanceAndRestartReplay(t *testing.T) {
 	}
 	assertTimelineTypes(t, timeline, protoevent.EventTypeToolCallStarted.String(), protoevent.EventTypeToolCallFinished.String(), protoevent.EventTypeAssistantDelta.String(), protoevent.EventTypeTurnFinished.String())
 
-	restarted := &LocalRuntime{router: router, sessionID: "session-1", definition: definition, modelName: "fixture"}
+	restarted := &LocalRuntime{router: router, sessionID: "session-1", modelName: "fixture"}
 	if err = restarted.ImportThreadRef(exported); err != nil {
 		t.Fatalf("ImportThreadRef() error = %v", err)
 	}

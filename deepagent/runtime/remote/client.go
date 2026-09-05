@@ -10,13 +10,7 @@ import (
 
 	cloudapi "eino-cli/deepagent/cloud/api"
 	"eino-cli/deepagent/cloud/protocol/timeline"
-	"eino-cli/deepagent/definition"
 	runtimeclient "eino-cli/deepagent/runtime"
-)
-
-const (
-	metadataDefinitionName    = "runtime.definition.name"
-	metadataDefinitionVersion = "runtime.definition.version"
 )
 
 type Client struct {
@@ -39,12 +33,6 @@ func (client *Client) CreateThread(ctx context.Context, req runtimeclient.Create
 	if req.Runtime != runtimeclient.RuntimeRemote {
 		return nil, invalidRuntime("create_thread", req.Runtime)
 	}
-	if err = agentdefinition.Validate(req.Definition); err != nil {
-		return nil, &runtimeclient.Error{Code: runtimeclient.ErrorCodeInvalidArgument, Op: "create_thread", Runtime: runtimeclient.RuntimeRemote, Cause: err}
-	}
-	metadata := map[string]string{
-		metadataDefinitionName: req.Definition.Name, metadataDefinitionVersion: req.Definition.Version,
-	}
 	parentID := ""
 	if req.ParentRef != nil {
 		if req.ParentRef.Runtime != runtimeclient.RuntimeRemote {
@@ -54,7 +42,7 @@ func (client *Client) CreateThread(ctx context.Context, req runtimeclient.Create
 	}
 	created, err := client.API.CreateThread(ctx, cloudapi.CreateThreadRequest{
 		UserID: client.UserID, SessionID: req.Namespace, ParentThreadID: parentID, Title: req.Title,
-		Profile: cloudapi.ThreadProfile{Cwd: req.Workspace.Cwd}, Metadata: metadata,
+		Profile: cloudapi.ThreadProfile{Cwd: req.Workspace.Cwd},
 	})
 	if err != nil {
 		return nil, wrapError("create_thread", err)
@@ -311,10 +299,8 @@ func (subscription *timelineSubscription) Close() (err error) {
 }
 
 func threadFromCloud(thread *cloudapi.Thread, namespace string) (result *runtimeclient.Thread) {
-	metadata := thread.Metadata
 	result = &runtimeclient.Thread{
-		Ref:            runtimeclient.GlobalThreadRef{Runtime: runtimeclient.RuntimeRemote, Namespace: namespace, ThreadID: thread.ID},
-		DefinitionName: metadata[metadataDefinitionName], DefinitionVersion: metadata[metadataDefinitionVersion],
+		Ref:       runtimeclient.GlobalThreadRef{Runtime: runtimeclient.RuntimeRemote, Namespace: namespace, ThreadID: thread.ID},
 		Workspace: runtimeclient.WorkspaceSpec{Cwd: thread.Profile.Cwd}, Title: thread.Title, State: stateFromCloud(thread.Status),
 	}
 	return result

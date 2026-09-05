@@ -5,7 +5,6 @@ import "context"
 type Router struct {
 	Local  Client
 	Remote Client
-	Index  ThreadIndex
 }
 
 func (router *Router) CreateThread(ctx context.Context, req CreateThreadRequest) (result *CreateThreadResult, err error) {
@@ -21,12 +20,6 @@ func (router *Router) CreateThread(ctx context.Context, req CreateThreadRequest)
 	}
 	if result.Thread.Ref.Runtime != req.Runtime {
 		return nil, &Error{Code: ErrorCodeInternal, Op: "create_thread", Runtime: req.Runtime, Message: "runtime returned a mismatched thread reference"}
-	}
-	if router.Index != nil {
-		entry := threadIndexEntryFromThread(result.Thread)
-		if err = router.Index.Put(ctx, entry); err != nil {
-			return nil, &Error{Code: ErrorCodeInternal, Op: "create_thread.index", Runtime: req.Runtime, Cause: err}
-		}
 	}
 	return result, nil
 }
@@ -107,19 +100,4 @@ func (router *Router) clientFor(kind RuntimeKind, operation string) (client Clie
 		return nil, &Error{Code: ErrorCodeCapabilityUnavailable, Op: operation, Runtime: kind, Message: "runtime client is not configured"}
 	}
 	return client, nil
-}
-
-func threadIndexEntryFromThread(thread *Thread) (entry ThreadIndexEntry) {
-	entry = ThreadIndexEntry{
-		SchemaVersion:     ThreadIndexSchemaVersion,
-		Ref:               thread.Ref,
-		DefinitionName:    thread.DefinitionName,
-		DefinitionVersion: thread.DefinitionVersion,
-		Workspace:         thread.Workspace,
-		Title:             thread.Title,
-		State:             thread.State,
-		CreatedAtMS:       thread.CreatedAtMS,
-		UpdatedAtMS:       thread.UpdatedAtMS,
-	}
-	return entry
 }

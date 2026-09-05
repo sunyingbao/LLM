@@ -7,10 +7,10 @@ import (
 	"path/filepath"
 	"testing"
 
-	"eino-cli/backend/config"
-	"eino-cli/backend/consts"
-	"eino-cli/backend/session/rollback"
-	"eino-cli/backend/session/runs"
+	"eino-cli/deepagent/backend/config"
+	"eino-cli/deepagent/backend/consts"
+	"eino-cli/deepagent/backend/session/rollback"
+	"eino-cli/deepagent/backend/session/runs"
 	runtimecontext "eino-cli/deepagent/host/executioncontext"
 )
 

@@ -6,38 +6,34 @@ import (
 	sdkmiddleware "eino-cli/deepagent/core/middleware"
 	"github.com/cloudwego/eino/schema"
 
-	"eino-cli/backend/config"
-	"eino-cli/backend/consts"
-	memorystore "eino-cli/backend/memory/store"
-	agentmemory "eino-cli/deepagent/memory/sgadk"
+	"eino-cli/deepagent/backend/consts"
+	memorystore "eino-cli/deepagent/backend/memory/store"
+	agentmemory "eino-cli/deepagent/memory/facts"
 )
 
-type sgadkMemoryMiddleware struct {
+type memoryMiddleware struct {
 	sdkmiddleware.BaseMiddleware
 	store     *memorystore.Store
 	agentName string
 }
 
-func newSGADKMemoryMiddleware() (memory *sgadkMemoryMiddleware) {
-	memory = &sgadkMemoryMiddleware{store: memorystore.NewStore(), agentName: consts.DefaultAgentKey}
+func newMemoryMiddleware() (memory *memoryMiddleware) {
+	memory = &memoryMiddleware{store: memorystore.NewStore(), agentName: consts.DefaultAgentKey}
 	return memory
 }
 
-func (memory *sgadkMemoryMiddleware) Name() (name string) {
-	return "sgadk-memory"
+func (memory *memoryMiddleware) Name() (name string) {
+	return "memory"
 }
 
-func (memory *sgadkMemoryMiddleware) BuildInitialContext(ctx context.Context) (messages []*schema.Message, err error) {
+func (memory *memoryMiddleware) BuildInitialContext(ctx context.Context) (messages []*schema.Message, err error) {
 	if memory == nil {
 		return nil, nil
 	}
 	if block := agentmemory.GetMemoryPromptBlock(memory.store, memory.agentName, 2000); block != "" {
 		messages = append(messages, schema.SystemMessage(block))
 	}
-	if block := agentmemory.GetDreamMemoryPromptBlock(config.DreamMemoryDir(), 16*1024); block != "" {
-		messages = append(messages, schema.SystemMessage(block))
-	}
 	return messages, nil
 }
 
-var _ sdkmiddleware.Middleware = (*sgadkMemoryMiddleware)(nil)
+var _ sdkmiddleware.Middleware = (*memoryMiddleware)(nil)

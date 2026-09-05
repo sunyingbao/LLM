@@ -26,15 +26,11 @@ var _ worker.TurnProfileResolver = func(context.Context, worker.TurnProfileReque
 	return worker.ResolvedTurnProfile{}, nil
 }
 
-func TestCoordinatorImplementationsDoNotExposeGeneratedFields(t *testing.T) {
-	for _, typ := range []reflect.Type{
-		reflect.TypeOf(worker.Worker{}),
-		reflect.TypeOf(worker.CoordinatorClient{}),
-	} {
-		for i := 0; i < typ.NumField(); i++ {
-			if typ.Field(i).IsExported() {
-				t.Fatalf("%s exposes implementation field %s", typ.Name(), typ.Field(i).Name)
-			}
+func TestWorkerDoesNotExposeImplementationFields(t *testing.T) {
+	typ := reflect.TypeOf(worker.Worker{})
+	for i := 0; i < typ.NumField(); i++ {
+		if typ.Field(i).IsExported() {
+			t.Fatalf("%s exposes implementation field %s", typ.Name(), typ.Field(i).Name)
 		}
 	}
 }

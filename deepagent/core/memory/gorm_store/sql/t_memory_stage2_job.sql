@@ -16,4 +16,4 @@ CREATE TABLE t_memory_stage2_job (
   UNIQUE KEY uniq_user (user_id),
   KEY idx_stage2_claim (status, retry_at, lease_until, updated_at),
   KEY idx_stage2_thread (stage2_thread_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci ROW_FORMAT=DYNAMIC COMMENT='AIC Agent SDK worker memory stage2 user jobs';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci ROW_FORMAT=DYNAMIC COMMENT='DeepAgent worker memory stage2 user jobs';

@@ -5,9 +5,7 @@ set -euo pipefail
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 go_bin="$(go env GOPATH)/bin"
 hertztool_bin="${HERTZTOOL_BIN:-$go_bin/hertztool}"
-kitex_bin="${KITEX_BIN:-$go_bin/kitex}"
 expected_hertztool_version="v3.4.7"
-expected_kitex_version="v1.22.1"
 
 require_tool_version() {
   local tool_name="$1"
@@ -27,29 +25,14 @@ require_tool_version() {
 }
 
 require_tool_version "hertztool" "$hertztool_bin" "$expected_hertztool_version"
-require_tool_version "kitex" "$kitex_bin" "$expected_kitex_version"
-if [[ ! -x "$go_bin/thriftgo" ]]; then
-  echo "thriftgo is not installed at $go_bin/thriftgo" >&2
-  exit 1
-fi
 
 (
-  cd "$script_dir/aic_agent_sdk_session"
-  PATH="$go_bin:$PATH" "$kitex_bin" \
-    -module code.byted.org/ad/aic_agent_sdk/cmd/cloud_agent/aic_agent_sdk_session \
-    -gen-path kitex_gen \
-    -I ../idl \
-    ../idl/aic_agent_sdk_session.thrift
-  go mod tidy
-)
-
-(
-  cd "$script_dir/aic_agent_sdk_api"
+  cd "$script_dir/deep_agent_sdk"
   PATH="$go_bin:$PATH" "$hertztool_bin" model \
-    --idl ../idl/aic_agent_sdk_api.thrift \
+    --idl ../idl/deep_agent_sdk.thrift \
     --out_dir . \
     --model_dir hertz_gen
   go mod tidy
 )
 
-echo "local Hertz and Kitex code generated successfully"
+echo "local Hertz code generated successfully"

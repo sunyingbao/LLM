@@ -156,7 +156,7 @@ func (c *fakeIncrByClient) IncrBy(_ context.Context, key string, value int64) (i
 
 func TestRedisSeqGeneratorUsesThreadScopedKey(t *testing.T) {
 	client := &fakeIncrByClient{}
-	gen := NewRedisSeqGenerator(client, "aic_agent_sdk_worker:history_seq")
+	gen := NewRedisSeqGenerator(client, "deep_agent_sdk_worker:history_seq")
 	got, err := gen.Next(context.Background(), "thread-1")
 	if err != nil {
 		t.Fatalf("Next() error = %v", err)
@@ -164,7 +164,7 @@ func TestRedisSeqGeneratorUsesThreadScopedKey(t *testing.T) {
 	if got != 1 {
 		t.Fatalf("Next() = %d, want 1", got)
 	}
-	if !reflect.DeepEqual(client.keys, []string{"aic_agent_sdk_worker:history_seq:thread:thread-1"}) {
+	if !reflect.DeepEqual(client.keys, []string{"deep_agent_sdk_worker:history_seq:thread:thread-1"}) {
 		t.Fatalf("keys = %v", client.keys)
 	}
 }

@@ -6,8 +6,8 @@
 //   - worker/thread adapts DeepAgentThread to agentworker.AgentThread.
 //   - worker/policy provides default approval reuse policies.
 //
-// The stable entrypoint for the default CloudAgent worker is cloudagent/worker.
-// Lower-level custom runtimes should use agentworker/cloud directly. The
-// cmd/cloud_agent services are reference service wiring, not public SDK
-// packages.
+// The stable entrypoint for the default CloudAgent worker is deepagent/cloud/worker.
+// Lower-level custom runtimes should use deepagent/worker/cloud directly. The
+// deepagent/cmd/cloud_agent services are reference service wiring, not public
+// SDK packages.
 package cloudagent

@@ -72,9 +72,10 @@ Turn 不是 message。一条 message 可以启动一个 Turn；running Turn 中�
 
 ### 1. 创建 Thread
 
-下面的例子使用 SDK 内置的 DeepAgent runner。`TurnRunnerConfig` 配置的是每个 Turn 内部那次执行；Thread 自己只负责把输入、上下文、事件和恢复流程组织起来。
+下面的例子使用 SDK 内置的 DeepAgent。`TurnConfig` 配置每个 Turn 内部的执行；Thread 负责组织输入、上下文、事件和恢复流程。
 
-推荐做法是：构造 Thread 时只传 thread 级依赖，runner config 在每次真正启动 Turn 或 resume Turn 前通过 resolver 生成。
+构造 Thread 时传入基础 Turn 配置；确实需要按请求变化时，再使用
+`TurnConfigProvider` 生成本次运行配置。
 
 ```go
 events := make(chan agentthread.Event, 128)
@@ -85,22 +86,23 @@ sandboxBackend := backends.NewSandboxFilesystemBackend(&backends.FilesystemBacke
 })
 // 这里用本地文件系统模拟一台 Agent 可以操纵的电脑。生产环境也可以替换成
 // Docker、AI Infra、ByteSandbox 或业务自己的 SandboxBackend。
-baseRunnerConfig := &agentthread.TurnRunnerConfig{
-    ChatModel:        chatModel,
-    MaxSteps:         100,                 // 可选；单个 turn 的最大图运行步数，0 表示使用 DeepAgent 默认值
-    MaxModelCalls:    30,                  // 可选；单个逻辑 turn 的最大模型调用次数，HITL resume 后继续消耗剩余额度
-    EnableFilesystem: true,                // 开启后会启用 ls/read_file/edit_file/grep 等文件系统能力
-    WorkDir:          workDir,
-    SandboxBackend:   sandboxBackend,      // Agent 可以操纵的电脑，承载文件读写和命令执行
-    CheckpointStore:  checkpointStore,     // eino 图中断时的上下文存储后端，需要业务自己实现，一般用 KV
-    HITLConfig:       hitlConfig,          // hitl 配置，可配置哪些工具需要审批
+baseTurnConfig := &agentthread.TurnConfig{
+    Agent: deepagents.Config{
+        Model:            chatModel,
+        MaxSteps:         100,
+        MaxModelCalls:    30,
+        FilesystemConfig: &deepagents.FilesystemConfig{WorkDir: workDir},
+        Backend:          sandboxBackend,
+        CheckpointStore:  checkpointStore,
+        HITLConfig:       hitlConfig,
+    },
 }
 
-thread := agentthread.NewDefault(
+thread := agentthread.New(
     threadID,
-    baseRunnerConfig,
+    baseTurnConfig,
     events,                                    // agent 运行事件总线,业务从这里获得运行状态,事件的通知
-    agentthread.DefaultThreadOptions{
+    agentthread.ThreadOptions{
         HistoryStore:       historyStore,      // 上下文历史存储后端，需要业务提供
         ContextWindow:      contextWindow,     // 模型上下文窗口大小
         CompactionStrategy: compactionStrategy, // 上下文压缩策略
@@ -111,8 +113,8 @@ thread := agentthread.NewDefault(
 
 配置分两类：
 
-- `TurnRunnerConfig`：SDK 内置单次执行 runner 的配置，例如模型、最大运行步数、工具、HITL、checkpoint。它是 turn/run 级输入；构造 Thread 时传入的 base config 只是 fallback。
-- `DefaultThreadOptions`：Thread 如何管理上下文。
+- `TurnConfig`：包含一个 `deepagents.Config`，外加计划事件、动态中间件和运行完成回调等 Thread 边界能力。
+- `ThreadOptions`：Thread 如何管理上下文；也可以通过 `ContextManager` 字段替换内置上下文管理器。
 
 ### 2. 初始化
 
@@ -140,11 +142,11 @@ go func() {
 
 ```go
 result, err := thread.SubmitInput(
-    ctx,
-    schema.UserMessage(content),
-    agentthread.WithTurnRunnerConfigResolver(func(ctx context.Context, req agentthread.TurnRunnerConfigRequest) (*agentthread.TurnRunnerConfig, error) {
-        cfg := req.Base.Clone()
-        // 这里可以根据 req.TurnID、req.Input、业务 metadata 或用户 profile
+	ctx,
+	schema.UserMessage(content),
+	agentthread.WithTurnConfigProvider(func(ctx context.Context, req agentthread.TurnStartRequest) (*agentthread.TurnConfig, error) {
+		cfg := baseTurnConfig.Clone()
+		// 这里可以根据 req.TurnID、req.Input、业务 metadata 或用户 profile
         // 生成本次 turn 的模型、工具、middleware、预算和 HITL 配置。
         return cfg, nil
     }),
@@ -153,7 +155,7 @@ if err != nil {
     return err
 }
 
-if result.StartNewTurn {
+if result.Started {
     go result.TurnHandle.Wait(ctx)
 }
 ```
@@ -172,10 +174,10 @@ handle, err := thread.ResumeTurn(ctx, turnID, agentthread.ResumeTurnOptions{
     CheckpointID:       checkpointID,
     ResumeInterruptIDs: []string{interruptID},
     ResumeData:         resumeData,
-    TurnRunnerConfig: func(ctx context.Context, req agentthread.TurnRunnerConfigRequest) (*agentthread.TurnRunnerConfig, error) {
-        cfg := req.Base.Clone()
-        // ResumeTurn 和 SubmitInput 共享同一类 resolver 机制。业务可以用
-        // req.Resume.ConfigMeta 或 turnID 查询自己的业务级 turn profile。
+	ConfigProvider: func(ctx context.Context, req agentthread.TurnStartRequest) (*agentthread.TurnConfig, error) {
+		cfg := baseTurnConfig.Clone()
+		// ResumeTurn 和 SubmitInput 共享同一类配置提供器。业务可以用
+		// req.Resume 或 turnID 查询自己的业务级 turn profile。
         return cfg, nil
     },
 })
@@ -219,7 +221,7 @@ type ContextManager interface {
 
 常规业务不需要实现这个接口。
 
-`NewDefault` 会根据 `DefaultThreadOptions` 构造内置的 `MemoryContextManager`。
+`New` 会在 `ThreadOptions.ContextManager` 为空时，根据其余选项构造内置的 `MemoryContextManager`；传入自定义 `ContextManager` 时则直接使用它。
 
 运行时它会：
 
@@ -350,7 +352,7 @@ type AutoCompactLimiter interface {
 
 HITL 是 Agent runtime 执行过程中的中断机制。
 
-在默认 DeepAgent runner 中，HITL 发生在工具调用前：当模型准备调用敏感工具时，执行体可以暂停当前执行，并等待外部给出 resume data。底层 checkpoint / resume 机制见 [DeepAgent 接入指南](../deepagent/index.md)。
+在默认 DeepAgent 执行中，HITL 发生在工具调用前：当模型准备调用敏感工具时，执行体可以暂停当前执行，并等待外部给出 resume data。底层 checkpoint / resume 机制见 [DeepAgent 接入指南](../deepagent/index.md)。
 
 Agent Thread 在这一层要解决的是：把这次中断变成可观察的 runtime event，并让业务后续可以调用 `ResumeTurn` 回到被暂停的 Turn。
 

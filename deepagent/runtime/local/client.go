@@ -8,16 +8,10 @@ import (
 
 	protoinput "eino-cli/deepagent/cloud/protocol/input"
 	"eino-cli/deepagent/cloud/protocol/timeline"
-	"eino-cli/deepagent/definition"
 	runtimeclient "eino-cli/deepagent/runtime"
 	"eino-cli/deepagent/worker"
 	"eino-cli/deepagent/worker/inprocess"
 	"github.com/google/uuid"
-)
-
-const (
-	metadataDefinitionName    = "runtime.definition.name"
-	metadataDefinitionVersion = "runtime.definition.version"
 )
 
 type Options struct {
@@ -45,9 +39,6 @@ func (client *Client) CreateThread(ctx context.Context, req runtimeclient.Create
 	if req.Runtime != runtimeclient.RuntimeLocal {
 		return nil, invalidRuntime("create_thread", req.Runtime)
 	}
-	if err = agentdefinition.Validate(req.Definition); err != nil {
-		return nil, &runtimeclient.Error{Code: runtimeclient.ErrorCodeInvalidArgument, Op: "create_thread", Runtime: runtimeclient.RuntimeLocal, Cause: err}
-	}
 	parentID := ""
 	if req.ParentRef != nil {
 		if req.ParentRef.Runtime != runtimeclient.RuntimeLocal {
@@ -58,7 +49,6 @@ func (client *Client) CreateThread(ctx context.Context, req runtimeclient.Create
 	state, err := client.worker.CreateThread(ctx, inprocess.CreateThreadSpec{
 		UserID: client.options.UserID, SessionID: req.Namespace, ParentThreadID: parentID,
 		Title: req.Title, Profile: inprocess.ThreadProfile{Cwd: req.Workspace.Cwd},
-		Metadata: map[string]string{metadataDefinitionName: req.Definition.Name, metadataDefinitionVersion: req.Definition.Version},
 	})
 	if err != nil {
 		return nil, wrapError("create_thread", err)
@@ -221,9 +211,4 @@ func wrapError(operation string, cause error) (err error) {
 	}
 	err = &runtimeclient.Error{Code: code, Op: operation, Runtime: runtimeclient.RuntimeLocal, Cause: cause}
 	return err
-}
-
-func definitionMetadata(metadata map[string]string, key string) (value string) {
-	value = metadata[key]
-	return value
 }

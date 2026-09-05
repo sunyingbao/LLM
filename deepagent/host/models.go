@@ -11,7 +11,8 @@ import (
 	openaimodel "github.com/cloudwego/eino-ext/components/model/openai"
 	"github.com/cloudwego/eino/components/model"
 
-	"eino-cli/backend/config"
+	"eino-cli/deepagent/backend/config"
+	"eino-cli/deepagent/backend/modelhub"
 )
 
 // buildSummaryChatModel returns the chat model used by the summarization
@@ -35,7 +36,7 @@ func buildSummaryChatModel(
 func buildChatModel(
 	ctx context.Context,
 	modelConfig *config.ModelConfig,
-) (model.BaseChatModel, error) {
+) (chatModel model.BaseChatModel, err error) {
 	provider := strings.ToLower(strings.TrimSpace(modelConfig.Provider))
 	apiKey := strings.TrimSpace(modelConfig.APIKey)
 	timeout := time.Duration(modelConfig.TimeoutSeconds) * time.Second
@@ -51,8 +52,11 @@ func buildChatModel(
 			Timeout:         timeout,
 			ReasoningEffort: parseReasoningEffort(modelConfig.ReasoningEffort),
 		}
-		if strings.HasSuffix(strings.TrimRight(openAIConfig.BaseURL, "/"), "/crawl") {
-			openAIConfig.HTTPClient = &http.Client{Transport: &modelHubCrawlTransport{base: http.DefaultTransport}, Timeout: timeout}
+		if modelhub.IsEndpoint(openAIConfig.BaseURL) {
+			openAIConfig.HTTPClient, err = modelhub.NewHTTPClient(openAIConfig.BaseURL, openAIConfig.APIKey, timeout)
+			if err != nil {
+				return nil, fmt.Errorf("build modelhub client: %w", err)
+			}
 		}
 		return openaimodel.NewChatModel(ctx, openAIConfig)
 	case "kimi", "moonshot":
@@ -62,26 +66,8 @@ func buildChatModel(
 	}
 }
 
-// modelHubCrawlTransport adapts the ModelHub crawl endpoint to the OpenAI SDK.
-// The SDK appends /chat/completions, while ModelHub expects the request at /crawl.
-type modelHubCrawlTransport struct {
-	base http.RoundTripper
-}
-
-func (transport *modelHubCrawlTransport) RoundTrip(req *http.Request) (resp *http.Response, err error) {
-	if transport == nil || transport.base == nil {
-		transport = &modelHubCrawlTransport{base: http.DefaultTransport}
-	}
-	cloned := req.Clone(req.Context())
-	urlCopy := *req.URL
-	path := strings.TrimSuffix(urlCopy.Path, "/chat/completions")
-	urlCopy.Path = path
-	cloned.URL = &urlCopy
-	return transport.base.RoundTrip(cloned)
-}
-
 // BuildToolCallingChatModel constructs the configured model for the unified
-// runtime host. Provider credentials remain owned by the SGADK configuration.
+// runtime host. Provider credentials remain owned by the DeepAgent configuration.
 func BuildToolCallingChatModel(ctx context.Context, modelConfig *config.ModelConfig) (chatModel model.ToolCallingChatModel, err error) {
 	baseModel, err := buildChatModel(ctx, modelConfig)
 	if err != nil {

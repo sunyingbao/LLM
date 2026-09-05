@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"sync"
 
@@ -11,17 +12,10 @@ import (
 	sdkruntime "eino-cli/deepagent/runtime"
 )
 
-type ActionResult struct {
-	Success bool
-	Message string
-	Output  string
-}
-
 type InteractiveRuntime interface {
 	StartTurn(ctx context.Context, prompt string) (stream *TurnStream, err error)
 	Resume(ctx context.Context, ref sdkruntime.GlobalThreadRef, payload protoinput.ResumeTurnPayload) (err error)
 	ClearThread()
-	ConsolidateMemory(ctx context.Context) (result ActionResult, err error)
 	ExportThreadRef() (payload []byte, err error)
 	ImportThreadRef(payload []byte) (err error)
 	SetPlanMode(ctx context.Context, enabled bool) (result bool, err error)
@@ -34,10 +28,11 @@ type TurnStream struct {
 	TurnID string
 	Events <-chan timeline.Event
 
-	stop         func(context.Context) error
-	subscription sdkruntime.TimelineSubscription
-	once         sync.Once
-	turnMu       sync.Mutex
+	stop              func(context.Context) error
+	subscription      sdkruntime.TimelineSubscription
+	expectedMessageID string
+	once              sync.Once
+	turnMu            sync.Mutex
 }
 
 // AcceptEvent locks a remotely submitted stream to the first observed turn.
@@ -49,13 +44,38 @@ func (stream *TurnStream) AcceptEvent(event timeline.Event) (accepted bool) {
 	}
 	stream.turnMu.Lock()
 	defer stream.turnMu.Unlock()
+	if stream.Ref.ThreadID != "" && event.ThreadID != stream.Ref.ThreadID {
+		return false
+	}
 	if stream.TurnID == "" {
-		if protoevent.EventType(event.EventType) != protoevent.EventTypeTurnStarted || strings.TrimSpace(event.TurnID) == "" {
+		if strings.TrimSpace(event.TurnID) == "" {
+			return false
+		}
+		if stream.expectedMessageID != "" {
+			if !eventConsumesMessage(event, stream.expectedMessageID) {
+				return false
+			}
+		} else if protoevent.EventType(event.EventType) != protoevent.EventTypeTurnStarted {
 			return false
 		}
 		stream.TurnID = event.TurnID
 	}
 	return event.TurnID == stream.TurnID
+}
+
+func eventConsumesMessage(event timeline.Event, messageID string) (consumed bool) {
+	var payload struct {
+		ConsumedMessageIDs []string `json:"consumed_message_ids"`
+	}
+	if json.Unmarshal(event.Payload, &payload) != nil {
+		return false
+	}
+	for _, consumedMessageID := range payload.ConsumedMessageIDs {
+		if consumedMessageID == messageID {
+			return true
+		}
+	}
+	return false
 }
 
 func (stream *TurnStream) Stop(ctx context.Context) (err error) {

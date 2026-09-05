@@ -5,4 +5,4 @@ CREATE TABLE t_memory_baseline (
   updated_at DATETIME(6) DEFAULT NULL COMMENT 'baseline update time',
   PRIMARY KEY (id),
   UNIQUE KEY uniq_user (user_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci ROW_FORMAT=DYNAMIC COMMENT='AIC Agent SDK worker memory consolidation baseline';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci ROW_FORMAT=DYNAMIC COMMENT='DeepAgent worker memory consolidation baseline';

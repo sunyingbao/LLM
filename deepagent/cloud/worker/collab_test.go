@@ -6,7 +6,7 @@ import (
 	"context"
 	"testing"
 
-	ac "code.byted.org/overpass/ad_creative_aic_agent_coordinator/kitex_gen/agent_coordinator"
+	"eino-cli/deepagent/coordinator"
 	"eino-cli/deepagent/worker/tasktool"
 )
 
@@ -19,10 +19,10 @@ func TestCollabTaskToolUsesResolvedThreadProfileForSpawnDefaults(t *testing.T) {
 			},
 		},
 	}
-	threadInfo := &ac.Thread{
-		ThreadId:  42,
-		UserId:    1001,
-		SessionId: stringPtr("session-1"),
+	threadInfo := &coordinator.Thread{
+		ThreadID:  42,
+		UserID:    1001,
+		SessionID: "session-1",
 		Metadata: map[string]string{
 			MetadataProjectName: "wire-project",
 		},

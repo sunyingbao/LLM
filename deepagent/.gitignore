@@ -11,10 +11,11 @@
 cmd/deepagent/demo_wk/
 cmd/deepagent/deepagent
 cmd/cloud_agent/cloud_agent
-cmd/cloud_agent/aic_agent_sdk_api/aic_agent_sdk_api
-cmd/cloud_agent/aic_agent_sdk_session/aic_agent_sdk_session
-cmd/cloud_agent/aic_agent_sdk_worker/aic_agent_sdk_worker
+cmd/cloud_agent/deep_agent_sdk/deep_agent_sdk
+cmd/cloud_agent/deep_agent_sdk_session/deep_agent_sdk_session
+cmd/cloud_agent/deep_agent_sdk_worker/deep_agent_sdk_worker
 cmd/cloud_agent/**/log/
+cmd/cloud_agent/runtime/
 # Test binary
 *.test
 cmd/sandbox_lab/sandbox_lab
@@ -84,3 +85,4 @@ fornax_key.env
 data
 docs/workbench
 skills/**/config.json
+cmd/cloud_agent/deep_agent_sdk/webui/visual_audit/.reports/

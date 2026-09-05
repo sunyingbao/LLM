@@ -10,10 +10,10 @@ import (
 	"testing"
 	"time"
 
-	ac "code.byted.org/overpass/ad_creative_aic_agent_coordinator/kitex_gen/agent_coordinator"
 	cloudbackend "eino-cli/deepagent/cloud/backend"
 	protoevent "eino-cli/deepagent/cloud/protocol/event"
 	protoinput "eino-cli/deepagent/cloud/protocol/input"
+	deepagents "eino-cli/deepagent/core"
 	"eino-cli/deepagent/core/agentthread"
 	"eino-cli/deepagent/core/backends"
 	"eino-cli/deepagent/core/checkpointer"
@@ -21,6 +21,8 @@ import (
 	"eino-cli/deepagent/core/middleware/repairjson"
 	"eino-cli/deepagent/mock/mock_model"
 	"eino-cli/deepagent/worker/tasktool"
+
+	"eino-cli/deepagent/coordinator"
 	"github.com/cloudwego/eino/callbacks"
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/components/tool"
@@ -53,13 +55,13 @@ func TestNewRequiresNamespace(t *testing.T) {
 	}
 }
 
-func TestNewRequiresCoordinatorPSMWhenClientNotProvided(t *testing.T) {
+func TestNewRequiresCoordinatorWhenClientNotProvided(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	_, err := New(Config{
 		Host: HostConfig{Namespace: "ns"},
 		Turn: testTurnConfig(mock_model.NewMockToolCallingChatModel(ctrl)),
 	}, Deps{})
-	if err == nil || err.Error() != "cloudagent: coordinator psm is required" {
+	if err == nil || err.Error() != "cloudagent: coordinator is required" {
 		t.Fatalf("New() error=%v", err)
 	}
 }
@@ -95,16 +97,19 @@ func TestThreadOutputObserverDepsPlumbedToRuntime(t *testing.T) {
 	}
 	deepThread := agentthread.New(
 		"42",
-		&agentthread.TurnRunnerConfig{CheckpointStore: checkpointer.NewInMemoryStore()},
-		agentthread.NewMemoryContextManager("42", nil, nil, nil),
+		&agentthread.TurnConfig{
+			Agent: deepagents.Config{
+				CheckpointStore: checkpointer.NewInMemoryStore(),
+			},
+		},
 		eventBus,
+		agentthread.ThreadOptions{ContextManager: agentthread.NewMemoryContextManager("42", nil, nil, nil)},
 	)
 	agentThread, err := b.adaptAgentThreadToWorker(ctx, threadSpec{
-		Info:     &ac.Thread{ThreadId: 42, SessionId: stringPtr("session-1")},
+		Info:     &coordinator.Thread{ThreadID: 42, SessionID: "session-1"},
 		ThreadID: "42",
-		RoleID:   DefaultRoleID,
 		Profile:  ResolvedThreadProfile{RoleID: DefaultRoleID},
-	}, threadResources{EventBus: eventBus}, ResolvedThreadProfile{RoleID: DefaultRoleID}, deepThread)
+	}, threadResources{EventBus: eventBus}, deepThread)
 	if err != nil {
 		t.Fatalf("adaptAgentThreadToWorker() error=%v", err)
 	}
@@ -157,16 +162,19 @@ func TestOutputConfigPlumbedToRuntime(t *testing.T) {
 	}
 	deepThread := agentthread.New(
 		"42",
-		&agentthread.TurnRunnerConfig{CheckpointStore: checkpointer.NewInMemoryStore()},
-		agentthread.NewMemoryContextManager("42", nil, nil, nil),
+		&agentthread.TurnConfig{
+			Agent: deepagents.Config{
+				CheckpointStore: checkpointer.NewInMemoryStore(),
+			},
+		},
 		eventBus,
+		agentthread.ThreadOptions{ContextManager: agentthread.NewMemoryContextManager("42", nil, nil, nil)},
 	)
 	agentThread, err := b.adaptAgentThreadToWorker(ctx, threadSpec{
-		Info:     &ac.Thread{ThreadId: 42, SessionId: stringPtr("session-1")},
+		Info:     &coordinator.Thread{ThreadID: 42, SessionID: "session-1"},
 		ThreadID: "42",
-		RoleID:   DefaultRoleID,
 		Profile:  ResolvedThreadProfile{RoleID: DefaultRoleID},
-	}, threadResources{EventBus: eventBus}, ResolvedThreadProfile{RoleID: DefaultRoleID}, deepThread)
+	}, threadResources{EventBus: eventBus}, deepThread)
 	if err != nil {
 		t.Fatalf("adaptAgentThreadToWorker() error=%v", err)
 	}
@@ -205,7 +213,7 @@ func TestSessionWorkDir(t *testing.T) {
 	}
 }
 
-func TestBuildTurnRunnerConfigLoadsSkillsFromThreadBackend(t *testing.T) {
+func TestBuildTurnConfigLoadsSkillsFromThreadBackend(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	root := t.TempDir()
 	skillDir := filepath.Join(root, "skills", "demo-skill")
@@ -222,19 +230,19 @@ func TestBuildTurnRunnerConfigLoadsSkillsFromThreadBackend(t *testing.T) {
 			t.Defaults.Capabilities.Skills.Sources = []string{"/skills"}
 		}),
 	}}
-	cfg, err := b.buildTurnRunnerConfig(context.Background(), testSpec("/workspace/project"), threadResources{
+	cfg, err := b.buildTurnConfig(context.Background(), testSpec("/workspace/project", ResolvedThreadProfile{RoleID: DefaultRoleID, Backend: cloudbackend.Config{Type: cloudbackend.TypeAIInfra}}), threadResources{
 		Backend: backends.NewSandboxFilesystemBackend(&backends.FilesystemBackendConfig{
 			RootDir:     root,
 			VirtualMode: true,
 		}),
-	}, ResolvedThreadProfile{RoleID: DefaultRoleID, Backend: cloudbackend.Config{Type: cloudbackend.TypeAIInfra}}, mustBaseTurnProfile(t, b))
+	}, mustBaseTurnProfile(t, b))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.SkillLoader == nil {
+	if cfg.Agent.SkillLoader == nil {
 		t.Fatal("SkillLoader is nil")
 	}
-	skills, err := cfg.SkillLoader.ListSkills(context.Background())
+	skills, err := cfg.Agent.SkillLoader.ListSkills(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -243,7 +251,7 @@ func TestBuildTurnRunnerConfigLoadsSkillsFromThreadBackend(t *testing.T) {
 	}
 }
 
-func TestBuildTurnRunnerConfigLoadsLocalSkillsFromConfiguredDirectory(t *testing.T) {
+func TestBuildTurnConfigLoadsLocalSkillsFromConfiguredDirectory(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	root := t.TempDir()
 	skillDir := filepath.Join(root, "demo-skill")
@@ -260,16 +268,16 @@ func TestBuildTurnRunnerConfigLoadsLocalSkillsFromConfiguredDirectory(t *testing
 			t.Defaults.Capabilities.Skills.Sources = []string{root}
 		}),
 	}}
-	cfg, err := b.buildTurnRunnerConfig(context.Background(), testSpec(t.TempDir()), threadResources{
+	cfg, err := b.buildTurnConfig(context.Background(), testSpec(t.TempDir(), ResolvedThreadProfile{RoleID: DefaultRoleID, Backend: cloudbackend.Config{Type: cloudbackend.TypeLocal}}), threadResources{
 		Backend: backends.NewSandboxFilesystemBackend(&backends.FilesystemBackendConfig{
 			RootDir:     t.TempDir(),
 			VirtualMode: true,
 		}),
-	}, ResolvedThreadProfile{RoleID: DefaultRoleID, Backend: cloudbackend.Config{Type: cloudbackend.TypeLocal}}, mustBaseTurnProfile(t, b))
+	}, mustBaseTurnProfile(t, b))
 	if err != nil {
 		t.Fatal(err)
 	}
-	skills, err := cfg.SkillLoader.ListSkills(context.Background())
+	skills, err := cfg.Agent.SkillLoader.ListSkills(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -294,11 +302,11 @@ func TestResolveThreadProfileUsesResolverEveryTime(t *testing.T) {
 		Turn: testTurnConfig(mock_model.NewMockToolCallingChatModel(ctrl)),
 	}}
 
-	first, err := b.resolveThreadProfile(context.Background(), &ac.Thread{ThreadId: 1, SessionId: stringPtr("s")})
+	first, err := b.resolveThreadProfile(context.Background(), &coordinator.Thread{ThreadID: 1, SessionID: "s"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := b.resolveThreadProfile(context.Background(), &ac.Thread{ThreadId: 2, SessionId: stringPtr("s")})
+	second, err := b.resolveThreadProfile(context.Background(), &coordinator.Thread{ThreadID: 2, SessionID: "s"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -336,11 +344,11 @@ func TestResolveTurnProfileUsesResolverEveryTime(t *testing.T) {
 	}}
 
 	threadProfile := ResolvedThreadProfile{RoleID: DefaultRoleID}
-	first, err := b.resolveTurnProfile(context.Background(), testSpec("/workspace"), threadProfile, "", TurnTrigger{Kind: TurnTriggerInitial})
+	first, err := b.resolveTurnProfile(context.Background(), testSpec("/workspace", threadProfile), "", TurnTrigger{Kind: TurnTriggerInitial})
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := b.resolveTurnProfile(context.Background(), testSpec("/workspace"), threadProfile, "turn-2", TurnTrigger{Kind: TurnTriggerUserInput, Mode: protoinput.UserMessageModeImplPlan})
+	second, err := b.resolveTurnProfile(context.Background(), testSpec("/workspace", threadProfile), "turn-2", TurnTrigger{Kind: TurnTriggerUserInput, Mode: protoinput.UserMessageModeImplPlan})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -378,7 +386,7 @@ func TestResolveTurnProfileAllowsResolverToAddRole(t *testing.T) {
 		}),
 	}}
 
-	got, err := b.resolveTurnProfile(context.Background(), testSpec("/workspace"), ResolvedThreadProfile{RoleID: "dynamic"}, "", TurnTrigger{Kind: TurnTriggerInitial})
+	got, err := b.resolveTurnProfile(context.Background(), testSpec("/workspace", ResolvedThreadProfile{RoleID: "dynamic"}), "", TurnTrigger{Kind: TurnTriggerInitial})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -411,7 +419,7 @@ func TestResolveTurnProfileRejectsDisallowedResolvedModel(t *testing.T) {
 		}),
 	}}
 
-	_, err := b.resolveTurnProfile(context.Background(), testSpec("/workspace"), ResolvedThreadProfile{RoleID: DefaultRoleID}, "", TurnTrigger{Kind: TurnTriggerInitial})
+	_, err := b.resolveTurnProfile(context.Background(), testSpec("/workspace"), "", TurnTrigger{Kind: TurnTriggerInitial})
 	if err == nil || !strings.Contains(err.Error(), `model "other" is not allowed`) {
 		t.Fatalf("resolveTurnProfile() error=%v, want disallowed model", err)
 	}
@@ -458,7 +466,7 @@ func TestBaseTurnProfileRoleApprovalPolicyOverridesDefault(t *testing.T) {
 	}
 }
 
-func TestBuildTurnRunnerConfigIncludesExternalToolsAndCallbacks(t *testing.T) {
+func TestBuildTurnConfigIncludesExternalToolsAndCallbacks(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	external := fakeTool{name: "mcp_tool"}
 	handler := callbacks.NewHandlerBuilder().Build()
@@ -468,14 +476,14 @@ func TestBuildTurnRunnerConfigIncludesExternalToolsAndCallbacks(t *testing.T) {
 			turn.Defaults.Capabilities.Callbacks = []callbacks.Handler{handler}
 		}),
 	}}
-	cfg, err := b.buildTurnRunnerConfig(context.Background(), testSpec(t.TempDir()), threadResources{}, ResolvedThreadProfile{RoleID: DefaultRoleID}, mustBaseTurnProfile(t, b))
+	cfg, err := b.buildTurnConfig(context.Background(), testSpec(t.TempDir()), threadResources{}, mustBaseTurnProfile(t, b))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(cfg.Tools) != 1 || len(cfg.Callbacks) != 1 {
-		t.Fatalf("tools/callbacks len=%d/%d, want 1/1", len(cfg.Tools), len(cfg.Callbacks))
+	if len(cfg.Agent.Tools) != 1 || len(cfg.Agent.Callbacks) != 1 {
+		t.Fatalf("tools/callbacks len=%d/%d, want 1/1", len(cfg.Agent.Tools), len(cfg.Agent.Callbacks))
 	}
-	info, err := cfg.Tools[0].Info(context.Background())
+	info, err := cfg.Agent.Tools[0].Info(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -484,7 +492,7 @@ func TestBuildTurnRunnerConfigIncludesExternalToolsAndCallbacks(t *testing.T) {
 	}
 }
 
-func TestBuildTurnRunnerConfigIncludesRoleMiddlewares(t *testing.T) {
+func TestBuildTurnConfigIncludesRoleMiddlewares(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	roleMiddleware := repairjson.New()
 	b := &threadBuilder{cfg: Config{
@@ -495,22 +503,22 @@ func TestBuildTurnRunnerConfigIncludesRoleMiddlewares(t *testing.T) {
 			}
 		}),
 	}}
-	cfg, err := b.buildTurnRunnerConfig(context.Background(), testSpec(t.TempDir()), threadResources{}, ResolvedThreadProfile{RoleID: DefaultRoleID}, mustBaseTurnProfile(t, b))
+	cfg, err := b.buildTurnConfig(context.Background(), testSpec(t.TempDir()), threadResources{}, mustBaseTurnProfile(t, b))
 	if err != nil {
 		t.Fatal(err)
 	}
 	found := false
-	for _, mw := range cfg.Middlewares {
+	for _, mw := range cfg.Agent.Middlewares {
 		if mw == roleMiddleware {
 			found = true
 		}
 	}
 	if !found {
-		t.Fatalf("role middleware was not included: %+v", cfg.Middlewares)
+		t.Fatalf("role middleware was not included: %+v", cfg.Agent.Middlewares)
 	}
 }
 
-func TestBuildTurnRunnerConfigUsesTurnProfileRoleForToolPolicy(t *testing.T) {
+func TestBuildTurnConfigUsesTurnProfileRoleForToolPolicy(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	b := &threadBuilder{cfg: Config{
 		Turn: testTurnConfig(mock_model.NewMockToolCallingChatModel(ctrl), func(turn *TurnConfig) {
@@ -520,19 +528,19 @@ func TestBuildTurnRunnerConfigUsesTurnProfileRoleForToolPolicy(t *testing.T) {
 	turnProfile := mustBaseTurnProfile(t, b)
 	turnProfile.RoleID = "worker"
 
-	cfg, err := b.buildTurnRunnerConfig(context.Background(), testSpec(t.TempDir()), threadResources{}, ResolvedThreadProfile{RoleID: DefaultRoleID}, turnProfile)
+	cfg, err := b.buildTurnConfig(context.Background(), testSpec(t.TempDir()), threadResources{}, turnProfile)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.ToolMask == nil {
+	if cfg.Agent.ToolMask == nil {
 		t.Fatal("ToolMask is nil, want worker role mask")
 	}
-	if cfg.ToolMask(context.Background(), &schema.ToolInfo{Name: tasktool.ToolSpawnTask}) {
+	if cfg.Agent.ToolMask(context.Background(), &schema.ToolInfo{Name: tasktool.ToolSpawnTask}) {
 		t.Fatal("spawn_task is visible, want hidden for worker turn profile")
 	}
 }
 
-func TestBuildTurnRunnerConfigPassesTurnToolPolicy(t *testing.T) {
+func TestBuildTurnConfigPassesTurnToolPolicy(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	b := &threadBuilder{cfg: Config{
 		Turn: testTurnConfig(mock_model.NewMockToolCallingChatModel(ctrl), func(turn *TurnConfig) {
@@ -542,18 +550,18 @@ func TestBuildTurnRunnerConfigPassesTurnToolPolicy(t *testing.T) {
 		}),
 	}}
 
-	cfg, err := b.buildTurnRunnerConfig(context.Background(), testSpec("/workspace"), threadResources{}, ResolvedThreadProfile{RoleID: DefaultRoleID}, mustBaseTurnProfile(t, b))
+	cfg, err := b.buildTurnConfig(context.Background(), testSpec("/workspace"), threadResources{}, mustBaseTurnProfile(t, b))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.FilesystemConfig == nil || !cfg.FilesystemConfig.DisableApplyPatch {
-		t.Fatalf("filesystem config = %+v, want DisableApplyPatch", cfg.FilesystemConfig)
+	if cfg.Agent.FilesystemConfig == nil || !cfg.Agent.FilesystemConfig.DisableApplyPatch {
+		t.Fatalf("filesystem config = %+v, want DisableApplyPatch", cfg.Agent.FilesystemConfig)
 	}
-	if cfg.MaxSteps != 55 {
-		t.Fatalf("MaxSteps=%d, want 55", cfg.MaxSteps)
+	if cfg.Agent.MaxSteps != 55 {
+		t.Fatalf("MaxSteps=%d, want 55", cfg.Agent.MaxSteps)
 	}
-	if cfg.MaxModelCalls != 9 {
-		t.Fatalf("MaxModelCalls=%d, want 9", cfg.MaxModelCalls)
+	if cfg.Agent.MaxModelCalls != 9 {
+		t.Fatalf("MaxModelCalls=%d, want 9", cfg.Agent.MaxModelCalls)
 	}
 }
 
@@ -572,13 +580,16 @@ func testTurnConfig(chatModel model.ToolCallingChatModel, opts ...func(*TurnConf
 	return cfg
 }
 
-func testSpec(workDir string) threadSpec {
+func testSpec(workDir string, profiles ...ResolvedThreadProfile) (spec threadSpec) {
+	profile := ResolvedThreadProfile{RoleID: DefaultRoleID}
+	if len(profiles) > 0 {
+		profile = profiles[0]
+	}
+	profile.WorkDir = workDir
 	return threadSpec{
-		Info:     &ac.Thread{},
+		Info:     &coordinator.Thread{},
 		ThreadID: "1",
-		WorkDir:  workDir,
-		RoleID:   DefaultRoleID,
-		Profile:  ResolvedThreadProfile{RoleID: DefaultRoleID, WorkDir: workDir},
+		Profile:  profile,
 	}
 }
 

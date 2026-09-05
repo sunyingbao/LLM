@@ -4,22 +4,21 @@ package worker
 
 import (
 	"context"
-	"fmt"
-	"strings"
-	"time"
-
-	ac "code.byted.org/overpass/ad_creative_aic_agent_coordinator/kitex_gen/agent_coordinator"
 	cloudbackend "eino-cli/deepagent/cloud/backend"
 	protoinput "eino-cli/deepagent/cloud/protocol/input"
 	"eino-cli/deepagent/cloud/worker/policy"
-	workerthread "eino-cli/deepagent/cloud/worker/thread"
 	"eino-cli/deepagent/core/agentthread"
 	"eino-cli/deepagent/core/memory"
 	"eino-cli/deepagent/core/middleware"
 	skillmw "eino-cli/deepagent/core/middleware/skill"
-	"eino-cli/deepagent/worker"
+	agentworker "eino-cli/deepagent/worker"
 	"eino-cli/deepagent/worker/cloud"
 	"eino-cli/deepagent/worker/tasktool"
+	workerthread "eino-cli/deepagent/worker/thread"
+	"fmt"
+	"strings"
+	"time"
+
 	"github.com/cloudwego/eino/callbacks"
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/components/tool"
@@ -370,15 +369,12 @@ type ApprovalStore interface {
 	Allow(ctx context.Context, threadInfo *ThreadInfo, toolName string, argumentsJSON string)
 }
 
-// Deps contains systems supplied by the hosting service. HistoryStore and
-// CheckpointStore are required. CoordinatorClient is optional when
-// Config.Host.Coordinator is configured; provide it only when the service
-// wants to own client construction. The remaining deps add collaboration,
-// approval reuse, custom workdir layout, or deterministic event ids.
+// Deps contains systems supplied by the hosting process. Coordinator,
+// HistoryStore, and CheckpointStore are required. The remaining dependencies
+// enable optional collaboration, memory, approval, and observability features.
 type Deps struct {
-	// CoordinatorClient is the Agent Coordinator RPC client. If nil, New
-	// creates one from Config.Host.Coordinator.
-	CoordinatorClient *CoordinatorClient
+	// Coordinator connects the worker to the in-process Coordinator.
+	Coordinator cloud.CoordinatorClient
 	// HistoryStore creates a durable history store per thread.
 	HistoryStore HistoryStoreProvider
 	// CheckpointStore creates an Eino checkpoint store per thread.
@@ -432,19 +428,6 @@ func TaskMessageWaitObserver(events []*tasktool.Event, messageID string) tasktoo
 
 // threadBuilder is the private assembly pipeline behind New. It keeps the
 // public package surface focused on Config and Deps.
-type threadBuilder struct {
-	cfg  Config
-	deps Deps
-}
-
-func newThreadBuilder(cfg Config, deps Deps) (*threadBuilder, error) {
-	b := &threadBuilder{cfg: cfg, deps: deps}
-	if err := b.validateDeps(); err != nil {
-		return nil, err
-	}
-	return b, nil
-}
-
 func validateConfig(cfg Config) error {
 	if len(cfg.Turn.Roles) == 0 {
 		return fmt.Errorf("cloudagent: at least one role is required")
@@ -486,136 +469,6 @@ func validateConfig(cfg Config) error {
 	return nil
 }
 
-func (b *threadBuilder) validateDeps() error {
-	if b.deps.CoordinatorClient == nil {
-		return fmt.Errorf("cloudagent: coordinator client is required")
-	}
-	if b.deps.HistoryStore == nil {
-		return fmt.Errorf("cloudagent: history store provider is required")
-	}
-	if b.deps.CheckpointStore == nil {
-		return fmt.Errorf("cloudagent: checkpoint store provider is required")
-	}
-	return nil
-}
-
-func (b *threadBuilder) baseThreadProfile(threadInfo *ac.Thread) ResolvedThreadProfile {
-	wireProfile := cloud.ThreadProfileFromWire(threadInfo)
-	roleID := strings.TrimSpace(wireProfile.Role)
-	if roleID == "" {
-		roleID = DefaultRoleID
-	}
-	return ResolvedThreadProfile{
-		RoleID:        roleID,
-		WorkDir:       b.threadWorkDir(threadInfo, wireProfile),
-		Project:       threadProjectName(threadInfo, wireProfile),
-		Backend:       b.cfg.Thread.Backend,
-		Compaction:    b.cfg.Thread.Compaction,
-		Collaboration: b.cfg.Thread.Collaboration,
-	}
-}
-
-func (b *threadBuilder) resolveThreadProfile(ctx context.Context, threadInfo *ac.Thread) (ResolvedThreadProfile, error) {
-	base := b.baseThreadProfile(threadInfo)
-	if b.cfg.Thread.ResolveProfile == nil {
-		return b.validateThreadProfile(base)
-	}
-	profile, err := b.cfg.Thread.ResolveProfile(ctx, ThreadProfileRequest{
-		ThreadInfo: threadInfoFromCoordinator(threadInfo),
-		Base:       base,
-	})
-	if err != nil {
-		return ResolvedThreadProfile{}, err
-	}
-	return b.validateThreadProfile(profile)
-}
-
-func (b *threadBuilder) validateThreadProfile(profile ResolvedThreadProfile) (ResolvedThreadProfile, error) {
-	if strings.TrimSpace(profile.RoleID) == "" {
-		return ResolvedThreadProfile{}, fmt.Errorf("cloudagent: thread profile role id is required")
-	}
-	if strings.TrimSpace(string(profile.Backend.Type)) == "" {
-		profile.Backend.Type = cloudbackend.TypeLocal
-	}
-	profile.Backend = cloudbackend.Normalize(profile.Backend)
-	if profile.Compaction.CompactKeptUserTokens <= 0 {
-		profile.Compaction.CompactKeptUserTokens = 4000
-	}
-	if profile.Collaboration.TaskRolesDescription == "" {
-		profile.Collaboration.TaskRolesDescription = defaultTaskRolesDescription
-	}
-	return profile, nil
-}
-
-func (b *threadBuilder) baseTurnProfile(threadProfile ResolvedThreadProfile) (ResolvedTurnProfile, error) {
-	roleID := strings.TrimSpace(threadProfile.RoleID)
-	if roleID == "" {
-		roleID = DefaultRoleID
-	}
-	rolePreset, ok := b.cfg.Turn.Roles[roleID]
-	if !ok {
-		return ResolvedTurnProfile{}, fmt.Errorf("cloudagent: role %q is not configured", roleID)
-	}
-	modelID := strings.TrimSpace(rolePreset.Model.Default)
-	modelProfile, ok := b.cfg.Turn.Models[modelID]
-	if !ok {
-		return ResolvedTurnProfile{}, fmt.Errorf("cloudagent: role %q default model %q is not configured", roleID, modelID)
-	}
-	capabilities := cloneTurnCapabilities(b.cfg.Turn.Defaults.Capabilities)
-	capabilities.Middlewares = append(capabilities.Middlewares, rolePreset.Middlewares...)
-	policy := b.cfg.Turn.Defaults.Policy
-	if rolePreset.ApprovalPolicy != "" {
-		policy.ApprovalPolicy = rolePreset.ApprovalPolicy
-	}
-	return ResolvedTurnProfile{
-		RoleID:       roleID,
-		ModelID:      modelID,
-		Model:        modelProfile,
-		Prompt:       turnPromptProfile(roleID, b.cfg.Turn.Prompt, rolePreset.Prompt),
-		Capabilities: capabilities,
-		Budget:       b.cfg.Turn.Defaults.Budget,
-		Policy:       policy,
-	}, nil
-}
-
-func (b *threadBuilder) resolveTurnProfile(ctx context.Context, spec threadSpec, threadProfile ResolvedThreadProfile, turnID string, trigger TurnTrigger) (ResolvedTurnProfile, error) {
-	base, err := b.baseTurnProfile(threadProfile)
-	if err != nil {
-		if b.cfg.Turn.ResolveProfile == nil {
-			return ResolvedTurnProfile{}, err
-		}
-		base = b.fallbackTurnProfile(threadProfile)
-	}
-	if b.cfg.Turn.ResolveProfile == nil {
-		return b.validateTurnProfile(base)
-	}
-	profile, err := b.cfg.Turn.ResolveProfile(ctx, TurnProfileRequest{
-		ThreadInfo:    threadInfoFromCoordinator(spec.Info),
-		ThreadProfile: threadProfile,
-		TurnID:        turnID,
-		Trigger:       trigger,
-		Base:          base,
-	})
-	if err != nil {
-		return ResolvedTurnProfile{}, err
-	}
-	return b.validateTurnProfile(profile)
-}
-
-func (b *threadBuilder) fallbackTurnProfile(threadProfile ResolvedThreadProfile) ResolvedTurnProfile {
-	roleID := strings.TrimSpace(threadProfile.RoleID)
-	if roleID == "" {
-		roleID = DefaultRoleID
-	}
-	return ResolvedTurnProfile{
-		RoleID:       roleID,
-		Prompt:       turnPromptProfile(roleID, b.cfg.Turn.Prompt, PromptConfig{}),
-		Capabilities: cloneTurnCapabilities(b.cfg.Turn.Defaults.Capabilities),
-		Budget:       b.cfg.Turn.Defaults.Budget,
-		Policy:       b.cfg.Turn.Defaults.Policy,
-	}
-}
-
 func validateTurnProfile(profile ResolvedTurnProfile) (ResolvedTurnProfile, error) {
 	if strings.TrimSpace(profile.RoleID) == "" {
 		return ResolvedTurnProfile{}, fmt.Errorf("cloudagent: turn profile role id is required")
@@ -631,19 +484,6 @@ func validateTurnProfile(profile ResolvedTurnProfile) (ResolvedTurnProfile, erro
 	}
 	if profile.Budget.MaxModelCalls < 0 {
 		return ResolvedTurnProfile{}, fmt.Errorf("cloudagent: turn profile max model calls must be >= 0")
-	}
-	return profile, nil
-}
-
-func (b *threadBuilder) validateTurnProfile(profile ResolvedTurnProfile) (ResolvedTurnProfile, error) {
-	profile, err := validateTurnProfile(profile)
-	if err != nil {
-		return ResolvedTurnProfile{}, err
-	}
-	roleID := strings.TrimSpace(profile.RoleID)
-	rolePreset, ok := b.cfg.Turn.Roles[roleID]
-	if ok && !roleAllowsModel(rolePreset, strings.TrimSpace(profile.ModelID)) {
-		return ResolvedTurnProfile{}, fmt.Errorf("cloudagent: turn profile role %q model %q is not allowed", roleID, profile.ModelID)
 	}
 	return profile, nil
 }
@@ -675,16 +515,12 @@ func newResolvedWorker(cfg Config, deps Deps) (*Worker, error) {
 	if err != nil {
 		return nil, err
 	}
-	return newWorker(cfg.Host, deps.CoordinatorClient, builder.newAgentThread)
+	return newWorker(cfg.Host, deps.Coordinator, builder.newAgentThread)
 }
 
 func resolveDeps(cfg Config, deps Deps) (Deps, error) {
-	if deps.CoordinatorClient == nil {
-		client, err := NewCoordinatorClient(cfg.Host.Coordinator)
-		if err != nil {
-			return deps, err
-		}
-		deps.CoordinatorClient = client
+	if deps.Coordinator == nil {
+		return deps, fmt.Errorf("cloudagent: coordinator is required")
 	}
 	deps = resolveMemoryDeps(cfg.Memory, deps)
 	return deps, nil

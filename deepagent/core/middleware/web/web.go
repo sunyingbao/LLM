@@ -15,9 +15,6 @@ import (
 
 // WebConfig Web 工具中间件配置
 type WebConfig struct {
-	// runtimeConfig 运行时字段
-	runtimeConfig runtimeConfig
-
 	// TavilyAPIKey Tavily API 密钥
 	// 如果设置，将使用 Tavily API 进行搜索
 	TavilyAPIKey string
@@ -44,19 +41,14 @@ type WebConfig struct {
 	ToolMask tools.Mask
 }
 
-type runtimeConfig struct {
-	EnableTools bool
-}
-
 // WebMiddleware Web 工具中间件
 type WebMiddleware struct {
 	middleware.BaseMiddleware
 	config *WebConfig
 }
 
-func DefaultConfig() *WebConfig {
+func DefaultConfig() (config *WebConfig) {
 	return &WebConfig{
-		runtimeConfig:     defaultRuntimeConfig(),
 		TavilyAPIKey:      "",
 		EnableWebSearch:   true,
 		EnableHTTPRequest: true,
@@ -67,14 +59,8 @@ func DefaultConfig() *WebConfig {
 	}
 }
 
-func defaultRuntimeConfig() runtimeConfig {
-	return runtimeConfig{
-		EnableTools: false,
-	}
-}
-
 // mergeWebConfigWithDefault 将用户配置与默认配置合并，零值字段使用默认值
-func mergeWebConfigWithDefault(config *WebConfig) *WebConfig {
+func mergeWebConfigWithDefault(config *WebConfig) (mergedConfig *WebConfig) {
 	if config == nil {
 		return DefaultConfig()
 	}
@@ -82,7 +68,6 @@ func mergeWebConfigWithDefault(config *WebConfig) *WebConfig {
 	defaults := DefaultConfig()
 
 	merged := *config
-	merged.runtimeConfig = defaults.runtimeConfig
 
 	if merged.Timeout == 0 {
 		merged.Timeout = defaults.Timeout
@@ -95,16 +80,12 @@ func mergeWebConfigWithDefault(config *WebConfig) *WebConfig {
 }
 
 // New 创建 Web 工具中间件
-func New(config *WebConfig) *WebMiddleware {
+func New(config *WebConfig) (web *WebMiddleware) {
 	config = mergeWebConfigWithDefault(config)
 
 	// 尝试从环境变量获取 Tavily API Key
 	if config.TavilyAPIKey == "" {
 		config.TavilyAPIKey = os.Getenv("TAVILY_API_KEY")
-	}
-
-	if config.TavilyAPIKey == "" {
-		config.runtimeConfig.EnableTools = false
 	}
 
 	return &WebMiddleware{

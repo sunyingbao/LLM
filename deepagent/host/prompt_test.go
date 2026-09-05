@@ -6,82 +6,9 @@ import (
 	"strings"
 	"testing"
 
-	"eino-cli/backend/config"
-	memorystore "eino-cli/backend/memory/store"
+	"eino-cli/deepagent/backend/config"
+	memorystore "eino-cli/deepagent/backend/memory/store"
 )
-
-func TestLoadEnabledSkillsFromConfig_FromPaths(t *testing.T) {
-	root := t.TempDir()
-	cleanup := config.SetRootDirForTest(root)
-	defer cleanup()
-	skillDir := filepath.Join(root, "backend", "skills", "demo")
-	if err := os.MkdirAll(skillDir, 0o755); err != nil {
-		t.Fatalf("mkdir: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"),
-		[]byte("---\nname: demo\ndescription: A demo skill.\n---\n"), 0o644); err != nil {
-		t.Fatalf("write SKILL.md: %v", err)
-	}
-
-	got := loadEnabledSkillsFromConfig()
-	if len(got) != 1 {
-		t.Fatalf("loadEnabledSkillsFromConfig: got %d, want 1: %+v", len(got), got)
-	}
-	if got[0].Name != "demo" || got[0].Description != "A demo skill." {
-		t.Fatalf("loaded skill mismatch: %+v", got[0])
-	}
-}
-
-func TestLoadEnabledSkillsFromConfig_NoPaths(t *testing.T) {
-	root := t.TempDir()
-	cleanup := config.SetRootDirForTest(root)
-	defer cleanup()
-	if got := loadEnabledSkillsFromConfig(); len(got) != 0 {
-		t.Fatalf("empty config should yield nil skill list, got %+v", got)
-	}
-}
-
-func TestDeferredToolNamesFromConfig_NilWhenEmpty(t *testing.T) {
-	if got := DeferredToolNamesFromConfig(); got != nil {
-		t.Fatal("expected nil slice when no deferred tools configured")
-	}
-}
-
-func TestGetSystemPrompt_SkillsRendered(t *testing.T) {
-	root := t.TempDir()
-	cleanup := config.SetRootDirForTest(root)
-	defer cleanup()
-	skillDir := filepath.Join(root, "backend", "skills", "demo")
-	_ = os.MkdirAll(skillDir, 0o755)
-	_ = os.WriteFile(filepath.Join(skillDir, "SKILL.md"),
-		[]byte("---\nname: demo\ndescription: Demo skill.\n---\n"), 0o644)
-
-	out := GetSystemPrompt("default", false, &config.Config{})
-
-	if !strings.Contains(out, "<available_skills>") {
-		t.Fatalf("available_skills section missing from prompt:\n%s", out)
-	}
-	if !strings.Contains(out, "<name>demo</name>") {
-		t.Fatalf("demo skill not rendered:\n%s", out)
-	}
-	if strings.Contains(out, "<available-deferred-tools>") {
-		t.Fatalf("deferred-tools section should be omitted when default list is empty")
-	}
-}
-
-func TestGetUnifiedSystemPromptDelegatesSkillsToDefinition(t *testing.T) {
-	root := t.TempDir()
-	cleanup := config.SetRootDirForTest(root)
-	defer cleanup()
-	skillDir := filepath.Join(root, "backend", "skills", "demo")
-	_ = os.MkdirAll(skillDir, 0o755)
-	_ = os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte("---\nname: demo\ndescription: Demo skill.\n---\n"), 0o644)
-
-	out := GetUnifiedSystemPrompt("default", false, &config.Config{})
-	if strings.Contains(out, "<available_skills>") || strings.Contains(out, "<name>demo</name>") {
-		t.Fatalf("unified prompt duplicated Definition-managed skills:\n%s", out)
-	}
-}
 
 // task tool schema is {subagent_type, description} only (eino's
 // adk/prebuilt/deep/task_tool.go). Any prompt= or prompt: argument in the
@@ -93,7 +20,7 @@ func TestGetSystemPrompt_SubagentExamplesHaveNoPromptArg(t *testing.T) {
 	root := t.TempDir()
 	cleanup := config.SetRootDirForTest(root)
 	defer cleanup()
-	out := GetSystemPrompt("default", true, &config.Config{})
+	out := SystemPrompt("default", true)
 	for _, bad := range []string{"prompt=\"...\"", "prompt=\"", "\"prompt\":"} {
 		if strings.Contains(out, bad) {
 			t.Fatalf("found hallucinated %q in <subagent_system> examples; task tool schema is {subagent_type, description} only", bad)
@@ -112,7 +39,7 @@ func TestGetSystemPrompt_SubagentEnabledKeepsBulletIndent(t *testing.T) {
 	root := t.TempDir()
 	cleanup := config.SetRootDirForTest(root)
 	defer cleanup()
-	out := GetSystemPrompt("default", true, &config.Config{})
+	out := SystemPrompt("default", true)
 	if !strings.Contains(out, "**\n  - Never write down your full final answer") {
 		t.Fatalf("subagent_thinking placeholder broke <thinking_style> bullet indent:\n%s", out)
 	}
@@ -131,7 +58,7 @@ func TestGetSystemPrompt_DoesNotInjectMemory(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	out := GetSystemPrompt("default", false, &config.Config{})
+	out := SystemPrompt("default", false)
 	if strings.Contains(out, "<memory>") {
 		t.Fatalf("system prompt should not inject <memory>; middleware owns memory injection, got:\n%s", out)
 	}
@@ -142,7 +69,7 @@ func TestGetSystemPrompt_UsesVirtualRoot(t *testing.T) {
 	cleanup := config.SetRootDirForTest(root)
 	defer cleanup()
 
-	out := GetSystemPrompt("default", false, &config.Config{})
+	out := SystemPrompt("default", false)
 	if !strings.Contains(out, "<root>/mnt/repo</root>") {
 		t.Fatalf("system prompt should expose virtual root:\n%s", out)
 	}
@@ -237,7 +164,7 @@ func TestGetSystemPrompt_AgentDisciplineInjected(t *testing.T) {
 	}
 	cleanup := config.SetRootDirForTest(root)
 	defer cleanup()
-	out := GetSystemPrompt("default", false, &config.Config{})
+	out := SystemPrompt("default", false)
 
 	if !strings.Contains(out, "<agent_discipline>\nDISCIPLINE_BODY_MARKER") {
 		t.Fatalf("expected <agent_discipline> wrapper opening with body:\n%s", out)
@@ -254,7 +181,7 @@ func TestGetSystemPrompt_AgentDisciplineInjected(t *testing.T) {
 func TestGetSystemPrompt_NoAgentsMDOmitsSection(t *testing.T) {
 	cleanup := config.SetRootDirForTest(t.TempDir())
 	defer cleanup()
-	out := GetSystemPrompt("default", false, &config.Config{})
+	out := SystemPrompt("default", false)
 	if strings.Contains(out, "<agent_discipline>\n") {
 		t.Fatalf("missing AGENTS.md must not produce wrapper:\n%s", out)
 	}

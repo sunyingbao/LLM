@@ -276,7 +276,7 @@ SDK 提供组合机制，不替业务决定工具安全策略。
 | 自定义工具 | `WithTools` | 注入业务工具 |
 | 工具过滤 | `WithToolMask` | 控制最终对模型可见且可执行的工具 |
 | Planning | `WithPlanMiddleware` | 任务计划和进度 |
-| Memory | `WithMemory` | 注入固定记忆文件 |
+| 对话上下文 | `WithContextManager` | 注入业务提供的上下文管理中间件 |
 | Skill | `WithSkillLoader` | 加载技能 |
 | SubAgent | `WithSubAgents` / `WithSubAgentsDir` | 单次执行内的子 Agent 能力 |
 | Web | `WithWeb` | Web 搜索、HTTP、URL 抓取 |
@@ -365,28 +365,17 @@ deepagents.WithStreamToolCall()
 - 工具事件是否按业务期望输出。
 - checkpoint / resume 是否覆盖这个路径。
 
-### 自定义 ReAct 分支
+### ReAct 路由
 
-```go
-deepagents.WithReactLoopBranchPolicy(policy)
-```
-
-默认 ReAct 路由是：
+执行图只使用真实节点名：
 
 ```plaintext
 model 有服务端工具调用 -> tools -> model
 model 没有服务端工具调用 -> end
 ```
 
-`ReactLoopBranchPolicy` 允许业务改变这条路由。
-
-典型场景：
-
-- 模型本来要结束，但同一次执行里还有输入要继续处理。
-- 工具结果已经是最终结果，不需要再回模型。
-- 业务需要在 model / tools 后做特殊分支控制。
-
-它只应该表达 DeepAgent react loop 的路由，不应该承载 mailbox、message id、持久化或 worker 概念。
+AgentThread 在模型准备结束时检查是否有待处理输入；有输入时经 `continue`
+节点回到 `model`，否则结束。不再维护额外的路由枚举或节点映射。
 
 ### Tool Info Rewriter
 

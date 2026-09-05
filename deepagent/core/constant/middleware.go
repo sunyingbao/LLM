@@ -27,9 +27,6 @@ const (
 	// MiddlewarePatchToolCalls 工具调用修补中间件
 	MiddlewarePatchToolCalls = "patch_tool_calls"
 
-	// MiddlewareSummarization 摘要中间件
-	MiddlewareSummarization = "summarization"
-
 	// MiddlewareWeb Web 工具中间件
 	MiddlewareWeb = "web"
 )
@@ -39,45 +36,6 @@ const (
 const (
 	// DefaultTodoPriority 默认任务优先级
 	DefaultTodoPriority = 3
-)
-
-// ==================== Summarization 配置 ====================
-
-const (
-	// DefaultSummarizationMaxTokens 默认触发摘要的令牌阈值
-	// Deprecated: 使用 DefaultSummarizationTriggerFraction 代替
-	DefaultSummarizationMaxTokens = 8000
-
-	// DefaultSummarizationKeepLastN 默认保留最近 N 条消息
-	// Deprecated: 使用 DefaultSummarizationKeepFraction 代替
-	DefaultSummarizationKeepLastN = 5
-
-	// DefaultModelMaxInputTokens 默认模型最大输入 token 数
-	// Deprecated: 改用 constant.LookupModelContextWindow 注册表
-	DefaultModelMaxInputTokens = 128000
-
-	// DefaultTruncateArgsSuffix 默认工具参数截断后缀
-	// Deprecated: 使用 DefaultToolContentCompressedHint 代替
-	DefaultTruncateArgsSuffix = "..."
-
-	// DefaultToolContentCompressedHint 工具内容被压缩后的替换提示
-	DefaultToolContentCompressedHint = "[content removed to save context]"
-)
-
-// ==================== Summarization 百分比策略配置 ====================
-
-const (
-	// Phase 2: 消息摘要
-	// DefaultSummarizationTriggerFraction 可用窗口 90% 触发摘要
-	DefaultSummarizationTriggerFraction = 0.90
-	// DefaultSummarizationKeepFraction 保留 40% 可用窗口的最近消息
-	DefaultSummarizationKeepFraction = 0.40
-
-	// Phase 1: 工具内容压缩
-	// DefaultToolCompressTriggerFraction 可用窗口 50% 触发压缩
-	DefaultToolCompressTriggerFraction = 0.50
-	// DefaultToolCompressKeepFraction 保留 20% 可用窗口的工具内容预算
-	DefaultToolCompressKeepFraction = 0.20
 )
 
 // ==================== Memory 配置 ====================

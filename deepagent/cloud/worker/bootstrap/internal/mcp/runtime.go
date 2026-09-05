@@ -19,7 +19,7 @@ import (
 )
 
 const (
-	clientName    = "aic_agent_sdk_worker"
+	clientName    = "deep_agent_sdk_worker"
 	clientVersion = "0.1.0"
 )
 

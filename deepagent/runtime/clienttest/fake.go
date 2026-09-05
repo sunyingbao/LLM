@@ -39,8 +39,7 @@ func (client *Fake) CreateThread(ctx context.Context, req runtimeclient.CreateTh
 	defer client.mu.Unlock()
 	client.nextThread++
 	thread := &runtimeclient.Thread{
-		Ref:            runtimeclient.GlobalThreadRef{Runtime: req.Runtime, Namespace: req.Namespace, ThreadID: fmt.Sprintf("thread-%d", client.nextThread)},
-		DefinitionName: req.Definition.Name, DefinitionVersion: req.Definition.Version,
+		Ref:       runtimeclient.GlobalThreadRef{Runtime: req.Runtime, Namespace: req.Namespace, ThreadID: fmt.Sprintf("thread-%d", client.nextThread)},
 		Workspace: req.Workspace, Title: req.Title, State: runtimeclient.ThreadStateIdle,
 	}
 	client.threads[thread.Ref.ThreadID] = thread

@@ -5,18 +5,18 @@ package worker
 import (
 	"testing"
 
-	ac "code.byted.org/overpass/ad_creative_aic_agent_coordinator/kitex_gen/agent_coordinator"
-	"eino-cli/deepagent/cloud/worker/runtimectx"
+	"eino-cli/deepagent/coordinator"
+	"eino-cli/deepagent/worker/thread/runtimectx"
 )
 
 func TestThreadInfoFromSpecMapsACThreadFields(t *testing.T) {
 	spec := threadSpec{
-		Info: &ac.Thread{
-			ThreadId:  42,
-			Namespace: "aic_agent_sdk",
-			SessionId: stringPtr("session-1"),
-			Env:       stringPtr("boe"),
-			UserId:    99,
+		Info: &coordinator.Thread{
+			ThreadID:  42,
+			Namespace: "deep_agent_sdk",
+			SessionID: "session-1",
+			Env:       "boe",
+			UserID:    99,
 		},
 		ThreadID: "42",
 	}
@@ -26,7 +26,7 @@ func TestThreadInfoFromSpecMapsACThreadFields(t *testing.T) {
 		ThreadID:  "42",
 		SessionID: "session-1",
 		UserID:    99,
-		Namespace: "aic_agent_sdk",
+		Namespace: "deep_agent_sdk",
 		Env:       "boe",
 	}
 	if got != want {
@@ -36,7 +36,7 @@ func TestThreadInfoFromSpecMapsACThreadFields(t *testing.T) {
 
 func TestThreadInfoFromSpecPassesThroughEmptyNamespaceAndEnv(t *testing.T) {
 	spec := threadSpec{
-		Info:     &ac.Thread{ThreadId: 7, SessionId: stringPtr("session-2")},
+		Info:     &coordinator.Thread{ThreadID: 7, SessionID: "session-2"},
 		ThreadID: "7",
 	}
 

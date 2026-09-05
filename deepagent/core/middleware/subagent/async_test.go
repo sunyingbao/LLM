@@ -326,7 +326,6 @@ func TestSubAgentTask_WaitForDoneFalseRunsAsync(t *testing.T) {
 	runStarted := make(chan struct{}, 1)
 	releaseRun := make(chan struct{})
 	runFinished := make(chan struct{}, 1)
-	task := "run asynchronously"
 
 	mw := New(&SubAgentConfig{
 		SubAgents:    []*SubAgent{{Name: "test_sub"}},
@@ -367,28 +366,20 @@ func TestSubAgentTask_WaitForDoneFalseRunsAsync(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatalf("expected background execution to finish")
 	}
-
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		if got := mw.results[resultKey("test_sub", task)]; got == "async-result" {
-			return
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	t.Fatalf("expected async result to be stored, got %q", mw.results[resultKey("test_sub", task)])
 }
 
-func TestSubAgentTask_WaitForDoneFalseStoresFailure(t *testing.T) {
+func TestSubAgentTask_WaitForDoneFalseRunsFailingTask(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	cm := mock_model.NewMockToolCallingChatModel(ctrl)
 
-	task := "fail asynchronously"
+	runFinished := make(chan struct{})
 	mw := New(&SubAgentConfig{
 		SubAgents:    []*SubAgent{{Name: "test_sub"}},
 		DefaultModel: cm,
 		Factory: func(ctx context.Context, chatModel model.ToolCallingChatModel, subAgent *SubAgent, defaultTools []tool.BaseTool, defaultMiddleware []middleware.Middleware) (SubAgentRunner, error) {
 			return &testSubAgentRunner{
 				runFn: func(ctx context.Context, messages []*schema.Message) (*schema.Message, error) {
+					defer close(runFinished)
 					return nil, errors.New("boom")
 				},
 			}, nil
@@ -400,18 +391,11 @@ func TestSubAgentTask_WaitForDoneFalseStoresFailure(t *testing.T) {
 		t.Fatalf("unexpected async task output: %q", out)
 	}
 
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		got := mw.results[resultKey("test_sub", task)]
-		if got != "" {
-			if got != "[Error] task failed: boom" {
-				t.Fatalf("unexpected async error result: %q", got)
-			}
-			return
-		}
-		time.Sleep(10 * time.Millisecond)
+	select {
+	case <-runFinished:
+	case <-time.After(2 * time.Second):
+		t.Fatalf("expected failing background execution to finish")
 	}
-	t.Fatalf("expected async error result to be stored")
 }
 
 func TestSubAgentTask_WaitForDoneFalseLoadsContextBeforeReturn(t *testing.T) {

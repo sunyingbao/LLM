@@ -18,6 +18,7 @@ import (
 	mcpinfra "eino-cli/deepagent/cloud/worker/bootstrap/internal/mcp"
 	mysqlstore "eino-cli/deepagent/cloud/worker/bootstrap/internal/mysql"
 	redisstore "eino-cli/deepagent/cloud/worker/bootstrap/internal/redis"
+	"eino-cli/deepagent/coordinator"
 	"eino-cli/deepagent/core/agentthread"
 	gormstore "eino-cli/deepagent/core/memory/gorm_store"
 	"github.com/cloudwego/eino/callbacks"
@@ -48,6 +49,7 @@ type Options struct {
 	Tools       []tool.BaseTool
 	Callbacks   []callbacks.Handler
 	SkipLogging bool
+	Coordinator *coordinator.Coordinator
 }
 
 // LoadConfig loads and validates one YAML file. Environment variables are only
@@ -74,9 +76,9 @@ func Run(ctx context.Context, opts Options) error {
 	return runConfigured(ctx, cfg, opts)
 }
 
-func runConfigured(ctx context.Context, cfg Config, opts Options) error {
-	logs.CtxInfo(ctx, "[cloud_agent worker] config: namespace=%s env=%s coordinator_psm=%s coordinator_cluster=%s hostports=%t backend=%s workdir=%s checkpoint_store=%s history_table=%s concurrency=%d log_dir=%s log_retention_days=%d log_enable_agent=%t log_agent_active=%t log_enable_console=%t log_writers=%s",
-		cfg.Worker.Namespace, env.Env(), cfg.Coordinator.PSM, cfg.Coordinator.Cluster, cfg.Coordinator.DirectHostPorts != "", cfg.Backend.Type, cfg.Runtime.WorkDir, cfg.Checkpoint.Store, cfg.Tables.History, cfg.Worker.Concurrency, cfg.Log.Dir, cfg.Log.RetentionDays, cfg.Log.EnableAgent, logAgentEnabled(cfg), cfg.Log.EnableConsole, logWriterSummary(cfg))
+func runConfigured(ctx context.Context, cfg Config, opts Options) (err error) {
+	logs.CtxInfo(ctx, "[cloud_agent worker] config: namespace=%s env=%s backend=%s workdir=%s checkpoint_store=%s history_table=%s concurrency=%d log_dir=%s log_retention_days=%d log_enable_agent=%t log_agent_active=%t log_enable_console=%t log_writers=%s",
+		cfg.Worker.Namespace, env.Env(), cfg.Backend.Type, cfg.Runtime.WorkDir, cfg.Checkpoint.Store, cfg.Tables.History, cfg.Worker.Concurrency, cfg.Log.Dir, cfg.Log.RetentionDays, cfg.Log.EnableAgent, logAgentEnabled(cfg), cfg.Log.EnableConsole, logWriterSummary(cfg))
 	logs.CtxInfo(ctx, "[cloud_agent worker] runtime config summary: %s", runtimeConfigSummary(cfg))
 
 	fornaxRuntime, err := fornaxinfra.Build(ctx, cfg.Fornax)
@@ -102,7 +104,7 @@ func runConfigured(ctx context.Context, cfg Config, opts Options) error {
 	if err != nil {
 		return fmt.Errorf("create redis client for history seq: %w", err)
 	}
-	logs.CtxInfo(ctx, "[cloud_agent worker] redis client ready: mode=%s history_seq=true checkpoint=%t", cfg.Abase.RedisMode(), strings.HasPrefix(strings.TrimSpace(cfg.Checkpoint.Store), "redis://"))
+	logs.CtxInfo(ctx, "[cloud_agent worker] redis client ready: mode=redis history_seq=true checkpoint=%t", strings.HasPrefix(strings.TrimSpace(cfg.Checkpoint.Store), "redis://"))
 	checkpointFactory := checkpointstore.NewFactory(cfg.Checkpoint.Store, redisClient)
 
 	logs.CtxInfo(ctx, "[cloud_agent worker] building chat models: models=[%s]", modelConfigSummary(cfg.Models))
@@ -129,25 +131,28 @@ func runConfigured(ctx context.Context, cfg Config, opts Options) error {
 	staticCallbacks := append([]callbacks.Handler(nil), opts.Callbacks...)
 	startupCallbacks := append(fornaxRuntime.Handlers(), staticCallbacks...)
 	agentCfg := newCloudAgentConfig(cfg, chatModels, mcpTools, startupCallbacks)
-	if cluster := strings.TrimSpace(agentCfg.Host.Coordinator.Cluster); cluster != "" {
-		logs.CtxInfo(ctx, "[cloud_agent worker] coordinator cluster enabled: cluster=%s", cluster)
+	core := opts.Coordinator
+	if core == nil {
+		core, err = coordinator.New(ctx, coordinator.Config{
+			MySQLDSN:      cfg.MySQL.DSN,
+			MySQLReadDSN:  cfg.MySQL.ReadDSN,
+			RedisAddress:  cfg.Abase.Addr,
+			RedisPassword: cfg.Abase.Password,
+			RedisDB:       cfg.Abase.DB,
+		})
+		if err != nil {
+			return fmt.Errorf("create coordinator: %w", err)
+		}
 	}
-	if hostPorts := agentCfg.Host.Coordinator.DirectHostPorts; len(hostPorts) > 0 {
-		logs.CtxInfo(ctx, "[cloud_agent worker] coordinator direct hostports enabled: count=%d", len(hostPorts))
-	}
-	coordinatorClient, err := cloudworker.NewCoordinatorClient(agentCfg.Host.Coordinator)
-	if err != nil {
-		return fmt.Errorf("create coordinator client: %w", err)
-	}
-	logs.CtxInfo(ctx, "[cloud_agent worker] coordinator client ready: psm=%s", cfg.Coordinator.PSM)
+	logs.CtxInfo(ctx, "[cloud_agent worker] coordinator ready")
 
 	idGenerator, err := idgen.NewGenerator(cfg.IDGen.Namespace)
 	if err != nil {
 		return fmt.Errorf("create id generator: %w", err)
 	}
-	historySeqGenerator := agentthread.NewRedisSeqGenerator(redisClient, "aic_agent_sdk_worker:history_seq")
+	historySeqGenerator := agentthread.NewRedisSeqGenerator(redisClient, "deep_agent_sdk_worker:history_seq")
 	deps := cloudworker.Deps{
-		CoordinatorClient: coordinatorClient,
+		Coordinator: core,
 		HistoryStore: func(_ context.Context, _ string) (agentthread.HistoryRolloutStore, error) {
 			return agentthread.NewGormHistoryRolloutStore(db, cfg.Tables.History, idGenerator.MessageID, historySeqGenerator), nil
 		},

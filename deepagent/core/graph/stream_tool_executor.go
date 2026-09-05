@@ -52,7 +52,6 @@ type ToolCallHook struct {
 type StreamToolExecutor struct {
 	conf            *compose.ToolsNodeConfig
 	hook            *ToolCallHook
-	toolCollector   *ToolCallCollector
 	toolCallsByName map[string]*toolCall
 }
 
@@ -126,7 +125,6 @@ func NewStreamToolExecutor(
 	return &StreamToolExecutor{
 		conf:            conf,
 		hook:            hook,
-		toolCollector:   NewToolCallCollector(),
 		toolCallsByName: toolCallsByName,
 	}, nil
 }
@@ -269,8 +267,9 @@ func (s *StreamToolExecutor) resume(
 func (s *StreamToolExecutor) collectAndLaunch(
 	ctx context.Context,
 	inputStream *schema.StreamReader[*schema.Message],
-) ([]*streamToolTask, error) {
-	tasks := make([]*streamToolTask, 0)
+) (tasks []*streamToolTask, err error) {
+	tasks = make([]*streamToolTask, 0)
+	collector := NewToolCallCollector()
 
 	for {
 		chunk, err := inputStream.Recv()
@@ -281,14 +280,14 @@ func (s *StreamToolExecutor) collectAndLaunch(
 			return nil, err
 		}
 
-		completeCalls := s.toolCollector.Collect(ctx, chunk)
+		completeCalls := collector.Collect(ctx, chunk)
 		for _, tc := range completeCalls {
 			index := toolCallIndex(tc, len(tasks))
 			tasks = append(tasks, s.launchTask(ctx, tc, index))
 		}
 	}
 
-	repairedCalls := s.toolCollector.GetRepairedToolCalls(ctx)
+	repairedCalls := collector.GetRepairedToolCalls(ctx)
 	for _, repairedCall := range repairedCalls {
 		index := toolCallIndex(repairedCall, len(tasks))
 		tasks = append(tasks, s.launchTask(ctx, repairedCall, index))

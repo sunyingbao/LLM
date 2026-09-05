@@ -7,7 +7,6 @@ import (
 
 	protoinput "eino-cli/deepagent/cloud/protocol/input"
 	"eino-cli/deepagent/cloud/protocol/timeline"
-	"eino-cli/deepagent/definition"
 )
 
 const globalThreadRefPrefix = "uar:v1:"
@@ -105,23 +104,20 @@ const (
 )
 
 type Thread struct {
-	Ref               GlobalThreadRef `json:"ref"`
-	DefinitionName    string          `json:"definition_name"`
-	DefinitionVersion string          `json:"definition_version"`
-	Workspace         WorkspaceSpec   `json:"workspace,omitempty"`
-	Title             string          `json:"title,omitempty"`
-	State             ThreadState     `json:"state"`
-	CreatedAtMS       int64           `json:"created_at_ms,omitempty"`
-	UpdatedAtMS       int64           `json:"updated_at_ms,omitempty"`
+	Ref         GlobalThreadRef `json:"ref"`
+	Workspace   WorkspaceSpec   `json:"workspace,omitempty"`
+	Title       string          `json:"title,omitempty"`
+	State       ThreadState     `json:"state"`
+	CreatedAtMS int64           `json:"created_at_ms,omitempty"`
+	UpdatedAtMS int64           `json:"updated_at_ms,omitempty"`
 }
 
 type CreateThreadRequest struct {
-	Runtime    RuntimeKind                `json:"runtime"`
-	Namespace  string                     `json:"namespace,omitempty"`
-	ParentRef  *GlobalThreadRef           `json:"parent_ref,omitempty"`
-	Definition agentdefinition.Definition `json:"definition"`
-	Workspace  WorkspaceSpec              `json:"workspace,omitempty"`
-	Title      string                     `json:"title,omitempty"`
+	Runtime   RuntimeKind      `json:"runtime"`
+	Namespace string           `json:"namespace,omitempty"`
+	ParentRef *GlobalThreadRef `json:"parent_ref,omitempty"`
+	Workspace WorkspaceSpec    `json:"workspace,omitempty"`
+	Title     string           `json:"title,omitempty"`
 }
 
 type CreateThreadResult struct {

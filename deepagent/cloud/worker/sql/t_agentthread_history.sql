@@ -11,4 +11,4 @@ CREATE TABLE t_agentthread_history (
   KEY idx_thread_seq (thread_id, seq),
   KEY idx_thread_turn_seq (thread_id, turn_id, seq),
   KEY idx_thread_created_at (thread_id, created_at)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci ROW_FORMAT=DYNAMIC COMMENT='AIC Agent SDK worker deepagent thread history table';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci ROW_FORMAT=DYNAMIC COMMENT='DeepAgent worker deepagent thread history table';

@@ -1185,9 +1185,9 @@ func TestDeepAgent_StreamToolCallEnabled_ApprovalInterruptResume_DropsIncomplete
 	approvedToolBase := &countingResultTool{name: "approval_tool", result: `{"approved":true}`}
 	lostTool := &countingResultTool{name: "lost_tool", result: `{"lost":false}`}
 
-	approvedTool := deeptools.NewInvokableApprovableTool(approvedToolBase, func(context.Context, *deeptools.ApprovalInfo) bool {
+	approvedTool := deeptools.NewInvokablePolicyTool(approvedToolBase, deeptools.ApprovalGate(func(context.Context, *deeptools.ApprovalInfo) bool {
 		return true
-	})
+	}))
 
 	var streamCall int32
 	cm.EXPECT().Stream(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
@@ -1223,13 +1223,16 @@ func TestDeepAgent_StreamToolCallEnabled_ApprovalInterruptResume_DropsIncomplete
 					}, nil)
 				case 2:
 					if len(input) != 1 {
-						t.Fatalf("expected only 1 tool message after resume, got %d", len(input))
+						writer.Send(nil, fmt.Errorf("expected only 1 tool message after resume, got %d", len(input)))
+						return
 					}
 					if input[0].ToolCallID != "approve_call" {
-						t.Fatalf("expected approve_call only, got %+v", input)
+						writer.Send(nil, fmt.Errorf("expected approve_call only, got %+v", input))
+						return
 					}
 					if input[0].Content != `{"approved":true}` {
-						t.Fatalf("unexpected resumed tool output: %s", input[0].Content)
+						writer.Send(nil, fmt.Errorf("unexpected resumed tool output: %s", input[0].Content))
+						return
 					}
 					writer.Send(schema.AssistantMessage("resume-only-first-tool", nil), nil)
 				default:
@@ -1316,9 +1319,9 @@ func TestDeepAgent_StreamToolCallEnabled_ApprovalInterruptResume_RerunsOnlyInter
 	tool2 := &countingResultTool{name: "plain_tool_2", result: `{"tool":2}`}
 	tool3 := &countingResultTool{name: "plain_tool_3", result: `{"tool":3}`}
 	tool4Base := &countingResultTool{name: "approval_tool_4", result: `{"tool":4}`}
-	tool4 := deeptools.NewInvokableApprovableTool(tool4Base, func(context.Context, *deeptools.ApprovalInfo) bool {
+	tool4 := deeptools.NewInvokablePolicyTool(tool4Base, deeptools.ApprovalGate(func(context.Context, *deeptools.ApprovalInfo) bool {
 		return true
-	})
+	}))
 
 	var streamCall int32
 	cm.EXPECT().Stream(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
@@ -1340,7 +1343,8 @@ func TestDeepAgent_StreamToolCallEnabled_ApprovalInterruptResume_RerunsOnlyInter
 					}, nil)
 				case 2:
 					if len(input) != 4 {
-						t.Fatalf("expected 4 tool messages after resume, got %d", len(input))
+						writer.Send(nil, fmt.Errorf("expected 4 tool messages after resume, got %d", len(input)))
+						return
 					}
 					sort.Slice(input, func(i, j int) bool {
 						return input[i].ToolCallID < input[j].ToolCallID
@@ -1356,10 +1360,12 @@ func TestDeepAgent_StreamToolCallEnabled_ApprovalInterruptResume_RerunsOnlyInter
 					}
 					for i, exp := range expected {
 						if input[i].ToolCallID != exp.callID {
-							t.Fatalf("tool message %d expected callID %s, got %s", i, exp.callID, input[i].ToolCallID)
+							writer.Send(nil, fmt.Errorf("tool message %d expected callID %s, got %s", i, exp.callID, input[i].ToolCallID))
+							return
 						}
 						if input[i].Content != exp.content {
-							t.Fatalf("tool message %d expected content %s, got %s", i, exp.content, input[i].Content)
+							writer.Send(nil, fmt.Errorf("tool message %d expected content %s, got %s", i, exp.content, input[i].Content))
+							return
 						}
 					}
 					writer.Send(schema.AssistantMessage("resume-rerun-last-only", nil), nil)
@@ -1508,7 +1514,8 @@ func TestDeepAgent_StreamToolCallEnabled_DownstreamModelSeesFinalOrderedToolMess
 					}, nil)
 				case 2:
 					if len(input) != 3 {
-						t.Fatalf("expected 3 final tool messages, got %d messages", len(input))
+						writer.Send(nil, fmt.Errorf("expected 3 final tool messages, got %d messages", len(input)))
+						return
 					}
 
 					toolMsgs := input
@@ -1524,22 +1531,27 @@ func TestDeepAgent_StreamToolCallEnabled_DownstreamModelSeesFinalOrderedToolMess
 					for i, exp := range expected {
 						msg := toolMsgs[i]
 						if msg == nil {
-							t.Fatalf("tool message %d is nil", i)
+							writer.Send(nil, fmt.Errorf("tool message %d is nil", i))
+							return
 						}
 						if msg.Role != schema.Tool {
-							t.Fatalf("tool message %d expected role tool, got %s", i, msg.Role)
+							writer.Send(nil, fmt.Errorf("tool message %d expected role tool, got %s", i, msg.Role))
+							return
 						}
 						if msg.ToolCallID != exp.callID {
-							t.Fatalf("tool message %d expected callID %s, got %s", i, exp.callID, msg.ToolCallID)
+							writer.Send(nil, fmt.Errorf("tool message %d expected callID %s, got %s", i, exp.callID, msg.ToolCallID))
+							return
 						}
 						if msg.Content != exp.content {
-							t.Fatalf("tool message %d expected content %s, got %s", i, exp.content, msg.Content)
+							writer.Send(nil, fmt.Errorf("tool message %d expected content %s, got %s", i, exp.content, msg.Content))
+							return
 						}
 					}
 
 					for _, msg := range toolMsgs {
 						if msg.Content == "middle_part1" || msg.Content == "middle_part2" {
-							t.Fatalf("downstream model should not see intermediate tool chunks directly: %+v", msg)
+							writer.Send(nil, fmt.Errorf("downstream model should not see intermediate tool chunks directly: %+v", msg))
+							return
 						}
 					}
 

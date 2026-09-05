@@ -17,6 +17,7 @@ import (
 	"eino-cli/deepagent/core/middleware/subagent"
 	deeptools "eino-cli/deepagent/core/tools"
 	"eino-cli/deepagent/mock/mock_model"
+
 	"github.com/cloudwego/eino/callbacks"
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/components/tool"
@@ -100,7 +101,7 @@ func collectToolNames(t *testing.T, ctx context.Context, toolList []tool.BaseToo
 	return names
 }
 
-func TestNewFromSpec_MinimalSpec(t *testing.T) {
+func TestNew_Minimal(t *testing.T) {
 	ctx := context.Background()
 	ctrl := gomock.NewController(t)
 	cm := mock_model.NewMockToolCallingChatModel(ctrl)
@@ -113,14 +114,14 @@ func TestNewFromSpec_MinimalSpec(t *testing.T) {
 		},
 	).AnyTimes()
 
-	agent, err := NewFromSpec(ctx, &DeepAgentSpec{
-		Model:           cm,
-		Middlewares:     []middleware.Middleware{contextmanager.New()},
-		CheckpointStore: checkpointer.NewInMemoryStore(),
-		Depth:           2,
-	})
+	agent, err := New(ctx,
+		WithModel(cm),
+		WithContextManager(contextmanager.New()),
+		WithCheckpointStore(checkpointer.NewInMemoryStore()),
+		func(config *Config) { config.Depth = 2 },
+	)
 	if err != nil {
-		t.Fatalf("NewFromSpec() error = %v", err)
+		t.Fatalf("New() error = %v", err)
 	}
 	if agent.Name() != constant.GraphName {
 		t.Fatalf("unexpected agent name: %s", agent.Name())
@@ -139,6 +140,61 @@ func TestNewFromSpec_MinimalSpec(t *testing.T) {
 	}
 	if msg.Content != "spec-done" {
 		t.Fatalf("unexpected content: %s", msg.Content)
+	}
+}
+
+func TestWithConfigCopiesInput(t *testing.T) {
+	source := &Config{
+		FilesystemConfig:    &FilesystemConfig{WorkDir: "/specific"},
+		SubAgentsDirs:       []string{"/agents"},
+		InterruptAfterNodes: []string{"model"},
+		HITLConfig: &HITLConfig{
+			ToolPolicyGates: map[string]deeptools.ToolPolicyGate{"execute": {}},
+		},
+	}
+
+	configured := buildCreateConfig(WithConfig(source))
+	configured.SubAgentsDirs[0] = "/changed"
+	configured.InterruptAfterNodes[0] = "tools"
+	delete(configured.HITLConfig.ToolPolicyGates, "execute")
+
+	if source.SubAgentsDirs[0] != "/agents" {
+		t.Fatalf("source SubAgentsDirs was mutated: %+v", source.SubAgentsDirs)
+	}
+	if source.InterruptAfterNodes[0] != "model" {
+		t.Fatalf("source InterruptAfterNodes was mutated: %+v", source.InterruptAfterNodes)
+	}
+	if _, exists := source.HITLConfig.ToolPolicyGates["execute"]; !exists {
+		t.Fatalf("source HITLConfig was mutated: %+v", source.HITLConfig)
+	}
+	if workDir := configured.filesystemWorkDir(); workDir != "/specific" {
+		t.Fatalf("filesystem workdir = %q, want /specific", workDir)
+	}
+}
+
+func TestWithWorkDirWritesFilesystemConfig(t *testing.T) {
+	configured := buildCreateConfig(WithWorkDir("/workspace"))
+
+	if configured.FilesystemConfig == nil {
+		t.Fatal("WithWorkDir() did not enable filesystem configuration")
+	}
+	if workDir := configured.filesystemWorkDir(); workDir != "/workspace" {
+		t.Fatalf("filesystem workdir = %q, want /workspace", workDir)
+	}
+}
+
+func TestFeatureConfigPresenceControlsEnablement(t *testing.T) {
+	configured := buildCreateConfig()
+	if configured.FilesystemConfig != nil || configured.WebConfig != nil {
+		t.Fatalf("zero config unexpectedly enables features: %+v", configured)
+	}
+
+	configured = buildCreateConfig(WithFilesystem(), WithWeb())
+	if configured.FilesystemConfig == nil {
+		t.Fatal("WithFilesystem() did not create filesystem config")
+	}
+	if configured.WebConfig == nil || !configured.WebConfig.EnableWebSearch || !configured.WebConfig.EnableFetchURL {
+		t.Fatalf("WithWeb() config = %+v", configured.WebConfig)
 	}
 }
 
@@ -189,12 +245,22 @@ func TestNew_UsesModelNodeKeyForCallback(t *testing.T) {
 	}
 }
 
-func TestNewFromSpec_RequiresModel(t *testing.T) {
-	_, err := NewFromSpec(context.Background(), &DeepAgentSpec{
-		Middlewares: []middleware.Middleware{contextmanager.New()},
-	})
+func TestNew_RequiresModel(t *testing.T) {
+	_, err := New(context.Background(), WithContextManager(contextmanager.New()))
 	if err == nil || !strings.Contains(err.Error(), "model is required") {
 		t.Fatalf("expected model required error, got %v", err)
+	}
+}
+
+func TestNew_AllowsNoContextManager(t *testing.T) {
+	agent, err := New(context.Background(),
+		WithModel(mock_model.NewMockToolCallingChatModel(gomock.NewController(t))),
+	)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	if agent == nil {
+		t.Fatal("New() returned nil agent")
 	}
 }
 
@@ -209,106 +275,26 @@ func TestNew_RequiresConfiguredSharedCustomState(t *testing.T) {
 	}
 }
 
-func TestBuildSpecFromConfig_MapsBuilderFields(t *testing.T) {
-	ctx := context.Background()
-	ctrl := gomock.NewController(t)
-	cm := mock_model.NewMockToolCallingChatModel(ctrl)
-	mask := func(_ context.Context, info *schema.ToolInfo) bool {
-		return info.Name != "counter"
-	}
-	preHandler := func(ctx context.Context, input *schema.Message) (*schema.Message, error) {
-		return input, nil
-	}
-	postHandler := func(ctx context.Context, output []*schema.Message) ([]*schema.Message, error) {
-		return output, nil
-	}
-
-	stateBackend := newTestBackend(t)
-	cfg := buildCreateConfig(
-		WithModel(cm),
-		WithContextManager(contextmanager.New()),
-		WithTools(&fakeToolCounter{}),
-		WithToolMask(mask),
-		WithMiddleware(&testBuilderMiddleware{}),
-		WithStreamToolCall(),
-		WithCheckpointStore(checkpointer.NewInMemoryStore()),
-		WithBackend(stateBackend),
-		WithToolNodePreHandler(preHandler),
-		WithToolNodePostHandler(postHandler),
-	)
-	cfg.Depth = 7
-
-	spec, err := buildSpecFromConfig(ctx, cfg)
-	if err != nil {
-		t.Fatalf("buildSpecFromConfig() error = %v", err)
-	}
-
-	if spec.Model != cm {
-		t.Fatalf("expected model to be preserved")
-	}
-	if !spec.EnableStreamToolCall {
-		t.Fatalf("expected EnableStreamToolCall=true")
-	}
-	if spec.Depth != 7 {
-		t.Fatalf("unexpected Depth: %d", spec.Depth)
-	}
-	if spec.Backend != stateBackend {
-		t.Fatalf("expected backend to be preserved")
-	}
-	if len(spec.Tools) != 1 {
-		t.Fatalf("expected 1 tool, got %d", len(spec.Tools))
-	}
-	if spec.ToolMask == nil {
-		t.Fatalf("expected ToolMask to be preserved")
-	}
-	if spec.ToolMask(ctx, &schema.ToolInfo{Name: "counter"}) {
-		t.Fatalf("expected ToolMask to hide counter")
-	}
-	if spec.ToolNodePreHandler == nil || reflect.ValueOf(spec.ToolNodePreHandler).Pointer() != reflect.ValueOf(preHandler).Pointer() {
-		t.Fatalf("expected ToolNodePreHandler to be preserved")
-	}
-	if spec.ToolNodePostHandler == nil || reflect.ValueOf(spec.ToolNodePostHandler).Pointer() != reflect.ValueOf(postHandler).Pointer() {
-		t.Fatalf("expected ToolNodePostHandler to be preserved")
-	}
-
-	names := make(map[string]bool)
-	for _, mw := range spec.Middlewares {
-		names[mw.Name()] = true
-	}
-	if !names["SimpleContextManager"] {
-		t.Fatalf("expected context manager middleware to be present: %+v", names)
-	}
-	if names["repair_json"] {
-		t.Fatalf("repair_json should be opt-in middleware, got: %+v", names)
-	}
-	if !names["test_builder_middleware"] {
-		t.Fatalf("expected custom middleware to be present: %+v", names)
-	}
-}
-
-func TestBuildSpecFromConfig_DefaultBackendIsNil(t *testing.T) {
-	cfg := buildCreateConfig(
+func TestNew_DefaultBackendIsNil(t *testing.T) {
+	agent, err := New(context.Background(),
 		WithModel(mock_model.NewMockToolCallingChatModel(gomock.NewController(t))),
 		WithContextManager(contextmanager.New()),
+		WithCheckpointStore(checkpointer.NewInMemoryStore()),
 	)
-
-	spec, err := buildSpecFromConfig(context.Background(), cfg)
 	if err != nil {
-		t.Fatalf("buildSpecFromConfig() error = %v", err)
+		t.Fatalf("New() error = %v", err)
 	}
-	if spec.Backend != nil {
-		t.Fatalf("expected nil default backend, got %T", spec.Backend)
+	if agent.backend != nil {
+		t.Fatalf("expected nil default backend, got %T", agent.backend)
 	}
 }
 
-func TestBuildSpecFromConfig_FilesystemRequiresBackendOrWorkDir(t *testing.T) {
-	cfg := buildCreateConfig(
+func TestNew_FilesystemRequiresBackendOrWorkDir(t *testing.T) {
+	_, err := New(context.Background(),
 		WithModel(mock_model.NewMockToolCallingChatModel(gomock.NewController(t))),
 		WithContextManager(contextmanager.New()),
 		WithFilesystem(),
 	)
-
-	_, err := buildSpecFromConfig(context.Background(), cfg)
 	if err == nil || !strings.Contains(err.Error(), "filesystem requires backend or workdir") {
 		t.Fatalf("expected filesystem backend error, got %v", err)
 	}
@@ -327,10 +313,7 @@ func TestCollectAllTools_AppliesToolMaskToFilesystemAndFollowUp(t *testing.T) {
 		}),
 	)
 
-	middlewares, err := buildCreateMiddlewares(config, config.Backend)
-	if err != nil {
-		t.Fatalf("buildCreateMiddlewares() error = %v", err)
-	}
+	middlewares := buildCreateMiddlewares(config, config.Backend)
 
 	allTools, err := collectAllTools(ctx, middleware.NewMiddlewareChain(middlewares...), config)
 	if err != nil {
@@ -357,8 +340,8 @@ func TestCollectAllTools_ToolMaskRunsBeforeHITLWrapping(t *testing.T) {
 			return info.Name != "counter"
 		},
 		HITLConfig: &HITLConfig{
-			NeedApproveTools: map[string]deeptools.NeedApproval{
-				"counter": func(context.Context, *deeptools.ApprovalInfo) bool { return true },
+			ToolPolicyGates: map[string]deeptools.ToolPolicyGate{
+				"counter": deeptools.ApprovalGate(func(context.Context, *deeptools.ApprovalInfo) bool { return true }),
 			},
 		},
 	}
@@ -414,54 +397,6 @@ func TestCollectAllTools_ToolPolicyGateDeniesWithoutRunningTool(t *testing.T) {
 	}
 }
 
-func TestCollectAllTools_ToolPolicyGateConflictsWithNeedApprove(t *testing.T) {
-	ctx := context.Background()
-	config := &Config{
-		Tools: []tool.BaseTool{&fakeToolCounter{}},
-		HITLConfig: &HITLConfig{
-			NeedApproveTools: map[string]deeptools.NeedApproval{
-				"counter": func(context.Context, *deeptools.ApprovalInfo) bool { return true },
-			},
-			ToolPolicyGates: map[string]deeptools.ToolPolicyGate{
-				"counter": {
-					Policy: func(context.Context, *deeptools.ApprovalInfo) (deeptools.ToolCallDecision, error) {
-						return deeptools.ToolCallDecision{Action: deeptools.ToolCallAllow}, nil
-					},
-					DenyFormatter: func(ctx context.Context, info *deeptools.ApprovalInfo, decision deeptools.ToolCallDecision) (string, error) {
-						return "denied", nil
-					},
-				},
-			},
-		},
-	}
-
-	_, err := collectAllTools(ctx, middleware.NewMiddlewareChain(), config)
-	if err == nil || !strings.Contains(err.Error(), "both NeedApproveTools and ToolPolicyGates") {
-		t.Fatalf("collectAllTools() error = %v, want conflict", err)
-	}
-}
-
-func TestCollectAllTools_ToolPolicyGateRequiresFormatter(t *testing.T) {
-	ctx := context.Background()
-	config := &Config{
-		Tools: []tool.BaseTool{&fakeToolCounter{}},
-		HITLConfig: &HITLConfig{
-			ToolPolicyGates: map[string]deeptools.ToolPolicyGate{
-				"counter": {
-					Policy: func(context.Context, *deeptools.ApprovalInfo) (deeptools.ToolCallDecision, error) {
-						return deeptools.ToolCallDecision{Action: deeptools.ToolCallAllow}, nil
-					},
-				},
-			},
-		},
-	}
-
-	_, err := collectAllTools(ctx, middleware.NewMiddlewareChain(), config)
-	if err == nil || !strings.Contains(err.Error(), "requires DenyFormatter") {
-		t.Fatalf("collectAllTools() error = %v, want missing formatter", err)
-	}
-}
-
 func containsString(items []string, want string) bool {
 	for _, item := range items {
 		if item == want {
@@ -487,10 +422,7 @@ func TestBuildCreateMiddlewares_WithFilesystemConfig(t *testing.T) {
 		WithBackend(newTestApplyPatchBackend(t)),
 	)
 
-	middlewares, err := buildCreateMiddlewares(config, config.Backend)
-	if err != nil {
-		t.Fatalf("buildCreateMiddlewares() error = %v", err)
-	}
+	middlewares := buildCreateMiddlewares(config, config.Backend)
 
 	var filesystemMW *filesystem.FilesystemMiddleware
 	for _, mw := range middlewares {
@@ -536,10 +468,7 @@ func TestBuildCreateMiddlewares_WiresSubAgentContextInjector(t *testing.T) {
 		WithSubAgentContextInjector(&testSubAgentContextInjector{}),
 	)
 
-	middlewares, err := buildCreateMiddlewares(config, config.Backend)
-	if err != nil {
-		t.Fatalf("buildCreateMiddlewares() error = %v", err)
-	}
+	middlewares := buildCreateMiddlewares(config, config.Backend)
 
 	var subAgentMW *subagent.SubAgentMiddleware
 	for _, mw := range middlewares {
@@ -572,10 +501,7 @@ func TestBuildCreateMiddlewares_WiresSubAgentTaskStreaming(t *testing.T) {
 		WithSubAgentTaskStreaming(),
 	)
 
-	middlewares, err := buildCreateMiddlewares(config, config.Backend)
-	if err != nil {
-		t.Fatalf("buildCreateMiddlewares() error = %v", err)
-	}
+	middlewares := buildCreateMiddlewares(config, config.Backend)
 
 	var subAgentMW *subagent.SubAgentMiddleware
 	for _, mw := range middlewares {
@@ -616,10 +542,7 @@ func TestBuildCreateMiddlewares_WiresSubAgentSkillFactory(t *testing.T) {
 		WithSubAgents(&subagent.SubAgent{Name: "skill_sub", EnableSkill: true}),
 	)
 
-	middlewares, err := buildCreateMiddlewares(config, config.Backend)
-	if err != nil {
-		t.Fatalf("buildCreateMiddlewares() error = %v", err)
-	}
+	middlewares := buildCreateMiddlewares(config, config.Backend)
 
 	var subAgentMW *subagent.SubAgentMiddleware
 	for _, mw := range middlewares {
@@ -637,7 +560,7 @@ func TestBuildCreateMiddlewares_WiresSubAgentSkillFactory(t *testing.T) {
 	}
 }
 
-func TestBuildCreateMiddlewares_AppliesSkillMaskToSkillsDirs(t *testing.T) {
+func TestBuildCreateMiddlewares_UsesFileSystemSkillLoaderMask(t *testing.T) {
 	ctx := context.Background()
 	backend := newTestBackend(t)
 	_, _ = backend.Write(ctx, "/skills/code-search/SKILL.md", `---
@@ -657,16 +580,17 @@ description: internal only
 		WithModel(mock_model.NewMockToolCallingChatModel(gomock.NewController(t))),
 		WithContextManager(contextmanager.New()),
 		WithBackend(backend),
-		WithSkillsDir("/skills"),
-		WithSkillMask(func(ctx context.Context, metadata *skillmw.SkillMetadata) bool {
-			return metadata.Name != "internal-debug"
-		}),
+		WithSkillLoader(skillmw.NewFileSystemSkillLoader(
+			[]string{"/skills"},
+			backend,
+			true,
+			func(ctx context.Context, metadata *skillmw.SkillMetadata) bool {
+				return metadata.Name != "internal-debug"
+			},
+		)),
 	)
 
-	middlewares, err := buildCreateMiddlewares(config, config.Backend)
-	if err != nil {
-		t.Fatalf("buildCreateMiddlewares() error = %v", err)
-	}
+	middlewares := buildCreateMiddlewares(config, config.Backend)
 
 	skillMiddleware := findSkillMiddleware(t, middlewares)
 	if err := skillMiddleware.BeforeAgent(ctx); err != nil {
@@ -689,22 +613,16 @@ description: internal only
 	}
 }
 
-func TestBuildCreateMiddlewares_DoesNotApplySkillMaskToCustomLoader(t *testing.T) {
+func TestBuildCreateMiddlewares_UsesCustomSkillLoader(t *testing.T) {
 	ctx := context.Background()
 	config := buildCreateConfig(
 		WithModel(mock_model.NewMockToolCallingChatModel(gomock.NewController(t))),
 		WithContextManager(contextmanager.New()),
 		WithBackend(newTestBackend(t)),
 		WithSkillLoader(&testSkillLoader{}),
-		WithSkillMask(func(ctx context.Context, metadata *skillmw.SkillMetadata) bool {
-			return false
-		}),
 	)
 
-	middlewares, err := buildCreateMiddlewares(config, config.Backend)
-	if err != nil {
-		t.Fatalf("buildCreateMiddlewares() error = %v", err)
-	}
+	middlewares := buildCreateMiddlewares(config, config.Backend)
 
 	skillMiddleware := findSkillMiddleware(t, middlewares)
 	if err := skillMiddleware.BeforeAgent(ctx); err != nil {

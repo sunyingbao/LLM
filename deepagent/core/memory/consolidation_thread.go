@@ -2,14 +2,15 @@ package memory
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
 	"time"
 
-	"eino-cli/deepagent/core"
+	deepagents "eino-cli/deepagent/core"
 	"eino-cli/deepagent/core/agentthread"
-	"eino-cli/deepagent/worker"
+	agentworker "eino-cli/deepagent/worker"
 
 	"code.byted.org/gopkg/logs/v2"
 	"github.com/bytedance/sonic"
@@ -69,8 +70,8 @@ func NewConsolidationAgentThread(cfg ConsolidationAgentThreadConfig) (agentworke
 	}
 
 	eventBus := make(chan agentthread.Event, 256)
-	runnerCfg := newConsolidationTurnRunnerConfig(cfg)
-	thread := agentthread.NewThread(cfg.ThreadID, runnerCfg, eventBus, agentthread.DefaultThreadOptions{
+	turnConfig := newConsolidationTurnConfig(cfg)
+	thread := agentthread.New(cfg.ThreadID, turnConfig, eventBus, agentthread.ThreadOptions{
 		HistoryStore: cfg.HistoryStore,
 	})
 	now := cfg.Now
@@ -107,28 +108,32 @@ func NewConsolidationAgentThread(cfg ConsolidationAgentThreadConfig) (agentworke
 	}, nil
 }
 
-func newConsolidationTurnRunnerConfig(cfg ConsolidationAgentThreadConfig) *agentthread.TurnRunnerConfig {
+func newConsolidationTurnConfig(cfg ConsolidationAgentThreadConfig) (runConfig *agentthread.TurnConfig) {
 	workspaceBackend := cfg.Workspace.AgentBackend()
 	workDir := cfg.Workspace.AgentWorkDir()
-	return &agentthread.TurnRunnerConfig{
-		ChatModel:        cfg.ChatModel,
-		Tools:            nil,
-		Callbacks:        append([]callbacks.Handler(nil), cfg.Callbacks...),
-		Middlewares:      nil,
-		EnablePlan:       false,
-		EnableFilesystem: true,
-		FilesystemConfig: &deepagents.FilesystemConfig{
-			WorkDir:               workDir,
-			DisableExecute:        true,
-			DisableUploadDownload: true,
+	runConfig = &agentthread.TurnConfig{
+		Agent: deepagents.Config{
+			Model:       cfg.ChatModel,
+			Tools:       nil,
+			Callbacks:   append([]callbacks.Handler(nil), cfg.Callbacks...),
+			Middlewares: nil,
+
+			FilesystemConfig: &deepagents.FilesystemConfig{
+				WorkDir:               workDir,
+				DisableExecute:        true,
+				DisableUploadDownload: true,
+			},
+			Backend:         workspaceBackend,
+			SkillLoader:     nil,
+			CheckpointStore: cfg.CheckpointStore,
+
+			HITLConfig: &deepagents.HITLConfig{},
 		},
-		WorkDir:         workDir,
-		SandboxBackend:  workspaceBackend,
-		SkillLoader:     nil,
-		CheckpointStore: cfg.CheckpointStore,
+		EnablePlan: false,
+
 		EventIDProvider: cfg.EventIDProvider,
-		HITLConfig:      &deepagents.HITLConfig{},
 	}
+	return runConfig
 }
 
 type consolidationAgentThread struct {
@@ -160,68 +165,72 @@ type consolidationAgentThread struct {
 }
 
 type consolidationActiveTurn struct {
-	turnID             string
 	consumedMessageIDs []string
 	curTurn            *agentthread.TurnHandle
+	cancel             context.CancelFunc
+	done               chan struct{}
 }
 
-func (t *consolidationAgentThread) Init(ctx context.Context) (*agentworker.ThreadOutput, error) {
+func (t *consolidationAgentThread) Init(ctx context.Context) (output *agentworker.ThreadOutput, err error) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.closed {
+		return nil, agentworker.ErrThreadClosed
+	}
+	if t.initCancel != nil {
+		return &agentworker.ThreadOutput{Items: t.output}, nil
+	}
 	if err := t.thread.Init(ctx); err != nil {
 		return nil, err
 	}
 
-	t.mu.Lock()
-	if t.initCancel == nil {
-		runCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
-		t.initCancel = cancel
-		go t.drainEvents(runCtx)
-		t.startHeartbeatLocked(runCtx)
-	}
-	t.mu.Unlock()
+	runCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
+	t.initCancel = cancel
+	go t.drainEvents(runCtx)
+	t.startHeartbeatLocked(runCtx)
 
 	return &agentworker.ThreadOutput{Items: t.output}, nil
 }
 
-func (t *consolidationAgentThread) PostMessage(ctx context.Context, msg *agentworker.Message) (*agentworker.PostMessageResult, error) {
+func (t *consolidationAgentThread) PostMessage(ctx context.Context, msg *agentworker.Message) (posted *agentworker.PostMessageResult, err error) {
 	if msg == nil {
 		return nil, fmt.Errorf("memory: consolidation message is required")
 	}
 	t.mu.Lock()
+	defer t.mu.Unlock()
 	if t.closed {
-		t.mu.Unlock()
 		return nil, agentworker.ErrThreadClosed
 	}
 	if t.active != nil {
-		t.mu.Unlock()
 		return nil, fmt.Errorf("memory: consolidation thread already has an active turn")
 	}
-	t.mu.Unlock()
-
 	prompt, err := promptFromConsolidationMessage(msg)
 	if err != nil {
 		return nil, err
 	}
-	result, err := t.thread.SubmitInput(ctx, schema.UserMessage(prompt))
+	runCtx, cancel := context.WithCancel(ctx)
+	result, err := t.thread.SubmitInput(runCtx, schema.UserMessage(prompt))
 	if err != nil {
+		cancel()
 		return nil, fmt.Errorf("memory: submit consolidation input: %w", err)
 	}
-	if result == nil || result.TurnHandle == nil || !result.StartNewTurn {
+	if result == nil || result.TurnHandle == nil || !result.Started {
+		cancel()
 		return nil, fmt.Errorf("memory: consolidation input did not start a turn")
 	}
 	active := &consolidationActiveTurn{
-		turnID:             result.TurnHandle.TurnID(),
 		consumedMessageIDs: []string{strings.TrimSpace(msg.ID)},
 		curTurn:            result.TurnHandle,
+		cancel:             cancel,
+		done:               make(chan struct{}),
 	}
 	if active.consumedMessageIDs[0] == "" {
 		active.consumedMessageIDs = nil
 	}
-	t.mu.Lock()
 	t.active = active
-	t.mu.Unlock()
 
-	go t.waitAndFinalize(ctx, active)
-	return &agentworker.PostMessageResult{TurnID: active.turnID}, nil
+	go t.waitAndFinalize(runCtx, active)
+	return &agentworker.PostMessageResult{TurnID: active.curTurn.TurnID()}, nil
 }
 
 func (t *consolidationAgentThread) Interrupt(ctx context.Context, req agentworker.ThreadInterruptRequest) error {
@@ -239,7 +248,7 @@ func (t *consolidationAgentThread) Interrupt(ctx context.Context, req agentworke
 	return fmt.Errorf("memory: interrupt consolidation turn failed")
 }
 
-func (t *consolidationAgentThread) ActiveTurn() *agentworker.ActiveTurn {
+func (t *consolidationAgentThread) ActiveTurn() (turn *agentworker.ActiveTurn) {
 	t.mu.Lock()
 	active := t.active
 	t.mu.Unlock()
@@ -247,42 +256,54 @@ func (t *consolidationAgentThread) ActiveTurn() *agentworker.ActiveTurn {
 		return nil
 	}
 	return &agentworker.ActiveTurn{
-		TurnID:             active.turnID,
+		TurnID:             active.curTurn.TurnID(),
 		ConsumedMessageIDs: append([]string(nil), active.consumedMessageIDs...),
 	}
 }
 
-func (t *consolidationAgentThread) Close(context.Context) error {
+func (t *consolidationAgentThread) Close(ctx context.Context) (err error) {
 	t.mu.Lock()
-	if t.closed {
-		t.mu.Unlock()
-		return nil
-	}
 	t.closed = true
+	active := t.active
+	if active != nil {
+		active.cancel()
+	}
 	initCancel := t.initCancel
-	t.initCancel = nil
 	t.mu.Unlock()
 
+	if active != nil {
+		select {
+		case <-active.done:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	t.stopHeartbeat()
 	if initCancel != nil {
 		initCancel()
 	}
-	t.stopHeartbeat()
 	return nil
 }
 
 func (t *consolidationAgentThread) waitAndFinalize(ctx context.Context, active *consolidationActiveTurn) {
-	err := active.curTurn.Wait(ctx)
+	defer close(active.done)
+	defer active.cancel()
 	completeCtx := context.WithoutCancel(ctx)
+	turnID := active.curTurn.TurnID()
+	err := active.curTurn.Wait(completeCtx)
+	if ctx.Err() != nil {
+		err = ctx.Err()
+	}
 	now := t.now()
 	if err != nil && ctx.Err() == nil {
-		logs.CtxError(ctx, "[memory] consolidation turn failed: thread_id=%s turn_id=%s err=%v", t.threadID, active.turnID, err)
+		logs.CtxError(ctx, "[memory] consolidation turn failed: thread_id=%s turn_id=%s err=%v", t.threadID, turnID, err)
 	}
 
 	var yieldErr error
 	if err != nil {
 		yieldErr = t.markStage2Error(completeCtx, err.Error(), now)
 		if yieldErr != nil {
-			logs.CtxError(completeCtx, "[memory] mark consolidation error failed: user_id=%s thread_id=%s turn_id=%s err=%v", t.userID, t.threadID, active.turnID, yieldErr)
+			logs.CtxError(completeCtx, "[memory] mark consolidation error failed: user_id=%s thread_id=%s turn_id=%s err=%v", t.userID, t.threadID, turnID, yieldErr)
 		}
 	} else if completeErr := CompleteStage2Thread(completeCtx, t.store, t.workspace, MarkStage2DoneRequest{
 		UserID:                  t.userID,
@@ -294,19 +315,22 @@ func (t *consolidationAgentThread) waitAndFinalize(ctx context.Context, active *
 		StartedSummaryHash:      t.startedSummaryHash,
 		CompletedAt:             now,
 	}); completeErr != nil {
-		logs.CtxError(completeCtx, "[memory] complete consolidation failed: user_id=%s thread_id=%s turn_id=%s err=%v", t.userID, t.threadID, active.turnID, completeErr)
+		logs.CtxError(completeCtx, "[memory] complete consolidation failed: user_id=%s thread_id=%s turn_id=%s err=%v", t.userID, t.threadID, turnID, completeErr)
 		yieldErr = completeErr
 		if markErr := t.markStage2Error(completeCtx, completeErr.Error(), now); markErr != nil {
 			yieldErr = fmt.Errorf("%w; mark stage2 error: %v", completeErr, markErr)
 		}
 	} else {
-		logs.CtxInfo(completeCtx, "[memory] complete consolidation success: user_id=%s thread_id=%s turn_id=%s watermark=%s", t.userID, t.threadID, active.turnID, t.watermark)
+		logs.CtxInfo(completeCtx, "[memory] complete consolidation success: user_id=%s thread_id=%s turn_id=%s watermark=%s", t.userID, t.threadID, turnID, t.watermark)
 	}
 
 	t.stopHeartbeat()
 	t.mu.Lock()
 	if t.active == active {
 		t.active = nil
+	}
+	if t.closed && t.initCancel != nil {
+		t.initCancel()
 	}
 	t.mu.Unlock()
 
@@ -349,18 +373,23 @@ func (t *consolidationAgentThread) startHeartbeatLocked(ctx context.Context) {
 	}
 	heartbeatCtx, cancel := context.WithCancel(ctx)
 	t.heartbeatCancel = cancel
-	t.heartbeatDone = make(chan struct{})
+	done := make(chan struct{})
+	t.heartbeatDone = done
 	go func() {
-		defer close(t.heartbeatDone)
+		defer close(done)
 		ticker := time.NewTicker(t.heartbeatEvery)
 		defer ticker.Stop()
-		t.heartbeat(heartbeatCtx)
+		if !t.heartbeat(heartbeatCtx) {
+			return
+		}
 		for {
 			select {
 			case <-heartbeatCtx.Done():
 				return
 			case <-ticker.C:
-				t.heartbeat(heartbeatCtx)
+				if !t.heartbeat(heartbeatCtx) {
+					return
+				}
 			}
 		}
 	}()
@@ -381,7 +410,7 @@ func (t *consolidationAgentThread) stopHeartbeat() {
 	}
 }
 
-func (t *consolidationAgentThread) heartbeat(ctx context.Context) {
+func (t *consolidationAgentThread) heartbeat(ctx context.Context) (keepRunning bool) {
 	if err := t.store.HeartbeatStage2(ctx, HeartbeatStage2Request{
 		UserID:         t.userID,
 		OwnershipToken: t.ownershipToken,
@@ -389,7 +418,15 @@ func (t *consolidationAgentThread) heartbeat(ctx context.Context) {
 		HeartbeatAt:    t.now(),
 	}); err != nil {
 		logs.CtxWarn(ctx, "[memory] consolidation heartbeat failed: user_id=%s thread_id=%s err=%v", t.userID, t.threadID, err)
+		if errors.Is(err, ErrStage2JobLeaseLost) {
+			t.mu.Lock()
+			t.closed = true
+			t.mu.Unlock()
+			go func() { _ = t.Close(context.Background()) }()
+			return false
+		}
 	}
+	return true
 }
 
 func stage2HeartbeatInterval(ttl time.Duration) time.Duration {

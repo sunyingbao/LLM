@@ -5,9 +5,11 @@ package worker
 import (
 	"context"
 	"strconv"
+	"strings"
+	"time"
 
-	ac "code.byted.org/overpass/ad_creative_aic_agent_coordinator/kitex_gen/agent_coordinator"
 	"eino-cli/deepagent/cloud/worker/policy"
+	"eino-cli/deepagent/coordinator"
 )
 
 // ThreadStatus is the SDK-owned lifecycle status of a Coordinator thread.
@@ -45,37 +47,44 @@ type ThreadInfo struct {
 	CWD               string
 }
 
-func threadInfoFromCoordinator(thread *ac.Thread) *ThreadInfo {
+func threadInfoFromCoordinator(thread *coordinator.Thread) (info *ThreadInfo) {
 	if thread == nil {
 		return nil
 	}
-	metadata := make(map[string]string, len(thread.GetMetadata()))
-	for key, value := range thread.GetMetadata() {
+	metadata := make(map[string]string, len(thread.Metadata))
+	for key, value := range thread.Metadata {
 		metadata[key] = value
 	}
-	info := &ThreadInfo{
-		ThreadID:          thread.GetThreadId(),
-		Namespace:         thread.GetNamespace(),
-		SessionID:         thread.GetSessionId(),
-		Title:             thread.GetTitle(),
-		Status:            ThreadStatus(thread.GetStatus().String()),
-		StatusReason:      thread.GetStatusReason(),
-		LeaseDeadlineAtMS: thread.GetLeaseDeadlineAtMs(),
-		LeaseOwnerHint:    thread.GetLeaseOwnerHint(),
-		CreatedBy:         thread.GetCreatedBy(),
+	info = &ThreadInfo{
+		ThreadID:          thread.ThreadID,
+		Namespace:         thread.Namespace,
+		SessionID:         thread.SessionID,
+		Title:             thread.Title,
+		Status:            ThreadStatus(strings.ToUpper(string(thread.Status))),
+		StatusReason:      thread.StatusReason,
+		LeaseDeadlineAtMS: timeToMilliseconds(thread.LeaseDeadlineAt),
+		LeaseOwnerHint:    thread.LeaseOwnerHint,
+		CreatedBy:         thread.CreatedBy,
 		Metadata:          metadata,
-		CreatedAtMS:       thread.GetCreatedAtMs(),
-		UpdatedAtMS:       thread.GetUpdatedAtMs(),
-		ClosedAtMS:        thread.GetClosedAtMs(),
-		Env:               thread.GetEnv(),
-		UserID:            thread.GetUserId(),
-		LastActiveAtMS:    thread.GetLastActiveAtMs(),
+		CreatedAtMS:       timeToMilliseconds(thread.CreatedAt),
+		UpdatedAtMS:       timeToMilliseconds(thread.UpdatedAt),
+		ClosedAtMS:        timeToMilliseconds(thread.ClosedAt),
+		Env:               thread.Env,
+		UserID:            thread.UserID,
+		LastActiveAtMS:    timeToMilliseconds(thread.LastActiveAt),
 	}
-	if profile := thread.GetProfile(); profile != nil {
-		info.Role = profile.GetRole()
-		info.CWD = profile.GetCwd()
+	if thread.Profile != nil {
+		info.Role = thread.Profile.Role
+		info.CWD = thread.Profile.Cwd
 	}
 	return info
+}
+
+func timeToMilliseconds(value time.Time) (milliseconds int64) {
+	if value.IsZero() {
+		return 0
+	}
+	return value.UnixMilli()
 }
 
 type threadApprovalStore struct {

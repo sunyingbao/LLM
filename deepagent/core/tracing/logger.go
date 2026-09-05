@@ -42,7 +42,7 @@ const (
 type Source string
 
 const (
-	SourceEinoLib    Source = "aic_agent_sdk"
+	SourceEinoLib    Source = "deep_agent_sdk"
 	SourceLLMAPI     Source = "llm_api"
 	SourceTool       Source = "tool"
 	SourceMiddleware Source = "middleware"

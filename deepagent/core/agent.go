@@ -148,8 +148,8 @@ func (a *DeepAgent) setGraphInterruptHandle(handle middleware.GraphInterruptHand
 	a.graphInterruptMu.Lock()
 	a.graphInterruptHandle = handle
 	a.graphInterruptUsed = false
-	if len(a.pendingGraphInterrupt) > 0 {
-		pending = append([]compose.GraphInterruptOption(nil), a.pendingGraphInterrupt...)
+	if handle != nil && a.pendingGraphInterrupt != nil {
+		pending = a.pendingGraphInterrupt
 		a.pendingGraphInterrupt = nil
 		a.graphInterruptUsed = true
 	}
@@ -160,11 +160,12 @@ func (a *DeepAgent) setGraphInterruptHandle(handle middleware.GraphInterruptHand
 }
 
 // Interrupt 中断当前正在执行的 Agent 图；若图尚未启动，则暂存中断请求。
-func (a *DeepAgent) Interrupt(opts ...compose.GraphInterruptOption) bool {
+func (a *DeepAgent) Interrupt(opts ...compose.GraphInterruptOption) (accepted bool) {
 	if a == nil {
 		return false
 	}
-	copiedOpts := append([]compose.GraphInterruptOption(nil), opts...)
+	// nil 表示没有请求；非 nil 的空切片表示无参中断。
+	copiedOpts := append(make([]compose.GraphInterruptOption, 0, len(opts)), opts...)
 	var handle middleware.GraphInterruptHandle
 	a.graphInterruptMu.Lock()
 	if a.graphInterruptHandle == nil {

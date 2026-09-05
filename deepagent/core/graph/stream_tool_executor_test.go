@@ -133,6 +133,44 @@ func TestStreamToolExecutor_StartsToolBeforeModelEOF(t *testing.T) {
 	}
 }
 
+func TestStreamToolExecutorDoesNotReuseRepairedCallsAcrossStreams(t *testing.T) {
+	ctx := context.Background()
+	calls := make(chan string, 8)
+	executor, err := NewStreamToolExecutor(ctx, &compose.ToolsNodeConfig{Tools: []tool.BaseTool{
+		&testInvokableTool{name: "echo", runFunc: func(_ context.Context, args string, _ ...tool.Option) (output string, err error) {
+			calls <- args
+			return args, nil
+		}},
+	}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, call := range []schema.ToolCall{
+		{ID: "first", Function: schema.FunctionCall{Name: "echo", Arguments: `{"value":"one"`}},
+		{ID: "second", Function: schema.FunctionCall{Name: "echo", Arguments: `{"value":"two"}`}},
+	} {
+		input := schema.StreamReaderFromArray([]*schema.Message{{Role: schema.Assistant, ToolCalls: []schema.ToolCall{call}}})
+		output, err := executor.Execute(ctx, input)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for {
+			_, err := output.Recv()
+			if errors.Is(err, io.EOF) {
+				break
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+		output.Close()
+		input.Close()
+	}
+	if len(calls) != 2 {
+		t.Fatalf("executed %d calls, want one per stream", len(calls))
+	}
+}
+
 func TestStreamToolExecutor_UsesToolMiddleware(t *testing.T) {
 	ctx := context.Background()
 

@@ -71,6 +71,26 @@ func TestInMemoryStoreTouchSourceUpsertsAndPushesEligibleAt(t *testing.T) {
 	require.NotEmpty(t, claimed[0].OwnershipToken)
 }
 
+func TestInMemoryStoreTouchSourceKeepsNewestWatermark(t *testing.T) {
+	ctx := context.Background()
+	store := NewInMemoryStore()
+	newer := time.Unix(1000, 0)
+	older := newer.Add(-time.Minute)
+	for _, updated := range []time.Time{newer, older} {
+		require.NoError(t, store.TouchSource(ctx, TouchSourceRequest{
+			Memory: UserMemoryContext{UserID: "user-1"}, SourceThreadID: "thread-1",
+			SourceUpdatedAt: updated, EligibleAt: updated.Add(time.Minute), Mode: SourceModeEnabled,
+		}))
+	}
+	claimed, err := store.ClaimStage1Sources(ctx, ClaimStage1Request{Now: newer, Owner: "worker", LeaseTTL: time.Minute, Limit: 1})
+	require.NoError(t, err)
+	require.Empty(t, claimed, "an older touch must not shorten the idle window")
+	claimed, err = store.ClaimStage1Sources(ctx, ClaimStage1Request{Now: newer.Add(time.Minute), Owner: "worker", LeaseTTL: time.Minute, Limit: 1})
+	require.NoError(t, err)
+	require.Len(t, claimed, 1)
+	require.Equal(t, newer, claimed[0].SourceUpdatedAt)
+}
+
 func TestInMemoryStoreClaimStage1SourcesRespectsIdleLeaseAndSuccessVersion(t *testing.T) {
 	ctx := context.Background()
 	store := NewInMemoryStore()

@@ -80,7 +80,7 @@ require (
 	code.byted.org/gopkg/metainfo v0.1.4
 	code.byted.org/gopkg/metrics v1.4.25 // indirect
 	code.byted.org/gopkg/metrics/v3 v3.1.35 // indirect
-	code.byted.org/gopkg/metrics/v4 v4.1.9
+	code.byted.org/gopkg/metrics/v4 v4.1.9 // indirect
 	code.byted.org/gopkg/metrics_core v0.0.52 // indirect
 	code.byted.org/gopkg/metricx v0.7.0
 	code.byted.org/gopkg/net2 v1.5.0 // indirect
@@ -122,7 +122,6 @@ require (
 	code.byted.org/middleware/fic_client v0.2.8 // indirect
 	code.byted.org/middleware/hertz v1.14.2
 	code.byted.org/middleware/hertz_ext/v2 v2.1.11
-	code.byted.org/overpass/ad_creative_aic_agent_coordinator v0.0.0-20260710103014-69f06dfc7305
 	code.byted.org/overpass/common v0.0.0-20241127033622-79f193603286
 	code.byted.org/overpass/data_aml_llmflow_engine v0.0.0-20241107145550-f2da45272e96 // indirect
 	code.byted.org/overpass/pippit_sandbox_gateway v0.0.0-20260424051551-a8cdfb96ea2d

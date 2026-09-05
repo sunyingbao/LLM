@@ -7,7 +7,7 @@ import (
 	sdkutils "eino-cli/deepagent/serialiser"
 )
 
-func (m *ExecuteMiddleware) PolicyGate() deeptools.ToolPolicyGate {
+func (m *ExecuteMiddleware) PolicyGate() (gate deeptools.ToolPolicyGate) {
 	return deeptools.ToolPolicyGate{
 		Policy: func(ctx context.Context, info *deeptools.ApprovalInfo) (deeptools.ToolCallDecision, error) {
 			if m == nil || info == nil {
@@ -20,17 +20,17 @@ func (m *ExecuteMiddleware) PolicyGate() deeptools.ToolPolicyGate {
 			if err != nil {
 				return deeptools.ToolCallDecision{}, err
 			}
-			ev, err := evaluate(ctx, input, m.cfg, m.builder, m.policyProfile.Policy)
+			decision, err := evaluate(ctx, input, m.cfg, m.builder, m.policyProfile.Policy)
 			if err != nil {
 				return deeptools.ToolCallDecision{}, err
 			}
-			switch ev.decision.Action {
+			switch decision.Action {
 			case ActionAllow:
-				return deeptools.ToolCallDecision{Action: deeptools.ToolCallAllow, Reason: ev.decision.Reason}, nil
+				return deeptools.ToolCallDecision{Action: deeptools.ToolCallAllow, Reason: decision.Reason}, nil
 			case ActionRequireApproval:
-				return deeptools.ToolCallDecision{Action: deeptools.ToolCallRequireApproval, Reason: ev.decision.Reason}, nil
+				return deeptools.ToolCallDecision{Action: deeptools.ToolCallRequireApproval, Reason: decision.Reason}, nil
 			case ActionDeny:
-				return deeptools.ToolCallDecision{Action: deeptools.ToolCallDeny, Reason: ev.decision.Reason}, nil
+				return deeptools.ToolCallDecision{Action: deeptools.ToolCallDeny, Reason: decision.Reason}, nil
 			default:
 				return deeptools.ToolCallDecision{Action: deeptools.ToolCallDeny, Reason: "unknown execute policy action"}, nil
 			}

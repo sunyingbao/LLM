@@ -7,7 +7,7 @@
 
 ## 仓库
 
-https://code.byted.org/ad/aic_agent_sdk
+https://code.byted.org/ad/deep_agent_sdk
 
 ## 这套文档在讲什么
 
@@ -61,13 +61,15 @@ SDK 负责：
 
 特别注意：
 
-- `cmd/cloud_agent` 是 reference implementation，用来验证 SDK 边界和提供 dogfood 服务。
-- `cmd/cloud_agent/aic_agent_sdk_api`、`aic_agent_sdk_session` 和 WebUI 可以参考、部署或 fork，但不是稳定 SDK public API。
-- 如果业务已有自己的产品服务，应优先复用 `cloudagent/api` 和 `cloudagent/worker`。只有明确要自定义底层 worker 机制时，再考虑直接使用 `agentworker`。
+- `deepagent/cmd/cloud_agent` 是 reference implementation，用来验证 SDK 边界和提供 dogfood 服务。
+- `deepagent/cmd/cloud_agent/deep_agent_sdk`、`deep_agent_sdk_session` 和 WebUI 可以参考、部署或 fork，但不是稳定 SDK public API。
+- 如果业务已有自己的产品服务，应优先复用 `deepagent/cloud/api` 和 `deepagent/cloud/worker`。只有明确要自定义底层 worker 机制时，再考虑直接使用 `agentworker`。
 
 ## 主接入路径
 
 理解问题地图后，再按主路径进入对应文档。
+
+如果要阅读实现，先看[后端代码地图](./backend-code-map.md)：它按实际目录说明状态归属和调用链。
 
 | 你要做什么 | 先看 |
 | --- | --- |

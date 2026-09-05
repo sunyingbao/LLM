@@ -12,13 +12,13 @@ not the user-facing project overview. Keep reader-facing documentation in
 - For current SDK boundaries, start from [`docs/agents/index.md`](./docs/agents/index.md).
 - For CloudAgent worker/API extraction details, start from
   [`docs/agents/cloudagent/index.md`](./docs/agents/cloudagent/index.md).
-- For validation scope, start from
-  [`docs/testing/cloud-agent-test-suite.md`](./docs/testing/cloud-agent-test-suite.md).
+- For local validation, start from
+  [`docs/runbooks/deepagent-worker-e2e.md`](./docs/runbooks/deepagent-worker-e2e.md).
 
 ## Repository Intent
 
 `deepagent` is the repository's only Agent implementation root. The core goal
-is to make the same definition and runtime contracts work for the SGADK local
+is to make the same definition and runtime contracts work for the DeepAgent local
 product and for real server-side Agent workers.
 
 The main layers are:
@@ -39,7 +39,7 @@ The main layers are:
   validate SDK usability without becoming the SDK contract by accident.
 - `runtime`: the public local/remote client, routing and timeline contract.
 - `definition`: portable Agent declarations and host capability resolution.
-- `host`: SGADK-specific provider and configuration bindings; it must not own a
+- `host`: DeepAgent-specific provider and configuration bindings; it must not own a
   second Agent loop.
 
 ## Boundary Rules
@@ -54,7 +54,7 @@ The main layers are:
   boundary.
 - CloudAgent timeline payloads are payload-only. The AC event envelope carries
   header fields such as event id, type, thread id, turn id, and timestamp.
-- `aic_agent_sdk_api` should generally pass timeline payloads through instead of
+- `deep_agent_sdk` should generally pass timeline payloads through instead of
   understanding worker payload schema.
 - `cloud/api` must stay independent of Hertz and session-service internals.
 
@@ -93,7 +93,7 @@ requires it.
 
 ```bash
 go test ./cloud/... ./worker/...
-go test ./core/... ./runtime/... ./definition/... ./host/...
+go test ./core/... ./runtime/... ./host/...
 go test ./cmd/deepagent/... ./cmd/cloud_agent/...
 git diff --check
 ```
@@ -101,9 +101,9 @@ git diff --check
 For WebUI JavaScript changes:
 
 ```bash
-node --check cmd/cloud_agent/aic_agent_sdk_api/webui/static/api.js
-node --check cmd/cloud_agent/aic_agent_sdk_api/webui/static/app.js
-node --check cmd/cloud_agent/aic_agent_sdk_api/webui/static/render.js
-node --check cmd/cloud_agent/aic_agent_sdk_api/webui/static/state.js
-node --check cmd/cloud_agent/aic_agent_sdk_api/webui/static/timeline_model.js
+node --check cmd/cloud_agent/deep_agent_sdk/webui/static/api.js
+node --check cmd/cloud_agent/deep_agent_sdk/webui/static/app.js
+node --check cmd/cloud_agent/deep_agent_sdk/webui/static/render.js
+node --check cmd/cloud_agent/deep_agent_sdk/webui/static/state.js
+node --check cmd/cloud_agent/deep_agent_sdk/webui/static/timeline_model.js
 ```

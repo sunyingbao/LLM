@@ -83,14 +83,14 @@ func TestAIInfraSandboxEnsureWorkDirUsesFileMkdirWithoutExecDir(t *testing.T) {
 		pippit_sandbox_gateway.SetMock.FileMkdir(nil)
 	})
 
-	sandbox := NewAIInfraSandbox(&sandbox_model.BizMeta{}, "/tmp/aic_agent_sdk/demo")
+	sandbox := NewAIInfraSandbox(&sandbox_model.BizMeta{}, "/tmp/deep_agent_sdk/demo")
 	if err := sandbox.EnsureWorkDir(context.Background()); err != nil {
 		t.Fatalf("EnsureWorkDir returned error: %v", err)
 	}
 	if got == nil {
 		t.Fatal("FileMkdir was not called")
 	}
-	if got.Dir != "/tmp/aic_agent_sdk/demo" {
+	if got.Dir != "/tmp/deep_agent_sdk/demo" {
 		t.Fatalf("unexpected dir: %q", got.Dir)
 	}
 	if !got.GetOptionP() {

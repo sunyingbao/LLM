@@ -2,24 +2,23 @@ package agentthread
 
 import (
 	"context"
-	"eino-cli/deepagent/core/types"
 	"fmt"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
-	"code.byted.org/gopkg/logs/v2"
-	"github.com/tidwall/gjson"
-
 	deepagents "eino-cli/deepagent/core"
 	"eino-cli/deepagent/core/checkpointer"
 	deeptools "eino-cli/deepagent/core/tools"
+	"eino-cli/deepagent/core/types"
 	"eino-cli/deepagent/mock/mock_model"
 
+	"code.byted.org/gopkg/logs/v2"
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/schema"
+	"github.com/tidwall/gjson"
 	"go.uber.org/mock/gomock"
 )
 
@@ -232,12 +231,12 @@ func hasEventType(events []Event, typ EventType) bool {
 	return false
 }
 
-func buildThreadForTest(threadID string, runnerCfg *TurnRunnerConfig, hs HistoryRolloutStore, inputQueueSize int, strategy CompactionStrategy, eventBus chan Event) *DeepAgentThread {
+func buildThreadForTest(threadID string, turnConfig *TurnConfig, hs HistoryRolloutStore, inputQueueSize int, strategy CompactionStrategy, eventBus chan Event) *DeepAgentThread {
 	_ = inputQueueSize
-	return NewThread(threadID, nil, eventBus, DefaultThreadOptions{
+	return New(threadID, turnConfig, eventBus, ThreadOptions{
 		HistoryStore:       hs,
 		CompactionStrategy: strategy,
-	}, WithBaseTurnRunnerConfig(runnerCfg), WithTurnIDProvider(func(ctx context.Context, threadID string, input *Message) string {
+	}, WithTurnIDProvider(func(ctx context.Context, threadID string, input *Message) string {
 		if turnID, _ := ctx.Value(integrationTestTurnIDKey{}).(string); turnID != "" {
 			return turnID
 		}
@@ -289,10 +288,12 @@ func TestAgentThread_UserInput_Basic(t *testing.T) {
 	bus := make(chan Event, 128)
 	hs := NewInMemoryHistoryRolloutStore()
 
-	th := buildThreadForTest("thread-basic", &TurnRunnerConfig{
-		ChatModel:       cm,
-		Tools:           nil,
-		CheckpointStore: checkpointer.NewInMemoryStore(),
+	th := buildThreadForTest("thread-basic", &TurnConfig{
+		Agent: deepagents.Config{
+			Model:           cm,
+			Tools:           nil,
+			CheckpointStore: checkpointer.NewInMemoryStore(),
+		},
 	}, hs, 8, nil, bus)
 	if err := th.Init(ctx); err != nil {
 		t.Fatalf("start err: %v", err)
@@ -344,9 +345,11 @@ func TestAgentThread_CompactionPersistsCompactRecord(t *testing.T) {
 
 	bus := make(chan Event, 128)
 	hs := NewInMemoryHistoryRolloutStore()
-	th := buildThreadForTest("thread-compact", &TurnRunnerConfig{
-		ChatModel:       cm,
-		CheckpointStore: checkpointer.NewInMemoryStore(),
+	th := buildThreadForTest("thread-compact", &TurnConfig{
+		Agent: deepagents.Config{
+			Model:           cm,
+			CheckpointStore: checkpointer.NewInMemoryStore(),
+		},
 	}, hs, 8, &testCompactionStrategy{}, bus)
 	if err := th.Init(ctx); err != nil {
 		t.Fatalf("start err: %v", err)
@@ -440,13 +443,15 @@ func TestAgentThread_ApproveAndResume(t *testing.T) {
 
 	bus := make(chan Event, 256)
 	hs := NewInMemoryHistoryRolloutStore()
-	hitl := &deepagents.HITLConfig{NeedApproveTools: map[string]deeptools.NeedApproval{"counter": func(context.Context, *deeptools.ApprovalInfo) bool { return true }}}
+	hitl := &deepagents.HITLConfig{ToolPolicyGates: map[string]deeptools.ToolPolicyGate{"counter": deeptools.ApprovalGate(func(context.Context, *deeptools.ApprovalInfo) bool { return true })}}
 
-	th := buildThreadForTest("thread-approve", &TurnRunnerConfig{
-		ChatModel:       cm,
-		Tools:           []tool.BaseTool{counter},
-		CheckpointStore: checkpointer.NewInMemoryStore(),
-		HITLConfig:      hitl,
+	th := buildThreadForTest("thread-approve", &TurnConfig{
+		Agent: deepagents.Config{
+			Model:           cm,
+			Tools:           []tool.BaseTool{counter},
+			CheckpointStore: checkpointer.NewInMemoryStore(),
+			HITLConfig:      hitl,
+		},
 		CustomStateBuilder: func(ctx context.Context, threadID, turnID string) map[string]types.RunTimeStateful {
 			return map[string]types.RunTimeStateful{
 				"custom": &cs,
@@ -522,11 +527,13 @@ func TestAgentThread_ExternalInterruptAndResume(t *testing.T) {
 
 	bus := make(chan Event, 256)
 	hs := NewInMemoryHistoryRolloutStore()
-	th := buildThreadForTest("thread-ext", &TurnRunnerConfig{
-		ChatModel:           cm,
-		Tools:               nil,
-		CheckpointStore:     checkpointer.NewInMemoryStore(),
-		InterruptAfterNodes: []string{"executor"},
+	th := buildThreadForTest("thread-ext", &TurnConfig{
+		Agent: deepagents.Config{
+			Model:               cm,
+			Tools:               nil,
+			CheckpointStore:     checkpointer.NewInMemoryStore(),
+			InterruptAfterNodes: []string{"model"},
+		},
 	}, hs, 8, nil, bus)
 	if err := th.Init(ctx); err != nil {
 		t.Fatalf("start err: %v", err)
@@ -594,9 +601,9 @@ func TestAgentThread_StreamToolCall_ApproveResume_DropsIncompleteFutureCalls(t *
 	store := checkpointer.NewInMemoryStore()
 	approvedBase := &countingToolResult{name: "approval_tool", result: `{"approved":true}`}
 	lostTool := &countingToolResult{name: "lost_tool", result: `{"lost":false}`}
-	approvedTool := deeptools.NewInvokableApprovableTool(approvedBase, func(context.Context, *deeptools.ApprovalInfo) bool {
+	approvedTool := deeptools.NewInvokablePolicyTool(approvedBase, deeptools.ApprovalGate(func(context.Context, *deeptools.ApprovalInfo) bool {
 		return true
-	})
+	}))
 
 	var streamCall int32
 	cm.EXPECT().Stream(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
@@ -638,7 +645,8 @@ func TestAgentThread_StreamToolCall_ApproveResume_DropsIncompleteFutureCalls(t *
 						}
 					}
 					if len(toolMsgs) != 1 || toolMsgs[0].ToolCallID != "approve_call" {
-						t.Fatalf("resume input expected only approve_call tool message, got %+v", input)
+						sw.Send(nil, fmt.Errorf("resume input expected only approve_call tool message, got %+v", input))
+						return
 					}
 					sw.Send(schema.AssistantMessage("resume-only-first-tool", nil), nil)
 				default:
@@ -651,11 +659,13 @@ func TestAgentThread_StreamToolCall_ApproveResume_DropsIncompleteFutureCalls(t *
 
 	bus := make(chan Event, 256)
 	hs := NewInMemoryHistoryRolloutStore()
-	th := buildThreadForTest("thread-stream-partial", &TurnRunnerConfig{
-		ChatModel:            cm,
-		Tools:                []tool.BaseTool{approvedTool, lostTool},
-		CheckpointStore:      store,
-		EnableStreamToolCall: true,
+	th := buildThreadForTest("thread-stream-partial", &TurnConfig{
+		Agent: deepagents.Config{
+			Model:                cm,
+			Tools:                []tool.BaseTool{approvedTool, lostTool},
+			CheckpointStore:      store,
+			EnableStreamToolCall: true,
+		},
 	}, hs, 8, nil, bus)
 	if err := th.Init(ctx); err != nil {
 		t.Fatalf("start err: %v", err)
@@ -723,9 +733,9 @@ func TestAgentThread_StreamToolCall_ApproveResume_RerunsOnlyInterruptedCall(t *t
 	tool2 := &countingToolResult{name: "plain_tool_2", result: `{"tool":2}`}
 	tool3 := &countingToolResult{name: "plain_tool_3", result: `{"tool":3}`}
 	tool4Base := &countingToolResult{name: "approval_tool_4", result: `{"tool":4}`}
-	tool4 := deeptools.NewInvokableApprovableTool(tool4Base, func(context.Context, *deeptools.ApprovalInfo) bool {
+	tool4 := deeptools.NewInvokablePolicyTool(tool4Base, deeptools.ApprovalGate(func(context.Context, *deeptools.ApprovalInfo) bool {
 		return true
-	})
+	}))
 
 	var streamCall int32
 	cm.EXPECT().Stream(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
@@ -753,10 +763,12 @@ func TestAgentThread_StreamToolCall_ApproveResume_RerunsOnlyInterruptedCall(t *t
 						}
 					}
 					if len(got) != 4 {
-						t.Fatalf("expected 4 tool messages after resume, got %+v", input)
+						sw.Send(nil, fmt.Errorf("expected 4 tool messages after resume, got %+v", input))
+						return
 					}
 					if got["call_1"] != `{"tool":1}` || got["call_2"] != `{"tool":2}` || got["call_3"] != `{"tool":3}` || got["call_4"] != `{"tool":4}` {
-						t.Fatalf("unexpected resume tool messages: %+v", got)
+						sw.Send(nil, fmt.Errorf("unexpected resume tool messages: %+v", got))
+						return
 					}
 					sw.Send(schema.AssistantMessage("resume-rerun-last-only", nil), nil)
 				default:
@@ -769,11 +781,13 @@ func TestAgentThread_StreamToolCall_ApproveResume_RerunsOnlyInterruptedCall(t *t
 
 	bus := make(chan Event, 256)
 	hs := NewInMemoryHistoryRolloutStore()
-	th := buildThreadForTest("thread-stream-full", &TurnRunnerConfig{
-		ChatModel:            cm,
-		Tools:                []tool.BaseTool{tool1, tool2, tool3, tool4},
-		CheckpointStore:      store,
-		EnableStreamToolCall: true,
+	th := buildThreadForTest("thread-stream-full", &TurnConfig{
+		Agent: deepagents.Config{
+			Model:                cm,
+			Tools:                []tool.BaseTool{tool1, tool2, tool3, tool4},
+			CheckpointStore:      store,
+			EnableStreamToolCall: true,
+		},
 	}, hs, 8, nil, bus)
 	if err := th.Init(ctx); err != nil {
 		t.Fatalf("start err: %v", err)

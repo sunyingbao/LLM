@@ -9,7 +9,7 @@ import (
 
 	"code.byted.org/gopkg/metainfo"
 	"code.byted.org/kite/kitutil"
-	ac "code.byted.org/overpass/ad_creative_aic_agent_coordinator/kitex_gen/agent_coordinator"
+	"eino-cli/deepagent/coordinator"
 )
 
 const (
@@ -17,32 +17,32 @@ const (
 	metadataKeyKEnv             = "K_ENV"
 )
 
-func contextWithMessageRequestMeta(ctx context.Context, message *ac.Message) context.Context {
+func contextWithMessageRequestMeta(ctx context.Context, message *coordinator.Message) context.Context {
 	if message == nil {
 		return ctx
 	}
-	return contextWithRequestMeta(ctx, message.GetMetadata(), true)
+	return contextWithRequestMeta(ctx, message.Metadata, true)
 }
 
-func contextWithThreadRequestMeta(ctx context.Context, thread *ac.Thread) context.Context {
+func contextWithThreadRequestMeta(ctx context.Context, thread *coordinator.Thread) context.Context {
 	if thread == nil {
 		return ctx
 	}
-	return contextWithRequestMeta(ctx, thread.GetMetadata(), true)
+	return contextWithRequestMeta(ctx, thread.Metadata, true)
 }
 
-func contextWithMessageLogMeta(ctx context.Context, message *ac.Message) context.Context {
+func contextWithMessageLogMeta(ctx context.Context, message *coordinator.Message) context.Context {
 	if message == nil {
 		return ctx
 	}
-	return contextWithRequestMeta(ctx, message.GetMetadata(), false)
+	return contextWithRequestMeta(ctx, message.Metadata, false)
 }
 
-func contextWithThreadLogMeta(ctx context.Context, thread *ac.Thread) context.Context {
+func contextWithThreadLogMeta(ctx context.Context, thread *coordinator.Thread) context.Context {
 	if thread == nil {
 		return ctx
 	}
-	return contextWithRequestMeta(ctx, thread.GetMetadata(), false)
+	return contextWithRequestMeta(ctx, thread.Metadata, false)
 }
 
 func contextWithRequestMeta(ctx context.Context, metadata map[string]string, restoreEnv bool) context.Context {

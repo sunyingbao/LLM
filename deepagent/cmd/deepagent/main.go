@@ -11,39 +11,26 @@ import (
 
 	"code.byted.org/gopkg/logs/v2"
 	"code.byted.org/gopkg/logs/v2/writer"
-	backendconfig "eino-cli/backend/config"
+	backendconfig "eino-cli/deepagent/backend/config"
+	clientruntime "eino-cli/deepagent/host/runtime"
+	sdkruntime "eino-cli/deepagent/runtime"
 )
 
-const defaultUserID int64 = 1
-
-type AppConfig struct {
-	RootDir        string
-	SGADKConfig    *backendconfig.Config
-	Legacy         bool
-	UserID         int64
-	WorkDir        string
-	SkillsDir      string
-	ResumeThreadID string
-	DBPath         string
-	CheckpointDir  string
-	EnableWeb      bool
-	Prompt         string
-	ReadFromStdin  bool
-	AutoResume     bool
-	EnableRG       bool
+type CLIOptions struct {
+	RootDir         string
+	WorkDir         string
+	ResumeThreadID  string
+	ResumeSessionID string
+	Prompt          string
+	ReadFromStdin   bool
+	AutoResume      bool
 }
 
-func parseFlags() AppConfig {
-	var cfg AppConfig
-	flag.StringVar(&cfg.RootDir, "root", "", "LLM repository root (defaults to SGADK_ROOT or current directory)")
-	flag.BoolVar(&cfg.Legacy, "legacy", false, "use the legacy local CLI instead of the unified SGADK runtime")
-	flag.Int64Var(&cfg.UserID, "user_id", defaultUserID, "本地用户 ID，用于隔离 thread/session")
+func parseFlags() (cfg CLIOptions) {
+	flag.StringVar(&cfg.RootDir, "root", "", "LLM repository root (defaults to DEEPAGENT_ROOT or current directory)")
 	flag.StringVar(&cfg.WorkDir, "workdir", ".", "工作目录")
-	flag.StringVar(&cfg.SkillsDir, "skills", "", "技能目录路径")
 	flag.StringVar(&cfg.ResumeThreadID, "resume_thread_id", "", "启动时恢复指定 root thread")
-	flag.StringVar(&cfg.DBPath, "db_path", "./.deepagent/agentthread.db", "SQLite 持久化路径")
-	flag.StringVar(&cfg.CheckpointDir, "checkpoint_dir", "./.deepagent/checkpoints", "checkpoint 目录")
-	flag.BoolVar(&cfg.EnableWeb, "web", true, "启用 Web 能力")
+	flag.StringVar(&cfg.ResumeSessionID, "resume_session_id", "", "启动时恢复指定 backend session")
 	flag.StringVar(&cfg.Prompt, "prompt", "", "单次运行的 prompt 文本")
 	flag.BoolVar(&cfg.ReadFromStdin, "stdin", false, "从标准输入读取单次运行 prompt")
 	flag.BoolVar(&cfg.AutoResume, "auto_resume", false, "交互模式启动时自动恢复当前 user/workdir 最新 root session")
@@ -51,7 +38,7 @@ func parseFlags() AppConfig {
 	return cfg
 }
 
-func (c AppConfig) oneShotPrompt(args []string, stdin io.Reader) (string, error) {
+func (c CLIOptions) oneShotPrompt(args []string, stdin io.Reader) (prompt string, err error) {
 	var sources []string
 	if strings.TrimSpace(c.Prompt) != "" {
 		sources = append(sources, "prompt flag")
@@ -101,7 +88,19 @@ func initLogger() {
 
 func main() {
 	cfg := parseFlags()
-	root, err := resolveRoot(cfg.RootDir)
+	runtimeKind, err := clientruntime.RuntimeKindFromEnv()
+	if err != nil {
+		fmt.Printf("解析 runtime 失败: %v\n", err)
+		os.Exit(1)
+	}
+	if runtimeKind == sdkruntime.RuntimeRemote {
+		if err = runCLI(context.Background(), nil, cfg, flag.Args(), os.Stdin, os.Stdout); err != nil {
+			fmt.Printf("运行 CLI 失败: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
+	root, err := repositoryRootFrom(cfg.RootDir)
 	if err != nil {
 		fmt.Printf("解析仓库根目录失败: %v\n", err)
 		os.Exit(1)
@@ -112,39 +111,23 @@ func main() {
 	}
 	loadedConfig, err := backendconfig.Load(root)
 	if err != nil {
-		if !cfg.Legacy {
-			fmt.Printf("加载 yaml/config.yaml 失败: %v\n", err)
-			os.Exit(1)
-		}
-		fmt.Printf("加载 yaml/config.yaml 失败，legacy 模式继续使用环境变量: %v\n", err)
-	} else {
-		backendconfig.SetLogLevel(loadedConfig)
-	}
-	cfg.RootDir = root
-	cfg.SGADKConfig = loadedConfig
-	initLogger()
-
-	if !cfg.Legacy && strings.TrimSpace(cfg.Prompt) == "" && !cfg.ReadFromStdin &&
-		len(flag.Args()) == 0 && strings.TrimSpace(cfg.ResumeThreadID) == "" && !cfg.AutoResume {
-		if err := runUnifiedCLI(context.Background(), loadedConfig); err != nil {
-			fmt.Printf("运行统一 CLI 失败: %v\n", err)
-			os.Exit(1)
-		}
-		return
-	}
-
-	app, err := NewApp(context.Background(), cfg)
-	if err != nil {
-		fmt.Printf("初始化失败: %v\n", err)
+		fmt.Printf("加载 yaml/config.yaml 失败: %v\n", err)
 		os.Exit(1)
 	}
-	os.Exit(app.Run(context.Background(), flag.Args()))
+	backendconfig.SetLogLevel(loadedConfig)
+	cfg.RootDir = root
+	initLogger()
+
+	if err = runCLI(context.Background(), loadedConfig, cfg, flag.Args(), os.Stdin, os.Stdout); err != nil {
+		fmt.Printf("运行 CLI 失败: %v\n", err)
+		os.Exit(1)
+	}
 }
 
-func resolveRoot(flagRoot string) (root string, err error) {
+func repositoryRootFrom(flagRoot string) (root string, err error) {
 	root = strings.TrimSpace(flagRoot)
 	if root == "" {
-		root = strings.TrimSpace(os.Getenv("SGADK_ROOT"))
+		root = strings.TrimSpace(os.Getenv("DEEPAGENT_ROOT"))
 	}
 	if root == "" {
 		root, err = os.Getwd()

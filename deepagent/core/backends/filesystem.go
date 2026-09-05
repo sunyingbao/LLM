@@ -168,7 +168,7 @@ func (b *FilesystemBackend) LsInfo(ctx context.Context, path string) ([]FileInfo
 }
 
 // Read 读取文件内容
-func (b *FilesystemBackend) Read(ctx context.Context, path string, offset, limit *int) (string, error) {
+func (b *FilesystemBackend) Read(ctx context.Context, path string, offset, limit *int) (content string, err error) {
 	absPath, err := b.resolvePath(path)
 	if err != nil {
 		return "", err
@@ -199,35 +199,7 @@ func (b *FilesystemBackend) Read(ctx context.Context, path string, offset, limit
 		return "", err
 	}
 
-	// 处理 nil 参数：nil 表示使用默认值
-	actualOffset := 0
-	actualLimit := DefaultReadLimit
-	if offset != nil {
-		actualOffset = *offset
-	}
-	if actualOffset < 0 {
-		actualOffset = 0
-	}
-	if limit != nil {
-		actualLimit = *limit
-	}
-	if actualLimit <= 0 {
-		actualLimit = DefaultReadLimit
-	}
-
-	lines := strings.SplitAfter(string(contentBytes), "\n")
-	if len(lines) == 1 && lines[0] == "" {
-		return "", nil
-	}
-	if actualOffset >= len(lines) {
-		return "", nil
-	}
-	end := actualOffset + actualLimit
-	if end > len(lines) {
-		end = len(lines)
-	}
-
-	return strings.Join(lines[actualOffset:end], ""), nil
+	return ReadFileLines(string(contentBytes), offset, limit), nil
 }
 
 // Write 写入文件
@@ -255,7 +227,7 @@ func (b *FilesystemBackend) Write(ctx context.Context, path string, content stri
 }
 
 // Edit 编辑文件
-func (b *FilesystemBackend) Edit(ctx context.Context, path string, oldString, newString string, replaceAll bool) (*EditResult, error) {
+func (b *FilesystemBackend) Edit(ctx context.Context, path string, oldString, newString string, replaceAll bool) (result *EditResult, err error) {
 	absPath, err := b.resolvePath(path)
 	if err != nil {
 		return &EditResult{Path: path, Error: ErrInvalidPath}, nil
@@ -273,36 +245,10 @@ func (b *FilesystemBackend) Edit(ctx context.Context, path string, oldString, ne
 		return nil, err
 	}
 
-	contentStr := string(content)
-
-	// 统计匹配次数
-	count := strings.Count(contentStr, oldString)
-	if count == 0 {
-		return &EditResult{
-			Path:        path,
-			Occurrences: 0,
-		}, fmt.Errorf("未找到要替换的字符串")
+	newContent, occurrences, err := ReplaceFileText(string(content), oldString, newString, replaceAll)
+	if err != nil {
+		return &EditResult{Path: path, Occurrences: occurrences}, err
 	}
-
-	// 如果有多个匹配但未指定 replaceAll
-	if count > 1 && !replaceAll {
-		return &EditResult{
-			Path:        path,
-			Occurrences: count,
-		}, fmt.Errorf("找到 %d 个匹配，请提供更精确的字符串或使用 replaceAll=true", count)
-	}
-
-	// 执行替换
-	var newContent string
-	var occurrences int
-	if replaceAll {
-		newContent = strings.ReplaceAll(contentStr, oldString, newString)
-		occurrences = count
-	} else {
-		newContent = strings.Replace(contentStr, oldString, newString, 1)
-		occurrences = 1
-	}
-
 	// 写回文件
 	if err := os.WriteFile(absPath, []byte(newContent), 0644); err != nil {
 		if os.IsPermission(err) {

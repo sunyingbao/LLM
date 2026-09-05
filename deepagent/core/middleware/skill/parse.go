@@ -2,6 +2,7 @@ package skill
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -11,7 +12,7 @@ import (
 	"gopkg.in/yaml.v2"
 )
 
-func parseMetadata(ctx context.Context, content string, path string) (*SkillMetadata, error) {
+func parseMetadata(ctx context.Context, content string, path string) (metadata *SkillMetadata, err error) {
 	if len(content) > constant.MaxSkillFileSize {
 		return nil, fmt.Errorf(constant.ErrMsgSkillFileTooLarge)
 	}
@@ -34,7 +35,8 @@ func parseMetadata(ctx context.Context, content string, path string) (*SkillMeta
 	}
 
 	directoryName := filepath.Base(filepath.Dir(path))
-	if valid, _ := validateSkillName(fm.Name, directoryName); !valid {
+	if valid, validationError := validateSkillName(fm.Name, directoryName); !valid {
+		return nil, errors.New(validationError)
 	}
 
 	if fm.Description == "" {

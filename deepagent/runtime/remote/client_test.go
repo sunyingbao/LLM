@@ -12,7 +12,6 @@ import (
 	cloudapi "eino-cli/deepagent/cloud/api"
 	protoinput "eino-cli/deepagent/cloud/protocol/input"
 	"eino-cli/deepagent/cloud/protocol/timeline"
-	"eino-cli/deepagent/definition"
 	runtimeclient "eino-cli/deepagent/runtime"
 	"eino-cli/deepagent/runtime/clienttest"
 )
@@ -177,16 +176,14 @@ func (stream *sliceTimelineStream) Recv() (frame *cloudapi.TimelineFrame, err er
 }
 
 func TestClientCreatesAndSubmitsRemoteThread(t *testing.T) {
-	stub := &coordinatorStub{created: &cloudapi.Thread{ID: "42", SessionID: "session-1", Title: "remote", Status: "RUNNING", Profile: cloudapi.ThreadProfile{Cwd: "/repo"}, Metadata: map[string]string{
-		metadataDefinitionName: "assistant", metadataDefinitionVersion: "v1",
-	}}}
+	stub := &coordinatorStub{created: &cloudapi.Thread{ID: "42", SessionID: "session-1", Title: "remote", Status: "RUNNING", Profile: cloudapi.ThreadProfile{Cwd: "/repo"}}}
 	client, err := New(&cloudapi.AgentAPI{Coordinator: stub}, "7")
 	if err != nil {
 		t.Fatalf("New() error=%v", err)
 	}
 	created, err := client.CreateThread(context.Background(), runtimeclient.CreateThreadRequest{
 		Runtime: runtimeclient.RuntimeRemote, Namespace: "session-1", Title: "remote",
-		Definition: agentdefinition.Definition{Name: "assistant", Version: "v1"}, Workspace: runtimeclient.WorkspaceSpec{Cwd: "/repo"},
+		Workspace: runtimeclient.WorkspaceSpec{Cwd: "/repo"},
 	})
 	if err != nil {
 		t.Fatalf("CreateThread() error=%v", err)
@@ -204,7 +201,7 @@ func TestClientCreatesAndSubmitsRemoteThread(t *testing.T) {
 }
 
 func TestClientListsAndGetsRemoteThreads(t *testing.T) {
-	stub := &coordinatorStub{listed: []*cloudapi.Thread{{ID: "42", Status: "BLOCKED", Metadata: map[string]string{metadataDefinitionName: "assistant", metadataDefinitionVersion: "v1"}}}}
+	stub := &coordinatorStub{listed: []*cloudapi.Thread{{ID: "42", Status: "BLOCKED"}}}
 	client, err := New(&cloudapi.AgentAPI{Coordinator: stub}, "7")
 	if err != nil {
 		t.Fatalf("New() error=%v", err)

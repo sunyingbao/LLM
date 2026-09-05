@@ -2,7 +2,7 @@
   "name": "local",
   "base_url": "http://127.0.0.1:6789",
   "headers": {
-    "X-AIC-Agent-SDK-Test-UID": "1234"
+    "X-Deep-Agent-SDK-Test-UID": "1234"
   },
   "timeouts": {
     "request_ms": 10000,

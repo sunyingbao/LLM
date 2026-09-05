@@ -7,17 +7,14 @@ import (
 	"time"
 
 	"code.byted.org/gopkg/logs/v2"
-	"code.byted.org/gorm/bytedgorm"
+	"gorm.io/driver/mysql"
 	"gorm.io/gorm"
-	"gorm.io/gorm/logger"
 	"gorm.io/plugin/dbresolver"
 )
 
 const defaultReadTimeout = 5 * time.Second
 
 type Config struct {
-	PSM         string
-	DBName      string
 	DSN         string
 	ReadDSN     string
 	ReadTimeout time.Duration
@@ -65,69 +62,24 @@ func (c *Client) Close() error {
 }
 
 func open(cfg Config) (*gorm.DB, error) {
-	if strings.TrimSpace(cfg.DSN) != "" {
-		return openWithDSN(cfg)
+	if strings.TrimSpace(cfg.DSN) == "" {
+		return nil, fmt.Errorf("mysql dsn is empty")
 	}
-	return openWithPSM(cfg)
-}
-
-func openWithPSM(cfg Config) (*gorm.DB, error) {
-	db, err := gorm.Open(
-		bytedgorm.MySQL(cfg.PSM, cfg.DBName).WithReadReplicas(),
-		&gorm.Config{
-			SkipDefaultTransaction: true,
-			PrepareStmt:            true,
-		},
-		bytedgorm.WithDefaults(),
-		bytedgorm.Logger{IgnoreRecordNotFoundError: true, LogLevel: logger.Error},
-		bytedgorm.WithStressTestSupport(),
-	)
-	if err != nil {
-		logs.Error("mysql open failed, psm=%s db=%s err=%v", cfg.PSM, cfg.DBName, err)
-		return nil, err
-	}
-	return db, nil
+	return openWithDSN(cfg)
 }
 
 func openWithDSN(cfg Config) (*gorm.DB, error) {
-	dialector := bytedgorm.MySQL(cfg.PSM, cfg.DBName).With(func(dbCfg *bytedgorm.DBConfig) {
-		dbCfg.DSN = cfg.DSN
-		dbCfg.ReadTimeout = cfg.ReadTimeout
+	db, err := gorm.Open(mysql.Open(cfg.DSN), &gorm.Config{
+		SkipDefaultTransaction: true,
+		PrepareStmt:            true,
+		TranslateError:         true,
 	})
-	if strings.TrimSpace(cfg.ReadDSN) != "" {
-		dialector = bytedgorm.MySQL(cfg.PSM, cfg.DBName).WithReadReplicas().With(func(dbCfg *bytedgorm.DBConfig) {
-			dbCfg.DSN = cfg.DSN
-			dbCfg.ReadTimeout = cfg.ReadTimeout
-		})
-	}
-	db, err := gorm.Open(
-		dialector,
-		&gorm.Config{
-			SkipDefaultTransaction: true,
-			PrepareStmt:            true,
-			TranslateError:         true,
-		},
-		bytedgorm.WithDefaults(),
-		bytedgorm.Logger{IgnoreRecordNotFoundError: true, LogLevel: logger.Error},
-		bytedgorm.WithSingularTable(),
-		bytedgorm.WithStressTestSupport(),
-	)
 	if err != nil {
 		logs.Error("mysql open failed, dsn_configured=%t err=%v", cfg.DSN != "", err)
 		return nil, err
 	}
 	if strings.TrimSpace(cfg.ReadDSN) != "" {
-		readDB, err := gorm.Open(
-			bytedgorm.MySQL(cfg.PSM, cfg.DBName).With(func(dbCfg *bytedgorm.DBConfig) {
-				dbCfg.DSN = cfg.ReadDSN
-				dbCfg.ReadTimeout = cfg.ReadTimeout
-			}),
-			&gorm.Config{SkipDefaultTransaction: true, PrepareStmt: true},
-			bytedgorm.WithDefaults(),
-			bytedgorm.Logger{IgnoreRecordNotFoundError: true, LogLevel: logger.Error},
-			bytedgorm.WithSingularTable(),
-			bytedgorm.WithStressTestSupport(),
-		)
+		readDB, err := gorm.Open(mysql.Open(cfg.ReadDSN), &gorm.Config{SkipDefaultTransaction: true, PrepareStmt: true})
 		if err != nil {
 			return nil, err
 		}

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Local development manager for cmd/cloud_agent services."""
+"""Local development manager for the Cloud Agent process."""
 
 from __future__ import annotations
 
@@ -26,15 +26,13 @@ REPO_ROOT = ROOT.parents[1]
 RUNTIME_DIR = ROOT / "runtime" / "dev"
 PID_DIR = RUNTIME_DIR / "pids"
 LOG_DIR = RUNTIME_DIR / "logs"
-GENERATED_DIR = RUNTIME_DIR / "generated"
 BIN_DIR = RUNTIME_DIR / "bin"
 
 CONFIG_VERSION = 1
-DEFAULT_CONFIG_PATH = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "aic_agent_sdk" / "dev_config.json"
+DEFAULT_CONFIG_PATH = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "deepagent" / "dev_config.json"
 DEFAULT_MYSQL_DSN = "ac_test:ac_test_pwd_20260416@tcp(127.0.0.1:3306)/agent_coordinator_test?charset=utf8mb4&parseTime=True&loc=Local"
 DEFAULT_WORKSPACE_ROOT = str(Path.home() / "deepagent_workspace")
-DEFAULT_ENV_FILE = str(Path.home() / ".config" / "aic_agent_sdk" / "model.env")
-DEFAULT_WORKER_CONFIG = str(ROOT / "aic_agent_sdk_worker" / "conf" / "worker.local.yml")
+DEFAULT_WORKER_CONFIG = str(ROOT / "conf" / "worker.local.yml")
 
 # The local Worker profile fixes the provider and model. The env file only
 # supplies referenced secrets, so inherited provider variables cannot change
@@ -61,9 +59,7 @@ class Service:
 
 
 SERVICES = {
-    "aic_agent_sdk_session": Service("aic_agent_sdk_session", ROOT / "aic_agent_sdk_session", 8890),
-    "aic_agent_sdk_worker": Service("aic_agent_sdk_worker", ROOT / "aic_agent_sdk_worker", None),
-    "aic_agent_sdk_api": Service("aic_agent_sdk_api", ROOT / "aic_agent_sdk_api", 6789),
+    "cloud_agent": Service("cloud_agent", ROOT, 6789),
 }
 
 
@@ -79,26 +75,18 @@ def default_config() -> dict[str, Any]:
             "db": 0,
         },
         "model_env": {
-            "mode": "file",
-            "file": DEFAULT_ENV_FILE,
+            "mode": "shell",
+            "file": "",
         },
         "worker_config": DEFAULT_WORKER_CONFIG,
-        "agent_coordinator": {
-            "mode": "direct",
-            "namespace": "cloud_agent",
-            "psm": "ad.creative.aic_agent_coordinator",
-            "cluster": "",
-            "hostports": ["127.0.0.1:8888"],
-        },
         "ports": {
-            "aic_agent_sdk_session": 8890,
-            "aic_agent_sdk_api": 6789,
+            "cloud_agent": 6789,
         },
     }
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="AIC Agent SDK local dev manager")
+    parser = argparse.ArgumentParser(description="DeepAgent local dev manager")
     parser.add_argument("--config", default=str(DEFAULT_CONFIG_PATH), help="dev config path")
     sub = parser.add_subparsers(dest="command")
 
@@ -108,7 +96,7 @@ def main() -> int:
 
     sub.add_parser("doctor", help="check local dependencies")
     sub.add_parser("init-db", help="create local MySQL tables if missing")
-    sub.add_parser("start", help="start aic_agent_sdk_session, aic_agent_sdk_worker, aic_agent_sdk_api")
+    sub.add_parser("start", help="start cloud_agent")
     sub.add_parser("stop", help="stop services started by this script")
     sub.add_parser("status", help="show service status")
     sub.add_parser("logs", help="show log paths and recent log tails")
@@ -144,7 +132,7 @@ def main() -> int:
 def menu(config_path: Path) -> int:
     while True:
         print()
-        print("AIC Agent SDK Dev")
+        print("DeepAgent Dev")
         print(f"Config: {config_path}")
         print("1. Configure local environment")
         print("2. Doctor / check dependencies")
@@ -189,7 +177,7 @@ def cmd_configure(config_path: Path, defaults: bool, force: bool) -> int:
 
     cfg = default_config()
     if not defaults:
-        print("Configure AIC Agent SDK local development.")
+        print("Configure DeepAgent local development.")
         cfg["workspace_root"] = prompt("Workspace root", cfg["workspace_root"])
         cfg["local_uid"] = int(prompt("Local uid", str(cfg["local_uid"])))
         cfg["mysql_dsn"] = prompt("MySQL DSN", cfg["mysql_dsn"])
@@ -207,22 +195,6 @@ def cmd_configure(config_path: Path, defaults: bool, force: bool) -> int:
         else:
             cfg["model_env"] = {"mode": "file", "file": prompt("Env file", cfg["model_env"]["file"])}
         cfg["worker_config"] = prompt("Worker YAML", cfg["worker_config"])
-
-        print()
-        print("Agent Coordinator access:")
-        print("1. Direct host:port, for local development")
-        print("2. PSM + cluster, for BOE / online-like environment")
-        ac_mode = prompt("Select", "1")
-        if ac_mode == "2":
-            cfg["agent_coordinator"]["mode"] = "psm"
-            cfg["agent_coordinator"]["hostports"] = []
-            cfg["agent_coordinator"]["cluster"] = prompt("AC cluster", cfg["agent_coordinator"]["cluster"] or "default")
-        else:
-            cfg["agent_coordinator"]["mode"] = "direct"
-            hostports = prompt("AC hostports", ",".join(cfg["agent_coordinator"]["hostports"]))
-            cfg["agent_coordinator"]["hostports"] = split_csv(hostports)
-            cfg["agent_coordinator"]["cluster"] = ""
-        cfg["agent_coordinator"]["namespace"] = prompt("AC namespace", cfg["agent_coordinator"]["namespace"])
 
     config_path.parent.mkdir(parents=True, exist_ok=True)
     config_path.write_text(json.dumps(cfg, indent=2, ensure_ascii=False) + "\n")
@@ -242,15 +214,6 @@ def cmd_doctor(cfg: dict[str, Any]) -> int:
     redis_host, redis_port = split_host_port(cfg["redis"]["addr"], 6379)
     checks.append(check_tcp("redis", redis_host, redis_port))
 
-    ac = cfg["agent_coordinator"]
-    if ac["mode"] == "direct":
-        for hostport in ac.get("hostports", []):
-            host, port = split_host_port(hostport, 8888)
-            checks.append(check_tcp("agent_coordinator", host, port))
-    else:
-        ok = bool(ac.get("psm")) and bool(ac.get("cluster"))
-        checks.append(("agent_coordinator psm+cluster", ok, f"psm={ac.get('psm')} cluster={ac.get('cluster')}"))
-
     checks.append(check_model_env(resolve_model_env(cfg)))
     worker_config = Path(cfg["worker_config"]).expanduser()
     checks.append(("worker config", worker_config.is_file(), str(worker_config)))
@@ -263,19 +226,26 @@ def cmd_doctor(cfg: dict[str, Any]) -> int:
     return 0 if ok else 1
 
 
+def database_sql_files() -> list[Path]:
+    return [
+        REPO_ROOT / "coordinator" / "sql" / "t_agent_namespace.sql",
+        REPO_ROOT / "coordinator" / "sql" / "t_thread.sql",
+        REPO_ROOT / "coordinator" / "sql" / "t_mailbox_message.sql",
+        REPO_ROOT / "coordinator" / "sql" / "t_event_log.sql",
+        ROOT / "deep_agent_sdk_session" / "sql" / "t_agent_session.sql",
+        REPO_ROOT / "cloud" / "worker" / "sql" / "t_agent_thread_ref.sql",
+        REPO_ROOT / "cloud" / "worker" / "sql" / "t_agentthread_history.sql",
+        REPO_ROOT / "core" / "memory" / "gorm_store" / "sql" / "t_memory_source.sql",
+        REPO_ROOT / "core" / "memory" / "gorm_store" / "sql" / "t_memory_stage1_output.sql",
+        REPO_ROOT / "core" / "memory" / "gorm_store" / "sql" / "t_memory_stage2_job.sql",
+        REPO_ROOT / "core" / "memory" / "gorm_store" / "sql" / "t_memory_baseline.sql",
+    ]
+
+
 def cmd_init_db(cfg: dict[str, Any]) -> int:
     mysql = parse_mysql_dsn(cfg["mysql_dsn"])
-    sql_files = [
-        ROOT / "aic_agent_sdk_session" / "sql" / "t_agent_session.sql",
-        REPO_ROOT / "cloudagent" / "worker" / "sql" / "t_agent_thread_ref.sql",
-        REPO_ROOT / "cloudagent" / "worker" / "sql" / "t_agentthread_history.sql",
-        REPO_ROOT / "deepagents" / "memory" / "gorm_store" / "sql" / "t_memory_source.sql",
-        REPO_ROOT / "deepagents" / "memory" / "gorm_store" / "sql" / "t_memory_stage1_output.sql",
-        REPO_ROOT / "deepagents" / "memory" / "gorm_store" / "sql" / "t_memory_stage2_job.sql",
-        REPO_ROOT / "deepagents" / "memory" / "gorm_store" / "sql" / "t_memory_baseline.sql",
-    ]
     ensure_database(mysql)
-    for sql_file in sql_files:
+    for sql_file in database_sql_files():
         table = table_name_from_sql(sql_file.read_text())
         if not table:
             print(f"[skip] cannot find table name in {sql_file}")
@@ -296,29 +266,19 @@ def cmd_start(cfg: dict[str, Any]) -> int:
         return 1
     if cmd_init_db(cfg) != 0:
         return 1
-    GENERATED_DIR.mkdir(parents=True, exist_ok=True)
     BIN_DIR.mkdir(parents=True, exist_ok=True)
     PID_DIR.mkdir(parents=True, exist_ok=True)
     LOG_DIR.mkdir(parents=True, exist_ok=True)
-    write_session_kitex_config(cfg)
-
-    start_service(cfg, "aic_agent_sdk_session")
-    wait_port("aic_agent_sdk_session", service_port(cfg, "aic_agent_sdk_session"))
-
-    start_service(cfg, "aic_agent_sdk_worker")
-    time.sleep(2)
-    assert_process_alive("aic_agent_sdk_worker")
-
-    start_service(cfg, "aic_agent_sdk_api")
-    wait_http("aic_agent_sdk_api", f"http://127.0.0.1:{service_port(cfg, 'aic_agent_sdk_api')}/")
+    start_service(cfg, "cloud_agent")
+    wait_http("cloud_agent", f"http://127.0.0.1:{service_port(cfg, 'cloud_agent')}/")
     print()
-    print(f"AIC Agent SDK is ready: http://127.0.0.1:{service_port(cfg, 'aic_agent_sdk_api')}/")
+    print(f"Cloud Agent is ready: http://127.0.0.1:{service_port(cfg, 'cloud_agent')}/")
     return 0
 
 
 def cmd_stop() -> int:
     ok = True
-    for name in ["aic_agent_sdk_api", "aic_agent_sdk_worker", "aic_agent_sdk_session"]:
+    for name in SERVICES:
         ok = stop_service(name) and ok
     return 0 if ok else 1
 
@@ -350,8 +310,8 @@ def cmd_logs() -> int:
 
 
 def cmd_smoke(cfg: dict[str, Any]) -> int:
-    api_port = service_port(cfg, "aic_agent_sdk_api")
-    url = f"http://127.0.0.1:{api_port}/ad/aic_agent_sdk/list_projects"
+    api_port = service_port(cfg, "cloud_agent")
+    url = f"http://127.0.0.1:{api_port}/ad/deep_agent_sdk/list_projects"
     try:
         body = http_post_json(url, {})
     except Exception as exc:
@@ -429,18 +389,8 @@ def stop_service(name: str) -> bool:
 
 
 def service_command(cfg: dict[str, Any], name: str) -> list[str]:
-    if name == "aic_agent_sdk_session":
+    if name == "cloud_agent":
         return [str(service_binary(name))]
-    if name == "aic_agent_sdk_worker":
-        return [str(service_binary(name))]
-    if name == "aic_agent_sdk_api":
-        return [
-            str(service_binary(name)),
-            "-psm=ad.creative.aic_agent_sdk_api",
-            "-conf-dir=conf",
-            f"-log-dir={LOG_DIR / 'hertz'}",
-            f"-port={service_port(cfg, 'aic_agent_sdk_api')}",
-        ]
     raise KeyError(name)
 
 
@@ -460,50 +410,19 @@ def build_service(name: str) -> None:
 
 def service_env(cfg: dict[str, Any], name: str) -> dict[str, str]:
     env = resolve_model_env(cfg)
-    ac = cfg["agent_coordinator"]
-    if name == "aic_agent_sdk_session":
-        env["AIC_AGENT_SDK_SESSION_MYSQL_DSN"] = cfg["mysql_dsn"]
-        env["AIC_AGENT_SDK_SESSION_AC_NAMESPACE"] = ac["namespace"]
-        env["AIC_AGENT_SDK_SESSION_AC_PSM"] = ac["psm"]
-        env["KITEX_CONF_DIR"] = str(GENERATED_DIR / "aic_agent_sdk_session_conf")
-        if ac["mode"] == "direct":
-            env["AIC_AGENT_SDK_SESSION_AC_HOSTPORTS"] = ",".join(ac.get("hostports", []))
-            env.pop("AIC_AGENT_SDK_SESSION_AC_CLUSTER", None)
-        else:
-            env.pop("AIC_AGENT_SDK_SESSION_AC_HOSTPORTS", None)
-            env["AIC_AGENT_SDK_SESSION_AC_CLUSTER"] = ac["cluster"]
-    elif name == "aic_agent_sdk_api":
-        env["AIC_AGENT_SDK_API_AUTH_MODE"] = "local"
-        env["AIC_AGENT_SDK_API_LOCAL_DEFAULT_UID"] = str(cfg["local_uid"])
-        env["AIC_AGENT_SDK_API_WORKSPACE_ROOT"] = cfg["workspace_root"]
-        env["AIC_AGENT_SDK_API_BACKEND_TYPE"] = "local"
-        env["AIC_AGENT_SDK_API_BACKEND_LOCAL_ROOT"] = cfg["workspace_root"]
-        env["AIC_AGENT_SDK_API_AC_NAMESPACE"] = ac["namespace"]
-        env["AIC_AGENT_SDK_API_SESSION_DIRECT_HOSTPORTS"] = f"127.0.0.1:{service_port(cfg, 'aic_agent_sdk_session')}"
-        if ac["mode"] == "direct":
-            env["AIC_AGENT_SDK_API_AC_DIRECT_HOSTPORTS"] = ",".join(ac.get("hostports", []))
-            env.pop("AIC_AGENT_SDK_API_AC_CLUSTER", None)
-        else:
-            env.pop("AIC_AGENT_SDK_API_AC_DIRECT_HOSTPORTS", None)
-            env["AIC_AGENT_SDK_API_AC_CLUSTER"] = ac["cluster"]
-    elif name == "aic_agent_sdk_worker":
+    if name == "cloud_agent":
+        env["KITEX_CONFIG_SOURCE"] = "file"
+        env["KITEX_CONF_DIR"] = str(ROOT / "conf")
         env["AGENT_WORKER_CONF"] = str(Path(cfg["worker_config"]).expanduser())
         env["AGENT_WORKER_MYSQL_DSN"] = str(cfg["mysql_dsn"])
-        env["AIC_AGENT_SDK_WORKSPACE_ROOT"] = str(cfg["workspace_root"])
+        env["DEEP_AGENT_SDK_WORKSPACE_ROOT"] = str(cfg["workspace_root"])
+        env["DEEP_AGENT_SDK_API_ADDRESS"] = f"127.0.0.1:{service_port(cfg, 'cloud_agent')}"
+        env["DEEP_AGENT_SDK_API_AUTH_MODE"] = "local"
+        env["DEEP_AGENT_SDK_API_LOCAL_DEFAULT_UID"] = str(cfg["local_uid"])
+        env["DEEP_AGENT_SDK_API_WORKSPACE_ROOT"] = cfg["workspace_root"]
+        env["DEEP_AGENT_SDK_API_BACKEND_TYPE"] = "local"
+        env["DEEP_AGENT_SDK_API_BACKEND_LOCAL_ROOT"] = cfg["workspace_root"]
     return env
-
-
-def write_session_kitex_config(cfg: dict[str, Any]) -> None:
-    port = service_port(cfg, "aic_agent_sdk_session")
-    if port is None:
-        raise SystemExit("aic_agent_sdk_session port is required")
-    conf_dir = GENERATED_DIR / "aic_agent_sdk_session_conf"
-    conf_dir.mkdir(parents=True, exist_ok=True)
-    content = f"""Address: ":{port}"
-LogLevel: info
-DebugServerPort: "{port + 10000}"
-"""
-    (conf_dir / "kitex.yml").write_text(content)
 
 
 
@@ -771,10 +690,8 @@ def log_path(name: str) -> Path:
 
 
 def service_port(cfg: dict[str, Any], name: str) -> int | None:
-    if name == "aic_agent_sdk_api":
-        return int(cfg["ports"]["aic_agent_sdk_api"])
-    if name == "aic_agent_sdk_session":
-        return int(cfg["ports"]["aic_agent_sdk_session"])
+    if name == "cloud_agent":
+        return int(cfg["ports"]["cloud_agent"])
     return None
 
 

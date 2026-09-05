@@ -39,11 +39,6 @@ type fakeToolCounterReq struct {
 	Delta int64 `json:"delta"`
 }
 
-type testReactLoopPolicy struct {
-	afterModel func(context.Context, ReactLoopAfterModelInput) (ReactLoopBranchDecision, error)
-	afterTools func(context.Context, ReactLoopAfterToolsInput) (ReactLoopBranchDecision, error)
-}
-
 type toolCallCountingMiddleware struct {
 	middleware.BaseMiddleware
 	hits int64
@@ -112,6 +107,28 @@ func TestDeepAgentInterruptUsesReadyHandleOnce(t *testing.T) {
 	}
 }
 
+func TestDeepAgentInterruptWithoutOptionsQueuesBeforeStart(t *testing.T) {
+	agent := &DeepAgent{}
+	if !agent.Interrupt() {
+		t.Fatal("interrupt rejected")
+	}
+	agent.setGraphInterruptHandle(nil)
+	calls := 0
+	agent.setGraphInterruptHandle(func(opts ...compose.GraphInterruptOption) {
+		calls++
+		if len(opts) != 0 {
+			t.Fatalf("unexpected options: %v", opts)
+		}
+	})
+	if calls != 1 {
+		t.Fatalf("interrupt delivered %d times, want once", calls)
+	}
+	agent.Interrupt()
+	if calls != 1 {
+		t.Fatalf("duplicate interrupt delivered %d times", calls)
+	}
+}
+
 func TestDeepAgentPrepareRunAcceptsInterruptDuringBeforeAgent(t *testing.T) {
 	ctx := context.Background()
 	ctrl := gomock.NewController(t)
@@ -156,20 +173,6 @@ func TestDeepAgentPrepareRunAcceptsInterruptDuringBeforeAgent(t *testing.T) {
 	}
 }
 
-func (p testReactLoopPolicy) AfterModel(ctx context.Context, input ReactLoopAfterModelInput) (ReactLoopBranchDecision, error) {
-	if p.afterModel == nil {
-		return ReactLoopBranchDefault, nil
-	}
-	return p.afterModel(ctx, input)
-}
-
-func (p testReactLoopPolicy) AfterTools(ctx context.Context, input ReactLoopAfterToolsInput) (ReactLoopBranchDecision, error) {
-	if p.afterTools == nil {
-		return ReactLoopBranchDefault, nil
-	}
-	return p.afterTools(ctx, input)
-}
-
 func (t *fakeToolCounter) Info(_ context.Context) (*schema.ToolInfo, error) {
 	return &schema.ToolInfo{
 		Name: "counter",
@@ -185,11 +188,11 @@ func (t *fakeToolCounter) Info(_ context.Context) (*schema.ToolInfo, error) {
 	}, nil
 }
 
-func (t *fakeToolCounter) InvokableRun(_ context.Context, argumentsInJSON string, _ ...tool.Option) (string, error) {
+func (t *fakeToolCounter) InvokableRun(_ context.Context, argumentsInJSON string, _ ...tool.Option) (output string, err error) {
 	delta := gjson.Get(argumentsInJSON, "delta").Int()
-	t.total += delta
+	total := atomic.AddInt64(&t.total, delta)
 
-	return fmt.Sprintf(`{"total": %v}`, t.total), nil
+	return fmt.Sprintf(`{"total": %v}`, total), nil
 }
 
 func (m *toolCallCountingMiddleware) Name() string {
@@ -547,59 +550,6 @@ func TestDeepAgent_StreamableToolArgumentTypeErrorReturnsToolResult(t *testing.T
 	}
 }
 
-func TestDeepAgent_RunCanEndAfterToolsWithoutSecondModelTurn(t *testing.T) {
-	ctx := context.Background()
-	ctrl := gomock.NewController(t)
-	cm := mock_model.NewMockToolCallingChatModel(ctrl)
-	cm.EXPECT().WithTools(gomock.Any()).Return(cm, nil).AnyTimes()
-
-	fakeTool := &fakeToolCounter{}
-	fakeToolInfo, _ := fakeTool.Info(ctx)
-	cm.EXPECT().Generate(gomock.Any(), gomock.Any(), gomock.Any()).
-		DoAndReturn(func(ctx context.Context, input []*schema.Message, opts ...model.Option) (*schema.Message, error) {
-			return schema.AssistantMessage("call tool",
-				[]schema.ToolCall{{
-					ID: randStr(),
-					Function: schema.FunctionCall{
-						Name:      fakeToolInfo.Name,
-						Arguments: serialiser.ToString(&fakeToolCounterReq{Delta: 2}),
-					},
-				}}), nil
-		}).Times(1)
-
-	agent, err := New(ctx,
-		WithModel(cm),
-		WithTools(fakeTool),
-		WithCheckpointStore(checkpointer.NewInMemoryStore()),
-		WithContextManager(contextmanager.New()),
-		WithReactLoopBranchPolicy(testReactLoopPolicy{
-			afterTools: func(context.Context, ReactLoopAfterToolsInput) (ReactLoopBranchDecision, error) {
-				return ReactLoopBranchToEnd, nil
-			},
-		}),
-	)
-	if err != nil {
-		t.Fatalf("New() error = %v", err)
-	}
-
-	out, err := agent.Run(ctx, []*schema.Message{schema.UserMessage("run tool and stop")})
-	if err != nil {
-		t.Fatalf("Run() error = %v", err)
-	}
-	if out == nil {
-		t.Fatal("Run() output is nil")
-	}
-	if out.Role != schema.Tool {
-		t.Fatalf("expected terminal tool message, got role=%s content=%q", out.Role, out.Content)
-	}
-	if out.Content != `{"total": 2}` {
-		t.Fatalf("unexpected output content: %q", out.Content)
-	}
-	if fakeTool.total != 2 {
-		t.Fatalf("expect fakeTool.total is 2, but got %v", fakeTool.total)
-	}
-}
-
 func TestDeepAgent_ToolNodeHandlers_NonStream(t *testing.T) {
 	ctx := context.Background()
 	ctrl := gomock.NewController(t)
@@ -653,16 +603,17 @@ func TestDeepAgent_ToolNodeHandlers_NonStream(t *testing.T) {
 			}
 		}).Times(2)
 
-	agent, err := NewFromSpec(ctx, &DeepAgentSpec{
-		Model:               cm,
-		Middlewares:         []middleware.Middleware{contextmanager.New(), toolMW},
-		Tools:               []tool.BaseTool{fakeTool},
-		CheckpointStore:     checkpointer.NewInMemoryStore(),
-		ToolNodePreHandler:  preHandler,
-		ToolNodePostHandler: postHandler,
-	})
+	agent, err := New(ctx,
+		WithModel(cm),
+		WithContextManager(contextmanager.New()),
+		WithMiddleware(toolMW),
+		WithTools(fakeTool),
+		WithCheckpointStore(checkpointer.NewInMemoryStore()),
+		WithToolNodePreHandler(preHandler),
+		WithToolNodePostHandler(postHandler),
+	)
 	if err != nil {
-		t.Fatalf("NewFromSpec() error = %v", err)
+		t.Fatalf("New() error = %v", err)
 	}
 
 	out, err := agent.Run(ctx, []*schema.Message{schema.UserMessage("please call tool")})
@@ -698,17 +649,17 @@ func TestDeepAgent_ToolNodePreHandlerError_NonStream(t *testing.T) {
 				},
 			}}), nil).Times(1)
 
-	agent, err := NewFromSpec(ctx, &DeepAgentSpec{
-		Model:           cm,
-		Middlewares:     []middleware.Middleware{contextmanager.New()},
-		Tools:           []tool.BaseTool{fakeTool},
-		CheckpointStore: checkpointer.NewInMemoryStore(),
-		ToolNodePreHandler: func(ctx context.Context, input *schema.Message) (*schema.Message, error) {
+	agent, err := New(ctx,
+		WithModel(cm),
+		WithContextManager(contextmanager.New()),
+		WithTools(fakeTool),
+		WithCheckpointStore(checkpointer.NewInMemoryStore()),
+		WithToolNodePreHandler(func(ctx context.Context, input *schema.Message) (*schema.Message, error) {
 			return nil, fmt.Errorf("tool node pre failed")
-		},
-	})
+		}),
+	)
 	if err != nil {
-		t.Fatalf("NewFromSpec() error = %v", err)
+		t.Fatalf("New() error = %v", err)
 	}
 
 	_, err = agent.Run(ctx, []*schema.Message{schema.UserMessage("please call tool")})

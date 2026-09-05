@@ -36,24 +36,23 @@ const (
 )
 
 type Config struct {
-	BasePrompt  string                   `json:"base_prompt" yaml:"base_prompt"`
-	Worker      WorkerConfig             `json:"worker" yaml:"worker"`
-	Coordinator CoordinatorConfig        `json:"coordinator" yaml:"coordinator"`
-	MySQL       MySQLConfig              `json:"mysql" yaml:"mysql"`
-	Abase       AbaseConfig              `json:"abase" yaml:"abase"`
-	IDGen       IDGenConfig              `json:"idgen" yaml:"idgen"`
-	Features    FeaturesConfig           `json:"features" yaml:"features"`
-	Tables      TablesConfig             `json:"tables" yaml:"tables"`
-	Checkpoint  CheckpointConfig         `json:"checkpoint" yaml:"checkpoint"`
-	Memory      MemoryConfig             `json:"memory" yaml:"memory"`
-	Models      map[string]ModelConfig   `json:"models" yaml:"models"`
-	Roles       map[string]RoleConfig    `json:"roles" yaml:"roles"`
-	Runtime     RuntimeConfig            `json:"runtime" yaml:"runtime"`
-	Backend     cloudbackend.Config      `json:"backend" yaml:"backend"`
-	Output      cloudworker.OutputConfig `json:"output" yaml:"output"`
-	MCP         MCPConfig                `json:"mcp" yaml:"mcp"`
-	Fornax      FornaxConfig             `json:"fornax" yaml:"fornax"`
-	Log         LogConfig                `json:"log" yaml:"log"`
+	BasePrompt string                   `json:"base_prompt" yaml:"base_prompt"`
+	Worker     WorkerConfig             `json:"worker" yaml:"worker"`
+	MySQL      MySQLConfig              `json:"mysql" yaml:"mysql"`
+	Abase      AbaseConfig              `json:"abase" yaml:"abase"`
+	IDGen      IDGenConfig              `json:"idgen" yaml:"idgen"`
+	Features   FeaturesConfig           `json:"features" yaml:"features"`
+	Tables     TablesConfig             `json:"tables" yaml:"tables"`
+	Checkpoint CheckpointConfig         `json:"checkpoint" yaml:"checkpoint"`
+	Memory     MemoryConfig             `json:"memory" yaml:"memory"`
+	Models     map[string]ModelConfig   `json:"models" yaml:"models"`
+	Roles      map[string]RoleConfig    `json:"roles" yaml:"roles"`
+	Runtime    RuntimeConfig            `json:"runtime" yaml:"runtime"`
+	Backend    cloudbackend.Config      `json:"backend" yaml:"backend"`
+	Output     cloudworker.OutputConfig `json:"output" yaml:"output"`
+	MCP        MCPConfig                `json:"mcp" yaml:"mcp"`
+	Fornax     FornaxConfig             `json:"fornax" yaml:"fornax"`
+	Log        LogConfig                `json:"log" yaml:"log"`
 }
 
 type WorkerConfig struct {
@@ -77,25 +76,13 @@ type WorkerConfig struct {
 	InterruptDrainTimeoutMS         int `json:"interrupt_drain_timeout_ms" yaml:"interrupt_drain_timeout_ms"`
 }
 
-type CoordinatorConfig struct {
-	PSM             string `json:"psm" yaml:"psm"`
-	Cluster         string `json:"cluster,omitempty" yaml:"cluster,omitempty"`
-	DirectHostPorts string `json:"direct_hostports" yaml:"direct_hostports"`
-}
-
 type MySQLConfig struct {
-	PSM           string `json:"psm" yaml:"psm"`
-	DBName        string `json:"db_name" yaml:"db_name"`
 	DSN           string `json:"dsn,omitempty" yaml:"dsn,omitempty"`
 	ReadDSN       string `json:"read_dsn,omitempty" yaml:"read_dsn,omitempty"`
 	ReadTimeoutMS int    `json:"read_timeout_ms,omitempty" yaml:"read_timeout_ms,omitempty"`
 }
 
 type AbaseConfig struct {
-	PSM            string `json:"psm" yaml:"psm"`
-	PrimaryPSM     string `json:"primary_psm,omitempty" yaml:"primary_psm,omitempty"`
-	MasterPrefer   string `json:"master_prefer,omitempty" yaml:"master_prefer,omitempty"`
-	Table          string `json:"table,omitempty" yaml:"table,omitempty"`
 	Addr           string `json:"addr,omitempty" yaml:"addr,omitempty"`
 	Password       string `json:"password,omitempty" yaml:"password,omitempty"`
 	DB             int    `json:"db,omitempty" yaml:"db,omitempty"`
@@ -249,9 +236,6 @@ func Default() Config {
 			ShutdownInterruptDrainTimeoutMS: 120000,
 			InterruptDrainTimeoutMS:         30000,
 		},
-		Coordinator: CoordinatorConfig{
-			PSM: "ad.creative.aic_agent_coordinator",
-		},
 		Tables: TablesConfig{
 			History:            "t_agentthread_history",
 			ThreadRef:          threadrefs.DefaultTableName,
@@ -341,7 +325,16 @@ func loadYAML(path string, cfg *Config) error {
 }
 
 func defaultLocalFilename() string {
-	return filepath.Join("conf", fallbackFilename)
+	paths := []string{
+		filepath.Join("conf", fallbackFilename),
+		filepath.Join("deepagent", "cmd", "cloud_agent", "conf", fallbackFilename),
+	}
+	for _, path := range paths {
+		if _, err := os.Stat(path); err == nil {
+			return path
+		}
+	}
+	return paths[0]
 }
 
 var envReferencePattern = regexp.MustCompile(`\$\{([A-Za-z_][A-Za-z0-9_]*)\}`)
@@ -518,11 +511,8 @@ func validate(cfg Config) error {
 	if strings.TrimSpace(cfg.Worker.Namespace) == "" {
 		return fmt.Errorf("worker.namespace is required")
 	}
-	if strings.TrimSpace(cfg.Coordinator.PSM) == "" && strings.TrimSpace(cfg.Coordinator.DirectHostPorts) == "" {
-		return fmt.Errorf("coordinator.psm or coordinator.direct_hostports is required")
-	}
-	if strings.TrimSpace(cfg.MySQL.DSN) == "" && (strings.TrimSpace(cfg.MySQL.PSM) == "" || strings.TrimSpace(cfg.MySQL.DBName) == "") {
-		return fmt.Errorf("mysql.dsn or mysql.psm + mysql.db_name is required")
+	if strings.TrimSpace(cfg.MySQL.DSN) == "" {
+		return fmt.Errorf("mysql.dsn is required")
 	}
 	if strings.TrimSpace(cfg.Runtime.WorkDir) == "" {
 		return fmt.Errorf("runtime.workdir is required")
@@ -543,7 +533,7 @@ func validate(cfg Config) error {
 		return fmt.Errorf("checkpoint.store is required")
 	}
 	if !cfg.Abase.Configured() {
-		return fmt.Errorf("redis config is required for history seq generator: set abase.psm for Abase or abase.addr for local Redis")
+		return fmt.Errorf("abase.addr is required")
 	}
 	if cfg.Memory.Enabled && strings.TrimSpace(cfg.Memory.WorkspaceRoot) == "" {
 		return fmt.Errorf("memory.workspace_root is required when memory.enabled is true")
@@ -685,8 +675,6 @@ func (c MySQLConfig) StoreConfig() mysqlstore.Config {
 		timeout = time.Duration(c.ReadTimeoutMS) * time.Millisecond
 	}
 	return mysqlstore.Config{
-		PSM:         c.PSM,
-		DBName:      c.DBName,
 		DSN:         c.DSN,
 		ReadDSN:     c.ReadDSN,
 		ReadTimeout: timeout,
@@ -703,10 +691,6 @@ func (c AbaseConfig) StoreConfig() redisstore.Config {
 		writeTimeout = time.Duration(c.WriteTimeoutMS) * time.Millisecond
 	}
 	return redisstore.Config{
-		PSM:          c.PSM,
-		PrimaryPSM:   c.primaryPSM(),
-		MasterPrefer: c.MasterPrefer,
-		Table:        c.Table,
 		Addr:         c.Addr,
 		Password:     c.Password,
 		DB:           c.DB,
@@ -716,27 +700,11 @@ func (c AbaseConfig) StoreConfig() redisstore.Config {
 }
 
 func (c AbaseConfig) Configured() bool {
-	return strings.TrimSpace(c.PSM) != "" || strings.TrimSpace(c.Addr) != ""
+	return strings.TrimSpace(c.Addr) != ""
 }
 
 func (c AbaseConfig) RedisMode() string {
-	if strings.TrimSpace(c.Addr) != "" {
-		return "local_redis"
-	}
-	if strings.TrimSpace(c.PSM) != "" {
-		return "abase"
-	}
-	return ""
-}
-
-func (c AbaseConfig) primaryPSM() string {
-	if strings.TrimSpace(c.PrimaryPSM) != "" {
-		return strings.TrimSpace(c.PrimaryPSM)
-	}
-	if strings.TrimSpace(c.PSM) == "" {
-		return ""
-	}
-	return strings.TrimSpace(c.PSM) + "_primary"
+	return "redis"
 }
 
 func envString(key, fallback string) string {
@@ -748,8 +716,8 @@ func envString(key, fallback string) string {
 
 func configPath(args []string) (string, error) {
 	path := envString("AGENT_WORKER_CONF", defaultLocalFilename())
-	fs := flag.NewFlagSet("aic_agent_sdk_worker", flag.ContinueOnError)
-	fs.StringVar(&path, "conf", path, "AIC Agent SDK worker YAML config file")
+	fs := flag.NewFlagSet("deep_agent_sdk_worker", flag.ContinueOnError)
+	fs.StringVar(&path, "conf", path, "DeepAgent worker YAML config file")
 	if err := fs.Parse(args); err != nil {
 		return "", err
 	}

@@ -25,13 +25,8 @@ func newCloudAgentConfig(cfg config.Config, chatModels map[string]model.ToolCall
 
 func newCloudAgentHostConfig(cfg config.Config) cloudworker.HostConfig {
 	return cloudworker.HostConfig{
-		Namespace: cfg.Worker.Namespace,
-		Env:       env.Env(),
-		Coordinator: cloudworker.CoordinatorConfig{
-			PSM:             cfg.Coordinator.PSM,
-			Cluster:         cfg.Coordinator.Cluster,
-			DirectHostPorts: cloudworker.ParseHostPorts(cfg.Coordinator.DirectHostPorts),
-		},
+		Namespace:                     cfg.Worker.Namespace,
+		Env:                           env.Env(),
 		Concurrency:                   cfg.Worker.Concurrency,
 		ScanLimit:                     cfg.Worker.ScanLimit,
 		MessageLimit:                  cfg.Worker.MessageLimit,

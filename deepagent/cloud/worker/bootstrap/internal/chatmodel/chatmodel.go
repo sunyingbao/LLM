@@ -6,6 +6,7 @@ import (
 	"net/http"
 
 	"code.byted.org/gopkg/logs/v2"
+	"eino-cli/deepagent/backend/modelhub"
 	"eino-cli/deepagent/cloud/worker/bootstrap/config"
 	"github.com/cloudwego/eino-ext/components/model/ark"
 	"github.com/cloudwego/eino-ext/components/model/openai"
@@ -86,7 +87,7 @@ func buildArkModel(ctx context.Context, modelConfig config.ModelConfig) (model.T
 	return ark.NewChatModel(ctx, cfg)
 }
 
-func buildOpenAIModel(ctx context.Context, modelConfig config.ModelConfig) (model.ToolCallingChatModel, error) {
+func buildOpenAIModel(ctx context.Context, modelConfig config.ModelConfig) (chatModel model.ToolCallingChatModel, err error) {
 	cfg := &openai.ChatModelConfig{
 		BaseURL:          modelConfig.ModelBaseURL,
 		APIKey:           modelConfig.ModelAPIKey,
@@ -97,6 +98,12 @@ func buildOpenAIModel(ctx context.Context, modelConfig config.ModelConfig) (mode
 		Temperature:      modelConfig.Temperature,
 		TopP:             modelConfig.TopP,
 		FrequencyPenalty: modelConfig.FrequencyPenalty,
+	}
+	if modelhub.IsEndpoint(cfg.BaseURL) {
+		cfg.HTTPClient, err = modelhub.NewHTTPClient(cfg.BaseURL, cfg.APIKey, 0)
+		if err != nil {
+			return nil, fmt.Errorf("build modelhub client: %w", err)
+		}
 	}
 	if modelConfig.Thinking != nil {
 		cfg.ExtraFields = map[string]any{

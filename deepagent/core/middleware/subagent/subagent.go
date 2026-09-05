@@ -161,7 +161,6 @@ type SubAgentMiddleware struct {
 	factory                        SubAgentFactory
 	subAgentSkillMiddlewareFactory func() middleware.Middleware
 	contextInjector                SubAgentContextInjector
-	results                        map[string]string
 	toolMask                       deeptools.Mask
 	enableTaskStreaming            bool
 }
@@ -190,7 +189,7 @@ var ExecutorSubAgent = &SubAgent{
 
 // New 创建子代理中间件
 // 子代理列表完全由调用方通过 cfg.SubAgents 显式指定。
-func New(cfg *SubAgentConfig) *SubAgentMiddleware {
+func New(cfg *SubAgentConfig) (instance *SubAgentMiddleware) {
 	subAgentSkillMiddlewareFactory := cfg.SubAgentSkillMiddlewareFactory
 	if subAgentSkillMiddlewareFactory == nil {
 		subAgentSkillMiddlewareFactory = cfg.SkillMiddlewareFactory
@@ -202,7 +201,6 @@ func New(cfg *SubAgentConfig) *SubAgentMiddleware {
 		defaultTools:                   cfg.DefaultTools,
 		factory:                        cfg.Factory,
 		subAgentSkillMiddlewareFactory: subAgentSkillMiddlewareFactory,
-		results:                        make(map[string]string),
 		toolMask:                       cfg.ToolMask,
 		enableTaskStreaming:            cfg.EnableTaskStreaming,
 	}
@@ -393,7 +391,7 @@ func (m *SubAgentMiddleware) startAsyncTask(ctx context.Context, exec *taskExecu
 // 会复用这些 handlers，同时在自身 prepareRun 阶段把 deepagents.GetDeepAgent(ctx)
 // 覆盖为当前子 agent。因此 callback 内需要区分主/子 agent 时，应读取
 // deepagents.GetDeepAgent(ctx).Name()/Depth()，而不是假定 handler 只属于父 agent。
-func (m *SubAgentMiddleware) runTask(ctx context.Context, input *taskInput) (string, error) {
+func (m *SubAgentMiddleware) runTask(ctx context.Context, input *taskInput) (output string, err error) {
 	exec, directOutput, err := m.prepareTaskExecution(ctx, input)
 	if err != nil || directOutput != "" {
 		return directOutput, err
@@ -413,11 +411,10 @@ func (m *SubAgentMiddleware) runTask(ctx context.Context, input *taskInput) (str
 	}
 
 	logs.CtxInfo(ctx, "[task] subagent execution completed, subagent: %s, result_len: %d", input.SubAgent, len(result))
-	m.storeResult(input.SubAgent, input.Task, result)
 	return result, nil
 }
 
-func (m *SubAgentMiddleware) streamTask(ctx context.Context, input *taskInput) (*schema.StreamReader[string], error) {
+func (m *SubAgentMiddleware) streamTask(ctx context.Context, input *taskInput) (output *schema.StreamReader[string], err error) {
 	exec, directOutput, err := m.prepareTaskExecution(ctx, input)
 	if err != nil {
 		return nil, err
@@ -447,12 +444,11 @@ func (m *SubAgentMiddleware) streamTask(ctx context.Context, input *taskInput) (
 	go func() {
 		defer sw.Close()
 		defer stream.Close()
-		var result string
+		var resultLen int
 		for {
 			msg, recvErr := stream.Recv()
 			if errors.Is(recvErr, io.EOF) {
-				logs.CtxInfo(ctx, "[task] subagent execution completed, subagent: %s, result_len: %d", input.SubAgent, len(result))
-				m.storeResult(input.SubAgent, input.Task, result)
+				logs.CtxInfo(ctx, "[task] subagent execution completed, subagent: %s, result_len: %d", input.SubAgent, resultLen)
 				return
 			}
 			if recvErr != nil {
@@ -467,7 +463,7 @@ func (m *SubAgentMiddleware) streamTask(ctx context.Context, input *taskInput) (
 			if text == "" {
 				continue
 			}
-			result += text
+			resultLen += len(text)
 			if sw.Send(text, nil) {
 				return
 			}
@@ -510,21 +506,9 @@ func (m *SubAgentMiddleware) runSubAgentAsync(
 	result, err := m.executeSubAgentWithMessages(ctx, sa, chatModel, task, messages)
 	if err != nil {
 		logs.CtxError(ctx, "[task] async subagent execution failed, subagent: %s, err: %v", subAgentName, err)
-		m.storeResult(subAgentName, task, fmt.Sprintf("[Error] task failed: %v", err))
 		return
 	}
 	logs.CtxInfo(ctx, "[task] async subagent execution completed, subagent: %s, result_len: %d", subAgentName, len(result))
-	m.storeResult(subAgentName, task, result)
-}
-
-func (m *SubAgentMiddleware) storeResult(subAgentName, task, result string) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.results[resultKey(subAgentName, task)] = result
-}
-
-func resultKey(subAgentName, task string) string {
-	return subAgentName + ":" + task[:min(50, len(task))]
 }
 
 func subAgentCheckpointID(subAgentName, task string) string {

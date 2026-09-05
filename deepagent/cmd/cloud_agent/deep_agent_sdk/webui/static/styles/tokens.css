@@ -1,0 +1,33 @@
+:root {
+  color-scheme: light;
+  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-mono: "SFMono-Regular", Menlo, Consolas, monospace;
+  --font-body: 13px;
+  --line-body: 20px;
+  --font-input: 14px;
+  --line-input: 21px;
+  --font-meta: 12px;
+  --line-meta: 16px;
+  --font-code: 12px;
+  --line-code: 18px;
+  --sidebar-width: 256px;
+  --inspector-width: 360px;
+  --inspector-collapsed-width: 48px;
+  --topbar-height: 48px;
+  --content-width: 760px;
+  --color-bg: #ffffff;
+  --color-sidebar: #f7f7f5;
+  --color-panel: #fafafa;
+  --color-hover: #efefed;
+  --color-selected: #e9e9e7;
+  --color-border: #e3e3e0;
+  --color-text: #20201f;
+  --color-muted: #757572;
+  --color-status: #4f75c8;
+  --color-added: #eaf6ed;
+  --color-removed: #fbeceb;
+  --color-danger: #b42318;
+  --radius-control: 8px;
+  --radius-composer: 14px;
+  --shadow-composer: 0 8px 28px rgb(32 32 31 / 9%);
+}

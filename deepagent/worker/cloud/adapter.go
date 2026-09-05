@@ -3,46 +3,46 @@
 package cloud
 
 import (
+	"encoding/json"
 	"fmt"
 	"maps"
 	"strconv"
 	"strings"
-	"time"
 
-	ac "code.byted.org/overpass/ad_creative_aic_agent_coordinator/kitex_gen/agent_coordinator"
+	"eino-cli/deepagent/coordinator"
 	"eino-cli/deepagent/worker"
 )
 
-func messageFromAC(message *ac.Message) *agentworker.Message {
+func messageFromCoordinator(message *coordinator.Message) (result *agentworker.Message) {
 	if message == nil {
 		return nil
 	}
 	return &agentworker.Message{
-		ID:       fmt.Sprint(message.GetMessageId()),
-		Sender:   senderFromAC(message.GetSender()),
-		Type:     agentworker.MessageType(message.GetMessageType()),
-		Payload:  append([]byte(nil), message.GetPayload()...),
-		Metadata: maps.Clone(message.GetMetadata()),
+		ID:       fmt.Sprint(message.MessageID),
+		Sender:   senderFromCoordinator(message.Sender),
+		Type:     agentworker.MessageType(message.MessageType),
+		Payload:  append([]byte(nil), message.Payload...),
+		Metadata: maps.Clone(message.Metadata),
 	}
 }
 
-func senderFromAC(sender *ac.Sender) *agentworker.Sender {
+func senderFromCoordinator(sender *coordinator.Sender) (result *agentworker.Sender) {
 	if sender == nil {
 		return nil
 	}
 	return &agentworker.Sender{
-		Type: agentworker.SenderType(fmt.Sprint(sender.GetSenderType())),
-		ID:   sender.GetSenderId(),
+		Type: agentworker.SenderType(strings.ToUpper(string(sender.Type))),
+		ID:   sender.ID,
 	}
 }
 
-func eventToAC(threadID int64, event *agentworker.Event) *ac.Event {
+func eventToCoordinator(threadID int64, event *agentworker.Event) (result *coordinator.Event) {
 	if event == nil {
 		return nil
 	}
-	acEvent := &ac.Event{
-		ThreadId:          threadID,
-		TurnId:            event.TurnID,
+	coordinatorEvent := &coordinator.Event{
+		ThreadID:          threadID,
+		TurnID:            event.TurnID,
 		EventType:         string(event.Type),
 		Payload:           append([]byte(nil), event.Payload...),
 		Metadata:          maps.Clone(event.Metadata),
@@ -51,35 +51,43 @@ func eventToAC(threadID int64, event *agentworker.Event) *ac.Event {
 	}
 	if event.ID != "" {
 		if id, err := strconv.ParseInt(strings.TrimSpace(event.ID), 10, 64); err == nil {
-			acEvent.EventId = &id
+			coordinatorEvent.EventID = id
 		}
 	}
 	if !event.TS.IsZero() {
-		ts := event.TS.UnixMilli()
-		acEvent.CreatedAtMs = &ts
+		coordinatorEvent.CreatedAt = event.TS
 	}
-	return acEvent
+	return coordinatorEvent
 }
 
-func releaseStatusFromBlock(block *agentworker.PendingBlock) *ac.ThreadStatus {
+func releaseStatusFromBlock(block *agentworker.PendingBlock) (status coordinator.ThreadStatus) {
 	if block != nil {
-		status := ac.ThreadStatus_BLOCKED
-		return &status
+		return coordinator.ThreadStatusBlocked
 	}
-	return nil
+	return ""
 }
 
-func parseInt64(value string, name string) (int64, error) {
-	id, err := strconv.ParseInt(strings.TrimSpace(value), 10, 64)
+func parseInt64(value string, name string) (id int64, err error) {
+	id, err = strconv.ParseInt(strings.TrimSpace(value), 10, 64)
 	if err != nil || id == 0 {
 		return 0, fmt.Errorf("invalid %s %q", name, value)
 	}
 	return id, nil
 }
 
-func timeFromMs(ms int64) time.Time {
-	if ms <= 0 {
-		return time.Time{}
+func parseCancelInputPayload(payload []byte) (result CancelInputControlPayload, err error) {
+	err = json.Unmarshal(payload, &result)
+	return result, err
+}
+
+func parseCloseThreadPayload(payload []byte) (result CloseThreadControlPayload, err error) {
+	err = json.Unmarshal(payload, &result)
+	return result, err
+}
+
+func coordinatorError(op string, err error) (result error) {
+	if err == nil {
+		return nil
 	}
-	return time.UnixMilli(ms)
+	return fmt.Errorf("%s: %w", op, err)
 }

@@ -120,16 +120,17 @@ func (s *maxModelCallsState) UnmarshalRuntimeState(data string) error {
 	return nil
 }
 
-func applyMaxModelCallsSpec(spec *DeepAgentSpec) {
-	if spec == nil || spec.MaxModelCalls <= 0 {
-		return
+func applyMaxModelCalls(config *Config, middlewares []middleware.Middleware) (configured []middleware.Middleware) {
+	if config == nil || config.MaxModelCalls <= 0 {
+		return middlewares
 	}
-	state := newMaxModelCallsState(spec.MaxModelCalls)
-	spec.Middlewares = append(spec.Middlewares, newMaxModelCallsMiddleware(state))
-	customState := make(map[string]types.RunTimeStateful, len(spec.CustomGraphState)+1)
-	for name, stateful := range spec.CustomGraphState {
+	state := newMaxModelCallsState(config.MaxModelCalls)
+	configured = append(middlewares, newMaxModelCallsMiddleware(state))
+	customState := make(map[string]types.RunTimeStateful, len(config.CustomGraphState)+1)
+	for name, stateful := range config.CustomGraphState {
 		customState[name] = stateful
 	}
 	customState[maxModelCallsStateName] = state
-	spec.CustomGraphState = customState
+	config.CustomGraphState = customState
+	return configured
 }

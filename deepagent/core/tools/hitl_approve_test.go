@@ -25,11 +25,11 @@ func (t *policyTestTool) InvokableRun(ctx context.Context, argumentsInJSON strin
 	return "ran:" + argumentsInJSON, nil
 }
 
-func TestNewInvokableApprovableTool_AllowKeepsOldBehavior(t *testing.T) {
+func TestApprovalGateAllowsTool(t *testing.T) {
 	base := &policyTestTool{name: "counter"}
-	wrapped := NewInvokableApprovableTool(base, func(context.Context, *ApprovalInfo) bool {
+	wrapped := NewInvokablePolicyTool(base, ApprovalGate(func(context.Context, *ApprovalInfo) bool {
 		return false
-	})
+	}))
 
 	got, err := wrapped.InvokableRun(context.Background(), `{"delta":1}`)
 	if err != nil {

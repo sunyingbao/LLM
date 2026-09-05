@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	ac "code.byted.org/overpass/ad_creative_aic_agent_coordinator/kitex_gen/agent_coordinator"
+	"eino-cli/deepagent/coordinator"
 	"eino-cli/deepagent/core/agentthread"
 	"eino-cli/deepagent/core/backends"
 	"eino-cli/deepagent/core/memory"
@@ -21,7 +21,7 @@ func TestBuildMemoryTurnObserverDisabledByDefault(t *testing.T) {
 		cfg:  Config{},
 		deps: Deps{MemoryStore: memory.NewInMemoryStore()},
 	}
-	if got := b.buildMemoryTurnObserver(&ac.Thread{ThreadId: 42, UserId: 123}); got != nil {
+	if got := b.buildMemoryTurnObserver(&coordinator.Thread{ThreadID: 42, UserID: 123}); got != nil {
 		t.Fatalf("observer=%v, want nil when memory is disabled", got)
 	}
 }
@@ -38,7 +38,7 @@ func TestBuildMemoryTurnObserverTouchesSourceOnly(t *testing.T) {
 		},
 		deps: Deps{MemoryStore: store},
 	}
-	observer := b.buildMemoryTurnObserver(&ac.Thread{ThreadId: 42, UserId: 123})
+	observer := b.buildMemoryTurnObserver(&coordinator.Thread{ThreadID: 42, UserID: 123})
 	if observer == nil {
 		t.Fatal("observer=nil, want non-nil")
 	}
@@ -96,9 +96,9 @@ func TestBuildMemoryTurnObserverSkipsConsolidationThread(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	observer := b.buildMemoryTurnObserver(&ac.Thread{
-		ThreadId: 42,
-		UserId:   123,
+	observer := b.buildMemoryTurnObserver(&coordinator.Thread{
+		ThreadID: 42,
+		UserID:   123,
 		Metadata: metadata,
 	})
 	if observer != nil {
@@ -213,21 +213,21 @@ func TestBuildMemoryStage2CreateThreadRequestDoesNotUseWorkspaceRootAsCwd(t *tes
 	if err != nil {
 		t.Fatal(err)
 	}
-	if req.GetProfile() == nil {
+	if req.Profile == nil {
 		t.Fatal("profile=nil")
 	}
-	if req.GetProfile().GetCwd() != "" {
-		t.Fatalf("profile cwd=%q, want empty because memory thread uses MemoryWorkspace directly", req.GetProfile().GetCwd())
+	if req.Profile.Cwd != "" {
+		t.Fatalf("profile cwd=%q, want empty because memory thread uses MemoryWorkspace directly", req.Profile.Cwd)
 	}
-	if req.GetProfile().GetRole() != DefaultRoleID {
-		t.Fatalf("profile role=%q, want %q", req.GetProfile().GetRole(), DefaultRoleID)
+	if req.Profile.Role != DefaultRoleID {
+		t.Fatalf("profile role=%q, want %q", req.Profile.Role, DefaultRoleID)
 	}
-	metadata, err := memory.ParseStage2Metadata(req.GetMetadata())
+	metadata, err := memory.ParseStage2Metadata(req.Metadata)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if metadata.WorkspaceRoot != "memory" || req.GetMetadata()["keep"] != "yes" {
-		t.Fatalf("metadata=%v", req.GetMetadata())
+	if metadata.WorkspaceRoot != "memory" || req.Metadata["keep"] != "yes" {
+		t.Fatalf("metadata=%v", req.Metadata)
 	}
 	if metadata.StartedArtifactHash != "artifact" {
 		t.Fatalf("artifact metadata=%q, want artifact", metadata.StartedArtifactHash)
@@ -260,7 +260,7 @@ func TestNewMemoryConsolidationAgentThreadConsumesSpoofedMetadata(t *testing.T) 
 	}
 	thread, err := b.newMemoryConsolidationAgentThread(context.Background(), threadSpec{
 		ThreadID: "42",
-		Info:     &ac.Thread{Metadata: metadata},
+		Info:     &coordinator.Thread{Metadata: metadata},
 	}, threadResources{}, ResolvedTurnProfile{Model: ModelProfile{}})
 	if err != nil {
 		t.Fatalf("newMemoryConsolidationAgentThread() error=%v", err)
@@ -297,9 +297,9 @@ func TestNewAgentThreadRejectsConsolidationThreadWhenMemoryDisabled(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = b.newAgentThread(context.Background(), &ac.Thread{
-		ThreadId: 42,
-		UserId:   123,
+	_, err = b.newAgentThread(context.Background(), &coordinator.Thread{
+		ThreadID: 42,
+		UserID:   123,
 		Metadata: metadata,
 	})
 	if err == nil || err.Error() != "cloudagent: memory consolidation thread requires memory enabled" {

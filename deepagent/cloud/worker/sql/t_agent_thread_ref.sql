@@ -8,4 +8,4 @@ CREATE TABLE t_agent_thread_ref (
   PRIMARY KEY (user_id, session_id, thread_name),
   KEY idx_user_session_thread (user_id, session_id, thread_id),
   KEY idx_thread_id (thread_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci ROW_FORMAT=DYNAMIC COMMENT='AIC Agent SDK worker session thread friendly ref table';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci ROW_FORMAT=DYNAMIC COMMENT='DeepAgent worker session thread friendly ref table';

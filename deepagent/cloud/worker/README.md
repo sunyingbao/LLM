@@ -1,8 +1,7 @@
 # CloudAgent Worker
 
 `cloudagent/worker` is the default server-side CloudAgent worker implementation.
-It builds a DeepAgent thread, connects it to Agent Coordinator, and hides the
-thread/runtime wiring that most services should not reimplement.
+It builds a DeepAgent thread and connects it to the in-process Coordinator.
 
 Use this package when a service wants the standard CloudAgent behavior:
 
@@ -31,10 +30,10 @@ Read these files in order:
 4. `worker.go`: coordinator client and host-loop settings.
 5. `example_test.go`: minimal wiring shape.
 6. `bootstrap/README.md`: recommended business entry point.
-7. `cmd/cloud_agent/aic_agent_sdk_worker`: thin reference process entry.
+7. `cmd/cloud_agent`: unified API, Session, Coordinator, and Worker process.
 
-Do not start from `thread/` or `policy/`. Those packages are implementation
-details for the default CloudAgent thread.
+Do not start from `deepagent/worker/thread` or this package's `policy/`.
+They are implementation details, not the default business entry point.
 
 ## Minimal Wiring
 
@@ -45,17 +44,13 @@ The host service provides two groups of inputs:
 
 The required dependencies are:
 
+- `CoordinatorClient`
 - `HistoryStore`
 - `CheckpointStore`
-
-`CoordinatorClient` is optional. If it is nil, `New` creates one from
-`Config.Host.Coordinator`; provide it only when the service wants to own
-client construction.
 
 The required config sections are:
 
 - `Host.Namespace`
-- `Host.Coordinator.PSM`, unless `Deps.CoordinatorClient` is provided
 - at least one `Turn.Models` entry
 - at least one `Turn.Roles` entry, normally `main`
 
@@ -63,14 +58,10 @@ The normal startup shape is:
 
 ```go
 cfg := worker.Config{
-    Host: worker.HostConfig{
-        Namespace: "aic_agent_sdk",
-        Concurrency: 4,
-        Coordinator: worker.CoordinatorConfig{
-            PSM:     "ad.creative.aic_agent_coordinator",
-            Cluster: "default",
-        },
-    },
+	Host: worker.HostConfig{
+		Namespace: "deep_agent_sdk",
+		Concurrency: 4,
+	},
     Thread: worker.ThreadConfig{
         WorkDir:   "/data/agent_workdir",
         Backend: backend.Config{
@@ -109,6 +100,7 @@ cfg := worker.Config{
 }
 
 deps := worker.Deps{
+	CoordinatorClient: coordinatorClient,
     HistoryStore:      historyProvider,
     CheckpointStore:   checkpointProvider,
     ThreadRefs:        threadRefStore,
@@ -127,8 +119,8 @@ This package owns the default CloudAgent thread:
 - open the configured workspace backend, currently local or AI infra sandbox
 - attach history and checkpoint stores
 - build turn-level middleware, tools, skills, HITL, plan mode, and collab tools
-- convert thread events into worker output items
-- handle structured CloudAgent input messages such as user input, resume, and compact
+- configure the shared `deepagent/worker/thread` adapter for input, resume,
+  compact and event conversion
 
 Collaboration is enabled only when `Deps.MessageWaitObserver` is set. Named
 thread references are enabled only when `Deps.ThreadRefs` is set; without it,
@@ -146,7 +138,7 @@ When using this low-level package directly, the hosting service owns:
 - deployment config, logs, metrics, and process lifecycle
 
 The bootstrap package owns the first three items for normal business callers.
-`cmd/cloud_agent/aic_agent_sdk_api` and `cmd/cloud_agent/aic_agent_sdk_session` are
+`cmd/cloud_agent/deep_agent_sdk` and `cmd/cloud_agent/deep_agent_sdk_session` are
 reference services for one product experience. They are intentionally outside
 this package's public library surface.
 
@@ -155,11 +147,12 @@ this package's public library surface.
 - `config.go`: public config, dependency interfaces, and validation.
 - `cloudagent/backend`: workspace backend config and local / AI infra sandbox opening.
 - `worker.go`: Agent Coordinator client creation and host-loop config.
-- Internal `agent_builder.go`, `thread_options.go`, `thread_tools.go`,
-  `thread_resources.go`, `collab.go`, and `workdir.go`: the default thread
-  assembly path. Read these only when changing SDK internals.
-- Internal `thread/`: the runtime adapter between `DeepAgentThread` and
-  `agentworker.AgentThread`.
+- Internal `agent_builder.go`: `threadBuilder` and all of its methods, from
+  profile validation through resources, turn configuration and collaboration.
+  Free helpers remain in `thread_tools.go`, `thread_resources.go`, `collab.go`
+  and `workdir.go`; separate memory objects keep their own files.
+- `deepagent/worker/thread`: the shared runtime adapter between
+  `DeepAgentThread` and `agentworker.AgentThread`, also used by local runtime.
 - Internal `policy/`: execute approval policy helpers.
 - `sql/`: optional reference DDL for worker-owned stores.
 

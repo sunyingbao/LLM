@@ -3,10 +3,6 @@ package constant
 // ==================== 错误消息 ====================
 
 const (
-
-	// ErrMsgContextManagerRequired 上下文管理器必需错误
-	ErrMsgContextManagerRequired = "context manager is required"
-
 	// ErrMsgModelRequired 模型必需错误
 	ErrMsgModelRequired = "model is required"
 

@@ -20,7 +20,7 @@ type TokenCounter func(messages []*schema.Message) int
 //     while the thread is idle.
 //   - CompactionStrategy decides how to rebuild history.
 //
-// Implementations must be safe for the callback paths used by TurnRunner.
+// Implementations must be safe for the callback paths used during agent execution.
 type ContextManager interface {
 	// ReloadHistory restores the in-memory history from the backing store.
 	// It is called during thread initialization before turns are started.

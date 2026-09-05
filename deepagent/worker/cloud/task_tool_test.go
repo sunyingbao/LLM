@@ -9,31 +9,27 @@ import (
 	"strings"
 	"testing"
 
-	"code.byted.org/gopkg/thrift"
-	ac "code.byted.org/overpass/ad_creative_aic_agent_coordinator/kitex_gen/agent_coordinator"
-	"code.byted.org/overpass/ad_creative_aic_agent_coordinator/kitex_gen/base"
-	coordinatorrpc "code.byted.org/overpass/ad_creative_aic_agent_coordinator/rpc/ad_creative_aic_agent_coordinator"
+	"eino-cli/deepagent/coordinator"
 	"eino-cli/deepagent/worker"
 	"eino-cli/deepagent/worker/tasktool"
 	"github.com/cloudwego/eino/components/tool"
 )
 
 func TestTaskToolSpawnTaskMergesBusinessMetadata(t *testing.T) {
-	var gotReq *ac.CreateThreadRequest
+	var gotReq *coordinator.CreateThreadRequest
 	var gotSpawned tasktool.SpawnedThread
-	coordinatorrpc.SetMock.CreateThread(func(ctx context.Context, req *ac.CreateThreadRequest) (*ac.CreateThreadResponse, error) {
-		gotReq = req
-		return &ac.CreateThreadResponse{
-			Thread: &ac.Thread{
-				ThreadId:  2001,
-				SessionId: thrift.StringPtr("sess-parent"),
-				Title:     thrift.StringPtr("child"),
-				Status:    ac.ThreadStatus_READY,
-				Metadata:  req.GetMetadata(),
-				Profile:   req.GetProfile(),
+	coordinatorrpc.SetMock.CreateThread(func(ctx context.Context, req coordinator.CreateThreadRequest) (coordinator.CreateThreadResult, error) {
+		gotReq = &req
+		return coordinator.CreateThreadResult{
+			Thread: &coordinator.Thread{
+				ThreadID:  2001,
+				SessionID: "sess-parent",
+				Title:     "child",
+				Status:    coordinator.ThreadStatusReady,
+				Metadata:  req.Metadata,
+				Profile:   req.Profile,
 			},
-			InitialMessage: &ac.Message{MessageId: 2002},
-			BaseResp:       okTaskToolBaseResp(),
+			InitialMessage: &coordinator.Message{MessageID: 2002},
 		}, nil
 	})
 	defer coordinatorrpc.SetMock.CreateThread(nil)
@@ -75,33 +71,33 @@ func TestTaskToolSpawnTaskMergesBusinessMetadata(t *testing.T) {
 	if gotReq == nil {
 		t.Fatalf("CreateThread was not called")
 	}
-	if gotReq.GetEnv() != "ppe_a" {
-		t.Fatalf("env = %q", gotReq.GetEnv())
+	if gotReq.Env != "ppe_a" {
+		t.Fatalf("env = %q", gotReq.Env)
 	}
-	if gotReq.GetSessionId() != "sess-parent" {
-		t.Fatalf("session_id = %q", gotReq.GetSessionId())
+	if gotReq.SessionID != "sess-parent" {
+		t.Fatalf("session_id = %q", gotReq.SessionID)
 	}
-	if gotReq.GetUserId() != 12345 {
-		t.Fatalf("user_id = %d", gotReq.GetUserId())
+	if gotReq.UserID != 12345 {
+		t.Fatalf("user_id = %d", gotReq.UserID)
 	}
-	if gotReq.GetMetadata()["task_type"] != "research" || gotReq.GetMetadata()["biz_key"] != "biz_value" ||
-		gotReq.GetMetadata()["parent_thread_id"] != "from_business" {
-		t.Fatalf("metadata = %+v", gotReq.GetMetadata())
+	if gotReq.Metadata["task_type"] != "research" || gotReq.Metadata["biz_key"] != "biz_value" ||
+		gotReq.Metadata["parent_thread_id"] != "from_business" {
+		t.Fatalf("metadata = %+v", gotReq.Metadata)
 	}
-	if gotReq.GetProfile().GetRole() != "reviewer" || gotReq.GetProfile().GetCwd() != "/repo" {
-		t.Fatalf("profile = %+v", gotReq.GetProfile())
+	if gotReq.Profile.Role != "reviewer" || gotReq.Profile.Cwd != "/repo" {
+		t.Fatalf("profile = %+v", gotReq.Profile)
 	}
-	if gotReq.GetInitialMessage().GetMetadata()["from"] != "parent" {
-		t.Fatalf("initial message metadata = %+v", gotReq.GetInitialMessage().GetMetadata())
+	if gotReq.InitialMessage.Metadata["from"] != "parent" {
+		t.Fatalf("initial message metadata = %+v", gotReq.InitialMessage.Metadata)
 	}
-	if gotReq.GetInitialMessage().GetMessageType() != string(agentworker.MessageTypeText) {
-		t.Fatalf("message_type = %q", gotReq.GetInitialMessage().GetMessageType())
+	if gotReq.InitialMessage.MessageType != string(agentworker.MessageTypeText) {
+		t.Fatalf("message_type = %q", gotReq.InitialMessage.MessageType)
 	}
-	if string(gotReq.GetInitialMessage().GetPayload()) != "do child work" {
-		t.Fatalf("payload content = %q", string(gotReq.GetInitialMessage().GetPayload()))
+	if string(gotReq.InitialMessage.Payload) != "do child work" {
+		t.Fatalf("payload content = %q", string(gotReq.InitialMessage.Payload))
 	}
-	if gotReq.GetInitialMessage().GetSender().GetSenderId() != "1001" {
-		t.Fatalf("sender_id = %q", gotReq.GetInitialMessage().GetSender().GetSenderId())
+	if gotReq.InitialMessage.SenderID != "1001" {
+		t.Fatalf("sender_id = %q", gotReq.InitialMessage.SenderID)
 	}
 	if gotSpawned.ThreadID != "2001" || gotSpawned.InitialMessageID != "2002" ||
 		gotSpawned.SessionID != "sess-parent" || gotSpawned.Title != "child" ||
@@ -114,17 +110,16 @@ func TestTaskToolSpawnTaskMergesBusinessMetadata(t *testing.T) {
 }
 
 func TestTaskToolSpawnTaskFormatsInitialCloudRequest(t *testing.T) {
-	var gotReq *ac.CreateThreadRequest
-	coordinatorrpc.SetMock.CreateThread(func(ctx context.Context, req *ac.CreateThreadRequest) (*ac.CreateThreadResponse, error) {
-		gotReq = req
-		return &ac.CreateThreadResponse{
-			Thread: &ac.Thread{
-				ThreadId:  2001,
-				SessionId: thrift.StringPtr("sess-parent"),
-				Status:    ac.ThreadStatus_READY,
+	var gotReq *coordinator.CreateThreadRequest
+	coordinatorrpc.SetMock.CreateThread(func(ctx context.Context, req coordinator.CreateThreadRequest) (coordinator.CreateThreadResult, error) {
+		gotReq = &req
+		return coordinator.CreateThreadResult{
+			Thread: &coordinator.Thread{
+				ThreadID:  2001,
+				SessionID: "sess-parent",
+				Status:    coordinator.ThreadStatusReady,
 			},
-			InitialMessage: &ac.Message{MessageId: 2002},
-			BaseResp:       okTaskToolBaseResp(),
+			InitialMessage: &coordinator.Message{MessageID: 2002},
 		}, nil
 	})
 	defer coordinatorrpc.SetMock.CreateThread(nil)
@@ -156,20 +151,20 @@ func TestTaskToolSpawnTaskFormatsInitialCloudRequest(t *testing.T) {
 	if out.Errmsg != "" {
 		t.Fatalf("spawn errmsg = %q", out.Errmsg)
 	}
-	if gotReq == nil || gotReq.GetInitialMessage() == nil {
+	if gotReq == nil || gotReq.InitialMessage == nil {
 		t.Fatalf("CreateThread initial message missing: %+v", gotReq)
 	}
-	initial := gotReq.GetInitialMessage()
-	if payload := string(initial.GetPayload()); payload != "formatted:do child work" {
+	initial := gotReq.InitialMessage
+	if payload := string(initial.Payload); payload != "formatted:do child work" {
 		t.Fatalf("initial payload = %q", payload)
 	}
-	if initial.GetSender().GetSenderId() != "1001" {
-		t.Fatalf("sender_id = %q", initial.GetSender().GetSenderId())
+	if initial.SenderID != "1001" {
+		t.Fatalf("sender_id = %q", initial.SenderID)
 	}
-	if initial.GetMetadata()["from_thread_ref"] != "main" ||
-		initial.GetMetadata()["formatter_only"] != "true" ||
-		initial.GetMetadata()["spawn_initial"] != "true" {
-		t.Fatalf("initial metadata = %+v", initial.GetMetadata())
+	if initial.Metadata["from_thread_ref"] != "main" ||
+		initial.Metadata["formatter_only"] != "true" ||
+		initial.Metadata["spawn_initial"] != "true" {
+		t.Fatalf("initial metadata = %+v", initial.Metadata)
 	}
 }
 
@@ -177,17 +172,16 @@ func TestCoordinatorTaskHostCreateThreadProfileFromRequest(t *testing.T) {
 	ctx := context.Background()
 	host := CoordinatorTaskHost{Namespace: "ns", UserID: 12345}
 
-	var gotReq *ac.CreateThreadRequest
-	coordinatorrpc.SetMock.CreateThread(func(ctx context.Context, req *ac.CreateThreadRequest) (*ac.CreateThreadResponse, error) {
-		gotReq = req
-		return &ac.CreateThreadResponse{
-			Thread: &ac.Thread{
-				ThreadId:  2001,
-				SessionId: thrift.StringPtr("sess_1"),
-				Status:    ac.ThreadStatus_READY,
-				Profile:   req.GetProfile(),
+	var gotReq *coordinator.CreateThreadRequest
+	coordinatorrpc.SetMock.CreateThread(func(ctx context.Context, req coordinator.CreateThreadRequest) (coordinator.CreateThreadResult, error) {
+		gotReq = &req
+		return coordinator.CreateThreadResult{
+			Thread: &coordinator.Thread{
+				ThreadID:  2001,
+				SessionID: "sess_1",
+				Status:    coordinator.ThreadStatusReady,
+				Profile:   req.Profile,
 			},
-			BaseResp: okTaskToolBaseResp(),
 		}, nil
 	})
 	thread, err := host.CreateThread(ctx, tasktool.CreateThreadRequest{
@@ -199,11 +193,11 @@ func TestCoordinatorTaskHostCreateThreadProfileFromRequest(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateThread() error = %v", err)
 	}
-	if gotReq.GetMetadata()["biz_key"] != "biz_value" {
-		t.Fatalf("metadata = %+v", gotReq.GetMetadata())
+	if gotReq.Metadata["biz_key"] != "biz_value" {
+		t.Fatalf("metadata = %+v", gotReq.Metadata)
 	}
-	if gotReq.GetProfile().GetRole() != "request_role" || gotReq.GetProfile().GetCwd() != "/repo" {
-		t.Fatalf("profile = %+v", gotReq.GetProfile())
+	if gotReq.Profile.Role != "request_role" || gotReq.Profile.Cwd != "/repo" {
+		t.Fatalf("profile = %+v", gotReq.Profile)
 	}
 	if thread.Profile.Role != "request_role" {
 		t.Fatalf("thread.Profile.Role = %q, want request_role", thread.Profile.Role)
@@ -215,14 +209,13 @@ func TestCoordinatorTaskHostCreateThreadProfileFromRequest(t *testing.T) {
 }
 
 func TestTaskToolSpawnTaskWorksWithoutBusinessMetadata(t *testing.T) {
-	coordinatorrpc.SetMock.CreateThread(func(ctx context.Context, req *ac.CreateThreadRequest) (*ac.CreateThreadResponse, error) {
-		if req.GetSessionId() != "" {
-			t.Fatalf("session_id = %q, want empty", req.GetSessionId())
+	coordinatorrpc.SetMock.CreateThread(func(ctx context.Context, req coordinator.CreateThreadRequest) (coordinator.CreateThreadResult, error) {
+		if req.SessionID != "" {
+			t.Fatalf("session_id = %q, want empty", req.SessionID)
 		}
-		return &ac.CreateThreadResponse{
-			Thread:         &ac.Thread{ThreadId: 2001, Status: ac.ThreadStatus_READY},
-			InitialMessage: &ac.Message{MessageId: 2002},
-			BaseResp:       okTaskToolBaseResp(),
+		return coordinator.CreateThreadResult{
+			Thread:         &coordinator.Thread{ThreadID: 2001, Status: coordinator.ThreadStatusReady},
+			InitialMessage: &coordinator.Message{MessageID: 2002},
 		}, nil
 	})
 	defer coordinatorrpc.SetMock.CreateThread(nil)
@@ -242,11 +235,10 @@ func TestTaskToolSpawnTaskWorksWithoutBusinessMetadata(t *testing.T) {
 }
 
 func TestTaskToolSpawnTaskOutputHidesThreadID(t *testing.T) {
-	coordinatorrpc.SetMock.CreateThread(func(ctx context.Context, req *ac.CreateThreadRequest) (*ac.CreateThreadResponse, error) {
-		return &ac.CreateThreadResponse{
-			Thread:         &ac.Thread{ThreadId: 2001, Status: ac.ThreadStatus_READY},
-			InitialMessage: &ac.Message{MessageId: 2002},
-			BaseResp:       okTaskToolBaseResp(),
+	coordinatorrpc.SetMock.CreateThread(func(ctx context.Context, req coordinator.CreateThreadRequest) (coordinator.CreateThreadResult, error) {
+		return coordinator.CreateThreadResult{
+			Thread:         &coordinator.Thread{ThreadID: 2001, Status: coordinator.ThreadStatusReady},
+			InitialMessage: &coordinator.Message{MessageID: 2002},
 		}, nil
 	})
 	defer coordinatorrpc.SetMock.CreateThread(nil)
@@ -269,15 +261,14 @@ func TestTaskToolSendMessageRejectsSelfByDefault(t *testing.T) {
 }
 
 func TestTaskToolSendMessageMergesBusinessMetadata(t *testing.T) {
-	var gotReq *ac.SendMessageRequest
-	coordinatorrpc.SetMock.SendMessage(func(ctx context.Context, req *ac.SendMessageRequest) (*ac.SendMessageResponse, error) {
-		gotReq = req
-		return &ac.SendMessageResponse{
-			Message:  &ac.Message{MessageId: 3002, Sender: req.GetSender(), MessageType: req.GetMessageType(), Payload: req.GetPayload(), Metadata: req.GetMetadata()},
-			BaseResp: okTaskToolBaseResp(),
+	var gotReq *coordinator.SubmitInputRequest
+	coordinatorrpc.SetMock.SubmitInput(func(ctx context.Context, req coordinator.SubmitInputRequest) (coordinator.SubmitInputResult, error) {
+		gotReq = &req
+		return coordinator.SubmitInputResult{
+			Message: &coordinator.Message{MessageID: 3002, Sender: &coordinator.Sender{Type: req.SenderType, ID: req.SenderID}, MessageType: req.MessageType, Payload: req.Payload, Metadata: req.Metadata},
 		}, nil
 	})
-	defer coordinatorrpc.SetMock.SendMessage(nil)
+	defer coordinatorrpc.SetMock.SubmitInput(nil)
 
 	toolset := &testTaskToolConfig{
 		Namespace: "ns",
@@ -301,34 +292,33 @@ func TestTaskToolSendMessageMergesBusinessMetadata(t *testing.T) {
 	if gotReq == nil {
 		t.Fatalf("SendMessage was not called")
 	}
-	if gotReq.GetMetadata()["task_type"] != "notify" || gotReq.GetMetadata()["biz_key"] != "biz_value" ||
-		gotReq.GetMetadata()["parent_thread_id"] != "from_business" {
-		t.Fatalf("metadata = %+v", gotReq.GetMetadata())
+	if gotReq.Metadata["task_type"] != "notify" || gotReq.Metadata["biz_key"] != "biz_value" ||
+		gotReq.Metadata["parent_thread_id"] != "from_business" {
+		t.Fatalf("metadata = %+v", gotReq.Metadata)
 	}
-	if gotReq.GetThreadId() != 3001 {
-		t.Fatalf("thread_id = %d", gotReq.GetThreadId())
+	if gotReq.ThreadID != 3001 {
+		t.Fatalf("thread_id = %d", gotReq.ThreadID)
 	}
-	if gotReq.GetSender().GetSenderId() != "1001" {
-		t.Fatalf("sender_id = %q", gotReq.GetSender().GetSenderId())
+	if gotReq.SenderID != "1001" {
+		t.Fatalf("sender_id = %q", gotReq.SenderID)
 	}
-	if gotReq.GetMessageType() != string(agentworker.MessageTypeText) {
-		t.Fatalf("message_type = %q", gotReq.GetMessageType())
+	if gotReq.MessageType != string(agentworker.MessageTypeText) {
+		t.Fatalf("message_type = %q", gotReq.MessageType)
 	}
-	if payload := string(gotReq.GetPayload()); payload != "hello" {
+	if payload := string(gotReq.Payload); payload != "hello" {
 		t.Fatalf("payload = %q", payload)
 	}
 }
 
 func TestTaskToolSendMessageResolvesAliasAndFormatsPayload(t *testing.T) {
-	var gotReq *ac.SendMessageRequest
-	coordinatorrpc.SetMock.SendMessage(func(ctx context.Context, req *ac.SendMessageRequest) (*ac.SendMessageResponse, error) {
-		gotReq = req
-		return &ac.SendMessageResponse{
-			Message:  &ac.Message{MessageId: 3002, Sender: req.GetSender(), MessageType: req.GetMessageType(), Payload: req.GetPayload(), Metadata: req.GetMetadata()},
-			BaseResp: okTaskToolBaseResp(),
+	var gotReq *coordinator.SubmitInputRequest
+	coordinatorrpc.SetMock.SubmitInput(func(ctx context.Context, req coordinator.SubmitInputRequest) (coordinator.SubmitInputResult, error) {
+		gotReq = &req
+		return coordinator.SubmitInputResult{
+			Message: &coordinator.Message{MessageID: 3002, Sender: &coordinator.Sender{Type: req.SenderType, ID: req.SenderID}, MessageType: req.MessageType, Payload: req.Payload, Metadata: req.Metadata},
 		}, nil
 	})
-	defer coordinatorrpc.SetMock.SendMessage(nil)
+	defer coordinatorrpc.SetMock.SubmitInput(nil)
 
 	toolset := &testTaskToolConfig{
 		Namespace: "ns",
@@ -350,11 +340,11 @@ func TestTaskToolSendMessageResolvesAliasAndFormatsPayload(t *testing.T) {
 	if out.Errmsg != "" {
 		t.Fatalf("send errmsg = %q", out.Errmsg)
 	}
-	if gotReq.GetThreadId() != 3001 {
-		t.Fatalf("thread_id = %d", gotReq.GetThreadId())
+	if gotReq.ThreadID != 3001 {
+		t.Fatalf("thread_id = %d", gotReq.ThreadID)
 	}
-	if string(gotReq.GetPayload()) != "wrapped:hello" {
-		t.Fatalf("payload = %q", string(gotReq.GetPayload()))
+	if string(gotReq.Payload) != "wrapped:hello" {
+		t.Fatalf("payload = %q", string(gotReq.Payload))
 	}
 }
 
@@ -362,12 +352,12 @@ func TestCoordinatorTaskHostCloseThread(t *testing.T) {
 	ctx := context.Background()
 	host := CoordinatorTaskHost{Namespace: "ns"}
 
-	var gotReq *ac.CloseThreadRequest
-	coordinatorrpc.SetMock.CloseThread(func(ctx context.Context, req *ac.CloseThreadRequest) (*ac.CloseThreadResponse, error) {
-		gotReq = req
-		return &ac.CloseThreadResponse{BaseResp: okTaskToolBaseResp()}, nil
+	var gotReq *coordinator.RequestThreadCloseRequest
+	coordinatorrpc.SetMock.RequestThreadClose(func(ctx context.Context, req coordinator.RequestThreadCloseRequest) (*coordinator.RequestThreadCloseResult, error) {
+		gotReq = &req
+		return &coordinator.RequestThreadCloseResult{}, nil
 	})
-	defer coordinatorrpc.SetMock.CloseThread(nil)
+	defer coordinatorrpc.SetMock.RequestThreadClose(nil)
 
 	rsp, err := host.CloseThread(ctx, tasktool.CloseThreadRequest{ThreadID: "2001", Reason: "done"})
 	if err != nil {
@@ -379,33 +369,32 @@ func TestCoordinatorTaskHostCloseThread(t *testing.T) {
 	if gotReq == nil {
 		t.Fatalf("CloseThread RPC was not called")
 	}
-	if gotReq.GetNamespace() != "ns" || gotReq.GetThreadId() != 2001 || gotReq.GetReason() != "done" {
+	if gotReq.Namespace != "ns" || gotReq.ThreadID != 2001 || gotReq.Reason != "done" {
 		t.Fatalf("close request = %+v", gotReq)
 	}
 }
 
 func TestTaskToolWaitMessageReturnsObservedResult(t *testing.T) {
-	coordinatorrpc.SetMock.ListEvents(func(ctx context.Context, req *ac.ListEventsRequest) (*ac.ListEventsResponse, error) {
-		if req.GetThreadId() != 2001 {
-			t.Fatalf("thread_id = %d", req.GetThreadId())
+	coordinatorrpc.SetMock.ListEvents(func(ctx context.Context, req coordinator.ListEventsRequest) (coordinator.ListEventsResult, error) {
+		if req.ThreadID != 2001 {
+			t.Fatalf("thread_id = %d", req.ThreadID)
 		}
-		if req.GetDirection() != ac.EventListDirection_BACKWARD {
-			t.Fatalf("direction = %v", req.GetDirection())
+		if req.Direction != coordinator.ListDirectionBackward {
+			t.Fatalf("direction = %v", req.Direction)
 		}
-		if req.GetLimit() != 5 {
-			t.Fatalf("limit = %d", req.GetLimit())
+		if req.Limit != 5 {
+			t.Fatalf("limit = %d", req.Limit)
 		}
-		if req.GetOrderBy() != ac.EventListOrder_CREATED_AT_IN_THREAD_SEQ {
-			t.Fatalf("order_by = %v", req.GetOrderBy())
+		if req.Order != coordinator.ListOrderCreatedAt {
+			t.Fatalf("order_by = %v", req.Order)
 		}
-		return &ac.ListEventsResponse{
-			Events: []*ac.Event{
-				{EventId: thrift.Int64Ptr(1), ThreadId: 2001, TurnId: "turn_2002", EventType: "business.progress", Payload: []byte("almost")},
-				{EventId: thrift.Int64Ptr(2), ThreadId: 2001, TurnId: "turn_2002", EventType: "business.done", Payload: []byte("final answer")},
+		return coordinator.ListEventsResult{
+			Events: []coordinator.Event{
+				{EventID: 1, ThreadID: 2001, TurnID: "turn_2002", EventType: "business.progress", Payload: []byte("almost")},
+				{EventID: 2, ThreadID: 2001, TurnID: "turn_2002", EventType: "business.done", Payload: []byte("final answer")},
 			},
-			NextCursor: thrift.Int64Ptr(2),
-			HasMore:    thrift.BoolPtr(false),
-			BaseResp:   okTaskToolBaseResp(),
+			NextCursor: 2,
+			HasMore:    false,
 		}, nil
 	})
 	defer coordinatorrpc.SetMock.ListEvents(nil)
@@ -420,13 +409,13 @@ func TestTaskToolWaitMessageReturnsObservedResult(t *testing.T) {
 			}
 			return 2001, nil
 		},
-		MessageWaitObserver: func(events []*ac.Event, messageID int64) tasktool.MessageWaitResult {
+		MessageWaitObserver: func(events []coordinator.Event, messageID int64) tasktool.MessageWaitResult {
 			if messageID != 2002 {
 				t.Fatalf("message_id = %d", messageID)
 			}
 			for _, event := range events {
-				if event.GetEventType() == "business.done" {
-					return tasktool.MessageWaitResult{Done: true, Result: string(event.GetPayload())}
+				if event.EventType == "business.done" {
+					return tasktool.MessageWaitResult{Done: true, Result: string(event.Payload)}
 				}
 			}
 			return tasktool.MessageWaitResult{}
@@ -453,21 +442,20 @@ func TestTaskToolWaitMessageReturnsObservedResult(t *testing.T) {
 }
 
 func TestTaskToolWaitMessageReturnsMultipleResults(t *testing.T) {
-	coordinatorrpc.SetMock.ListEvents(func(ctx context.Context, req *ac.ListEventsRequest) (*ac.ListEventsResponse, error) {
-		var events []*ac.Event
-		switch req.GetThreadId() {
+	coordinatorrpc.SetMock.ListEvents(func(ctx context.Context, req coordinator.ListEventsRequest) (coordinator.ListEventsResult, error) {
+		var events []coordinator.Event
+		switch req.ThreadID {
 		case 2001:
-			events = []*ac.Event{{EventId: thrift.Int64Ptr(1), ThreadId: 2001, TurnId: "turn_2002", EventType: "business.done", Payload: []byte("first final")}}
+			events = []coordinator.Event{{EventID: 1, ThreadID: 2001, TurnID: "turn_2002", EventType: "business.done", Payload: []byte("first final")}}
 		case 3001:
-			events = []*ac.Event{{EventId: thrift.Int64Ptr(2), ThreadId: 3001, TurnId: "turn_3002", EventType: "business.done", Payload: []byte("second final")}}
+			events = []coordinator.Event{{EventID: 2, ThreadID: 3001, TurnID: "turn_3002", EventType: "business.done", Payload: []byte("second final")}}
 		default:
-			t.Fatalf("unexpected thread_id = %d", req.GetThreadId())
+			t.Fatalf("unexpected thread_id = %d", req.ThreadID)
 		}
-		return &ac.ListEventsResponse{
+		return coordinator.ListEventsResult{
 			Events:     events,
-			NextCursor: thrift.Int64Ptr(events[len(events)-1].GetEventId()),
-			HasMore:    thrift.BoolPtr(false),
-			BaseResp:   okTaskToolBaseResp(),
+			NextCursor: events[len(events)-1].EventID,
+			HasMore:    false,
 		}, nil
 	})
 	defer coordinatorrpc.SetMock.ListEvents(nil)
@@ -486,10 +474,10 @@ func TestTaskToolWaitMessageReturnsMultipleResults(t *testing.T) {
 				return 0, nil
 			}
 		},
-		MessageWaitObserver: func(events []*ac.Event, messageID int64) tasktool.MessageWaitResult {
+		MessageWaitObserver: func(events []coordinator.Event, messageID int64) tasktool.MessageWaitResult {
 			for _, event := range events {
-				if event.GetEventType() == "business.done" {
-					return tasktool.MessageWaitResult{Done: true, Result: string(event.GetPayload())}
+				if event.EventType == "business.done" {
+					return tasktool.MessageWaitResult{Done: true, Result: string(event.Payload)}
 				}
 			}
 			return tasktool.MessageWaitResult{}
@@ -514,11 +502,10 @@ func TestTaskToolWaitMessageReturnsMultipleResults(t *testing.T) {
 }
 
 func TestTaskToolWaitMessageTimesOutUndoneTargets(t *testing.T) {
-	coordinatorrpc.SetMock.ListEvents(func(ctx context.Context, req *ac.ListEventsRequest) (*ac.ListEventsResponse, error) {
-		return &ac.ListEventsResponse{
-			Events:   []*ac.Event{},
-			HasMore:  thrift.BoolPtr(false),
-			BaseResp: okTaskToolBaseResp(),
+	coordinatorrpc.SetMock.ListEvents(func(ctx context.Context, req coordinator.ListEventsRequest) (coordinator.ListEventsResult, error) {
+		return coordinator.ListEventsResult{
+			Events:  []coordinator.Event{},
+			HasMore: false,
 		}, nil
 	})
 	defer coordinatorrpc.SetMock.ListEvents(nil)
@@ -532,7 +519,7 @@ func TestTaskToolWaitMessageTimesOutUndoneTargets(t *testing.T) {
 			}
 			return 2001, nil
 		},
-		MessageWaitObserver: func(events []*ac.Event, messageID int64) tasktool.MessageWaitResult {
+		MessageWaitObserver: func(events []coordinator.Event, messageID int64) tasktool.MessageWaitResult {
 			return tasktool.MessageWaitResult{Result: "still running"}
 		},
 	}
@@ -566,7 +553,7 @@ func TestTaskToolWaitMessageRequiresObserver(t *testing.T) {
 func TestTaskToolWaitMessageValidatesTargets(t *testing.T) {
 	toolset := &testTaskToolConfig{
 		Namespace: "ns",
-		MessageWaitObserver: func(events []*ac.Event, messageID int64) tasktool.MessageWaitResult {
+		MessageWaitObserver: func(events []coordinator.Event, messageID int64) tasktool.MessageWaitResult {
 			return tasktool.MessageWaitResult{}
 		},
 	}
@@ -595,8 +582,8 @@ type testTaskToolConfig struct {
 	ResolveTarget               func(ctx context.Context, target string) (int64, error)
 	OnThreadSpawned             func(ctx context.Context, spawned tasktool.SpawnedThread) (string, error)
 	FormatOutbound              func(ctx context.Context, msg tasktool.OutboundMessage) (*tasktool.FormattedOutboundMessage, error)
-	MessageWaitObserver         func(events []*ac.Event, messageID int64) tasktool.MessageWaitResult
-	CloseTaskObserver           func(events []*ac.Event) string
+	MessageWaitObserver         func(events []coordinator.Event, messageID int64) tasktool.MessageWaitResult
+	CloseTaskObserver           func(events []coordinator.Event) string
 }
 
 func newTestTaskTool(cfg *testTaskToolConfig) *tasktool.TaskTool {
@@ -683,23 +670,23 @@ func invokeTaskToolByIndex(t *testing.T, cfg *testTaskToolConfig, idx int, args 
 	return decodeTaskToolOutput(t, out)
 }
 
-func taskToolTestEventsToAC(events []*tasktool.Event) []*ac.Event {
-	out := make([]*ac.Event, 0, len(events))
+func taskToolTestEventsToAC(events []*tasktool.Event) []coordinator.Event {
+	out := make([]coordinator.Event, 0, len(events))
 	for _, ev := range events {
 		if ev == nil {
 			continue
 		}
 		threadID, _ := strconv.ParseInt(ev.ThreadID, 10, 64)
 		eventID, _ := strconv.ParseInt(ev.ID, 10, 64)
-		acEvent := &ac.Event{
-			ThreadId:  threadID,
-			TurnId:    ev.TurnID,
+		acEvent := coordinator.Event{
+			ThreadID:  threadID,
+			TurnID:    ev.TurnID,
 			EventType: ev.Type,
 			Payload:   append([]byte(nil), ev.Payload...),
 			Metadata:  ev.Metadata,
 		}
 		if eventID != 0 {
-			acEvent.EventId = &eventID
+			acEvent.EventID = eventID
 		}
 		out = append(out, acEvent)
 	}
@@ -720,8 +707,4 @@ func decodeTaskToolData(t *testing.T, raw json.RawMessage, out any) {
 	if err := json.Unmarshal(raw, out); err != nil {
 		t.Fatalf("decode data %s: %v", raw, err)
 	}
-}
-
-func okTaskToolBaseResp() *base.BaseResp {
-	return &base.BaseResp{StatusCode: 0, StatusMessage: "OK"}
 }

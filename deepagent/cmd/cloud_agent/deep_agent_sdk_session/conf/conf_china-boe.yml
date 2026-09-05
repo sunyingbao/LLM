@@ -1,0 +1,13 @@
+mysql:
+  dsn: ${AGENT_WORKER_MYSQL_DSN}
+  read_dsn: ""
+  read_timeout_ms: 5000
+
+tables:
+  agent_session: t_agent_session
+
+coordinator:
+  namespace: cloud_agent
+
+idgen:
+  namespace: videocut_aigc_agent_coordinator

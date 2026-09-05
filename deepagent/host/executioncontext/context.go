@@ -4,16 +4,13 @@ import (
 	stdctx "context"
 	"sync/atomic"
 
-	"eino-cli/backend/consts"
+	"eino-cli/deepagent/backend/consts"
 )
 
 type PermissionMode = consts.PermissionMode
 type QuerySource string
 
-const (
-	QuerySourceMain      QuerySource = "main"
-	QuerySourceAutoDream QuerySource = "auto_dream"
-)
+const QuerySourceMain QuerySource = "main"
 
 type (
 	sessionIDKey         struct{}

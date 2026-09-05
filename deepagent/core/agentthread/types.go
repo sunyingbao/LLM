@@ -14,14 +14,6 @@ import (
 
 // ======= Op（输入操作） =======
 
-type TurnRunOptions struct {
-	CheckpointID        string
-	WriteToCheckpointID string
-	ForceNewRun         bool
-	ResumeInterruptIDs  []string
-	ResumeData          map[string]any
-}
-
 // InterruptOptions describes one external request to interrupt the active turn.
 //
 // Metadata is intentionally opaque to agentthread. Worker/control-plane hosts

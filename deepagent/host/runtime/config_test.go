@@ -8,16 +8,16 @@ import (
 	sdkruntime "eino-cli/deepagent/runtime"
 )
 
-func TestConfigFromEnvDefaultsLocalAndAcceptsRemote(t *testing.T) {
+func TestRuntimeKindFromEnvDefaultsLocalAndAcceptsRemote(t *testing.T) {
 	t.Setenv(RuntimeEnvironmentVariable, "")
-	config, err := ConfigFromEnv()
-	if err != nil || config.DefaultRuntime != sdkruntime.RuntimeLocal {
-		t.Fatalf("ConfigFromEnv(default) config=%+v error=%v", config, err)
+	kind, err := RuntimeKindFromEnv()
+	if err != nil || kind != sdkruntime.RuntimeLocal {
+		t.Fatalf("RuntimeKindFromEnv(default) kind=%q error=%v", kind, err)
 	}
 	t.Setenv(RuntimeEnvironmentVariable, "remote")
-	config, err = ConfigFromEnv()
-	if err != nil || config.DefaultRuntime != sdkruntime.RuntimeRemote {
-		t.Fatalf("ConfigFromEnv(remote) config=%+v error=%v", config, err)
+	kind, err = RuntimeKindFromEnv()
+	if err != nil || kind != sdkruntime.RuntimeRemote {
+		t.Fatalf("RuntimeKindFromEnv(remote) kind=%q error=%v", kind, err)
 	}
 }
 
@@ -33,10 +33,28 @@ func TestNewInteractiveRuntimeRejectsUnconfiguredRemoteBeforeConstruction(t *tes
 	}
 }
 
+func TestNewInteractiveRuntimeBuildsHTTPRemoteWithoutLocalConfig(t *testing.T) {
+	t.Setenv(RuntimeEnvironmentVariable, string(sdkruntime.RuntimeRemote))
+	t.Setenv("DEEPAGENT_SERVER_URL", "https://agent.example.test")
+	t.Setenv("DEEPAGENT_PROJECT", "remote-project")
+	t.Setenv("DEEPAGENT_USER_TOKEN", "opaque-token")
+
+	runtime, err := NewInteractiveRuntime(context.Background(), nil, "")
+	if err != nil {
+		t.Fatalf("NewInteractiveRuntime(remote) error = %v", err)
+	}
+	if runtime.RuntimeKind() != sdkruntime.RuntimeRemote {
+		t.Fatalf("RuntimeKind() = %q, want %q", runtime.RuntimeKind(), sdkruntime.RuntimeRemote)
+	}
+	if runtime.Name() != "remote:agent.example.test" {
+		t.Fatalf("Name() = %q, want remote backend name", runtime.Name())
+	}
+}
+
 func TestParseRuntimeKindRejectsAutomaticFallback(t *testing.T) {
 	t.Parallel()
 
-	if _, err := ParseRuntimeKind("auto"); err == nil {
-		t.Fatal("ParseRuntimeKind(auto) error = nil")
+	if _, err := parseRuntimeKind("auto"); err == nil {
+		t.Fatal("parseRuntimeKind(auto) error = nil")
 	}
 }

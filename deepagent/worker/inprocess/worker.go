@@ -2,6 +2,7 @@ package inprocess
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -173,7 +174,7 @@ func (w *Worker) PostMessageWithResult(ctx context.Context, threadID string, msg
 		return nil, ErrThreadBlocked
 	}
 	for {
-		actor, err := w.ensureActor(w.newRuntimeContext(), state)
+		actor, err := w.ensureActor(context.Background(), state)
 		if err != nil {
 			return nil, err
 		}
@@ -403,7 +404,6 @@ func (w *Worker) Close(ctx context.Context) error {
 }
 
 type postEnvelope struct {
-	ctx context.Context
 	msg *agentworker.Message
 	ack chan postAck
 }
@@ -424,7 +424,6 @@ type threadActor struct {
 
 func (a *threadActor) enqueue(ctx context.Context, msg *agentworker.Message) (result *agentworker.PostMessageResult, err error) {
 	env := postEnvelope{
-		ctx: ctx,
 		msg: msg,
 		ack: make(chan postAck, 1),
 	}
@@ -452,11 +451,7 @@ func (a *threadActor) shutdown(ctx context.Context) {
 	})
 }
 
-var errActorStopped = &workerError{"actor stopped"}
-
-type workerError struct{ msg string }
-
-func (e *workerError) Error() string { return e.msg }
+var errActorStopped = errors.New("actor stopped")
 
 func (w *Worker) ensureActor(ctx context.Context, state *ThreadState) (*threadActor, error) {
 	if state == nil || state.ID == "" {
@@ -519,17 +514,6 @@ func (w *Worker) runActor(actor *threadActor, output *agentworker.ThreadOutput) 
 		items = output.Items
 	}
 	for {
-		if items == nil {
-			select {
-			case <-actor.stop:
-				w.removeActor(actor)
-				return
-			case env := <-actor.input:
-				result, err := actor.runtime.PostMessage(w.newRuntimeContext(), env.msg)
-				env.ack <- postAck{result: result, err: err}
-			}
-			continue
-		}
 		select {
 		case item, ok := <-items:
 			if !ok {
@@ -547,7 +531,7 @@ func (w *Worker) runActor(actor *threadActor, output *agentworker.ThreadOutput) 
 			w.removeActor(actor)
 			return
 		case env := <-actor.input:
-			result, err := actor.runtime.PostMessage(w.newRuntimeContext(), env.msg)
+			result, err := actor.runtime.PostMessage(context.Background(), env.msg)
 			env.ack <- postAck{result: result, err: err}
 		case item, ok := <-items:
 			if !ok {
@@ -559,10 +543,6 @@ func (w *Worker) runActor(actor *threadActor, output *agentworker.ThreadOutput) 
 			}
 		}
 	}
-}
-
-func (w *Worker) newRuntimeContext() context.Context {
-	return context.Background()
 }
 
 func (w *Worker) handleRuntimeOutputItem(actor *threadActor, item agentworker.ThreadOutputItem) bool {

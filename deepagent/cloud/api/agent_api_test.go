@@ -8,10 +8,10 @@ import (
 	"reflect"
 	"testing"
 
-	ac "code.byted.org/overpass/ad_creative_aic_agent_coordinator/kitex_gen/agent_coordinator"
 	protoevent "eino-cli/deepagent/cloud/protocol/event"
 	protoinput "eino-cli/deepagent/cloud/protocol/input"
 	"eino-cli/deepagent/cloud/protocol/timeline"
+	"eino-cli/deepagent/coordinator"
 )
 
 func TestSubmitInputSendsUserMessageAndWakesThread(t *testing.T) {
@@ -162,12 +162,11 @@ func TestCreateThreadInitialInputRecordsParentMetadata(t *testing.T) {
 	}
 }
 
-func TestThreadFromACPopulatesParentThreadID(t *testing.T) {
-	sessionID := "42"
-	thread := threadFromAC(&ac.Thread{
-		ThreadId:  13,
-		SessionId: &sessionID,
-		Metadata:  map[string]string{MetadataParentThreadID: "12"},
+func TestThreadFromCoordinatorPopulatesParentThreadID(t *testing.T) {
+	thread := threadFromCoordinator(&coordinator.Thread{
+		ThreadID:  13,
+		SessionID: "42",
+		Metadata:  map[string]string{"parent_thread_id": "12"},
 	})
 	if thread.ParentThreadID != "12" {
 		t.Fatalf("parent thread id = %q", thread.ParentThreadID)
@@ -257,6 +256,12 @@ func TestSubscribeTimelineEmitsQueueAndFilteredEvents(t *testing.T) {
 	}
 	if len(events) != 2 || events[0].QueueID != "q1" || events[1].Event.EventID != "keep" || events[1].Event.SessionID != "42" {
 		t.Fatalf("frames = %+v", events)
+	}
+}
+
+func TestSubscribeTimelineClassifiesEOFAsExpectedClose(t *testing.T) {
+	if !isExpectedSubscribeClose(context.Background(), io.EOF) {
+		t.Fatal("io.EOF should be classified as an expected subscription close")
 	}
 }
 

@@ -16,12 +16,12 @@ import (
 func TestResolveProjectLocal(t *testing.T) {
 	project, err := ResolveProject(Config{
 		Type:  TypeLocal,
-		Local: LocalConfig{Root: "/tmp/aic_agent_sdk_test"},
+		Local: LocalConfig{Root: "/tmp/deep_agent_sdk_test"},
 	}, 1234, "cuda_demo")
 	if err != nil {
 		t.Fatalf("ResolveProject() error = %v", err)
 	}
-	want := filepath.Join("/tmp/aic_agent_sdk_test", "1234", "cuda_demo")
+	want := filepath.Join("/tmp/deep_agent_sdk_test", "1234", "cuda_demo")
 	if project.Name != "cuda_demo" || project.Path != want {
 		t.Fatalf("ResolveProject() = %#v, want name=%q path=%q", project, "cuda_demo", want)
 	}

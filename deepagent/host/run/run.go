@@ -7,9 +7,9 @@ import (
 	"sync"
 	"time"
 
-	"eino-cli/backend/consts"
-	"eino-cli/backend/session/rollback"
-	"eino-cli/backend/session/runs"
+	"eino-cli/deepagent/backend/consts"
+	"eino-cli/deepagent/backend/session/rollback"
+	"eino-cli/deepagent/backend/session/runs"
 	runtimecontext "eino-cli/deepagent/host/executioncontext"
 )
 
@@ -62,10 +62,15 @@ func NewManagerWithStore(store *runs.Store, rollbackStores ...*rollback.Store) (
 }
 
 func (manager *Manager) Begin(ctx context.Context, prompt string) (handle *Handle, err error) {
-	record, runContext, err := create(ctx, manager, prompt)
-	if err != nil {
-		return nil, err
+	manager.mu.Lock()
+	defer manager.mu.Unlock()
+	if manager.current != nil && (manager.current.Status == Pending || manager.current.Status == Running) {
+		return nil, fmt.Errorf("run already in progress")
 	}
+	runContext, cancel := context.WithCancel(ctx)
+	now := time.Now()
+	record := &Record{ID: fmt.Sprintf("run-%d", now.UnixNano()), SessionID: sessionIDFromContext(ctx), Prompt: prompt, Status: Pending, CreatedAt: now, UpdatedAt: now, Cancel: cancel}
+	manager.current = record
 	handle = &Handle{manager: manager, record: record, Context: runContext}
 	return handle, nil
 }
@@ -109,7 +114,21 @@ func (handle *Handle) Complete(status Status, output string, runErr error) {
 	if handle == nil || handle.manager == nil || handle.record == nil {
 		return
 	}
-	finish(handle.manager, handle.record, status, output, runErr)
+	manager, record := handle.manager, handle.record
+	manager.mu.Lock()
+	record.Status = status
+	record.Output = output
+	record.Err = runErr
+	record.UpdatedAt = time.Now()
+	store := manager.store
+	snapshot := toRecord(record)
+	manager.mu.Unlock()
+	if store == nil {
+		return
+	}
+	if err := store.Save(context.Background(), snapshot); err != nil {
+		slog.Warn("run store: save failed", "run_id", record.ID, "err", err)
+	}
 }
 
 func (handle *Handle) SaveWorkspaceSnapshot(ctx context.Context) (err error) {
@@ -131,36 +150,6 @@ func (handle *Handle) SaveWorkspaceSnapshot(ctx context.Context) (err error) {
 	markRollback(handle.manager, handle.record, path, "")
 	err = store.Save(context.Background(), toRecord(handle.record))
 	return err
-}
-
-func create(ctx context.Context, manager *Manager, prompt string) (record *Record, runContext context.Context, err error) {
-	manager.mu.Lock()
-	defer manager.mu.Unlock()
-	if manager.current != nil && (manager.current.Status == Pending || manager.current.Status == Running) {
-		return nil, nil, fmt.Errorf("run already in progress")
-	}
-	runContext, cancel := context.WithCancel(ctx)
-	now := time.Now()
-	record = &Record{ID: fmt.Sprintf("run-%d", now.UnixNano()), SessionID: sessionIDFromContext(ctx), Prompt: prompt, Status: Pending, CreatedAt: now, UpdatedAt: now, Cancel: cancel}
-	manager.current = record
-	return record, runContext, nil
-}
-
-func finish(manager *Manager, record *Record, status Status, output string, runErr error) {
-	manager.mu.Lock()
-	record.Status = status
-	record.Output = output
-	record.Err = runErr
-	record.UpdatedAt = time.Now()
-	store := manager.store
-	snapshot := toRecord(record)
-	manager.mu.Unlock()
-	if store == nil {
-		return
-	}
-	if err := store.Save(context.Background(), snapshot); err != nil {
-		slog.Warn("run store: save failed", "run_id", record.ID, "err", err)
-	}
 }
 
 func sessionIDFromContext(ctx context.Context) (sessionID string) {

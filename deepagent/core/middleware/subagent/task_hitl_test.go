@@ -86,7 +86,7 @@ func runSubAgentTaskHITLResume(t *testing.T, taskStreaming bool) {
 	// 两个普通工具 + 一个审批工具。首次运行时只有 approval_counter 中断。
 	plain1 := &fakeToolCounter{name: "plain_counter_1"}
 	approvalBase := &fakeToolCounter{name: "approval_counter"}
-	approvalTool := tools.NewInvokableApprovableTool(approvalBase, func(ctx context.Context, info *tools.ApprovalInfo) bool { return true })
+	approvalTool := tools.NewInvokablePolicyTool(approvalBase, tools.ApprovalGate(func(ctx context.Context, info *tools.ApprovalInfo) bool { return true }))
 	plain2 := &fakeToolCounter{name: "plain_counter_2"}
 
 	// 主模型 Stream：遍历输入检测子 agent 输出；若未检测到则发起/重发 task 调用

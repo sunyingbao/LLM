@@ -16,4 +16,4 @@ CREATE TABLE t_memory_stage1_output (
   UNIQUE KEY uniq_stage1_key (stage1_key),
   KEY idx_user_source (user_id, source_thread_id, source_updated_at),
   KEY idx_user_generated (user_id, generated_at)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci ROW_FORMAT=DYNAMIC COMMENT='AIC Agent SDK worker memory stage1 outputs';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci ROW_FORMAT=DYNAMIC COMMENT='DeepAgent worker memory stage1 outputs';

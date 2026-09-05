@@ -1341,8 +1341,6 @@ code.byted.org/middleware/multisyscall v0.0.0-20200423080544-5513823b88c2/go.mod
 code.byted.org/middleware/netpoll v0.9.0/go.mod h1:kFst3B19jC64cxxT16BxkNwyuGwfxZ7HzMR84enseW8=
 code.byted.org/middleware/netpoll v0.9.9/go.mod h1:kFst3B19jC64cxxT16BxkNwyuGwfxZ7HzMR84enseW8=
 code.byted.org/middleware/nhttp2 v0.1.1/go.mod h1:ABr3AqeiqsMjIhODmGNbHwrnUOtNL+Y5ZjLlzYKfa4I=
-code.byted.org/overpass/ad_creative_aic_agent_coordinator v0.0.0-20260710103014-69f06dfc7305 h1:LzwMBRJzAkqA/XjDTBsqF8UznbtXQAbgyK37i1XvWJA=
-code.byted.org/overpass/ad_creative_aic_agent_coordinator v0.0.0-20260710103014-69f06dfc7305/go.mod h1:X1QknGL7ymj8hh5o/T77t4oACMitBmw1BAz1Elp/RCU=
 code.byted.org/overpass/common v0.0.0-20240815141408-18f972b75038/go.mod h1:K/QmPZHS25vLk9n9AVtM2SHkD5PVHImcIWRAnAyvfRI=
 code.byted.org/overpass/common v0.0.0-20241127033622-79f193603286 h1:M0DrHcoJ6QIa2Jwe4TougP0N/Wm6PhuCPzpglQFZ7hg=
 code.byted.org/overpass/common v0.0.0-20241127033622-79f193603286/go.mod h1:K/QmPZHS25vLk9n9AVtM2SHkD5PVHImcIWRAnAyvfRI=

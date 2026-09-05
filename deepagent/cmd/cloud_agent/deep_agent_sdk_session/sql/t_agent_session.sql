@@ -1,0 +1,20 @@
+CREATE TABLE t_agent_session (
+  session_id BIGINT UNSIGNED NOT NULL COMMENT 'idgen generated session id',
+  uid BIGINT NOT NULL COMMENT 'owner user id',
+  project_name VARCHAR(256) NOT NULL DEFAULT '' COMMENT 'project directory name under user workspace',
+  project_path VARCHAR(1024) NOT NULL DEFAULT '' COMMENT 'resolved worker cwd for this session',
+  title VARCHAR(256) NOT NULL DEFAULT '' COMMENT 'session title',
+  status TINYINT NOT NULL DEFAULT 1 COMMENT '1 active, 2 archived, 3 closed',
+  main_thread_id BIGINT UNSIGNED NOT NULL DEFAULT 0 COMMENT 'main AC thread id',
+  last_message_preview VARCHAR(512) NOT NULL DEFAULT '' COMMENT 'list preview',
+  last_active_at_ms BIGINT NOT NULL DEFAULT 0 COMMENT 'last active time in ms',
+  created_at_ms BIGINT NOT NULL DEFAULT 0 COMMENT 'create time in ms',
+  updated_at_ms BIGINT NOT NULL DEFAULT 0 COMMENT 'update time in ms',
+  closed_at_ms BIGINT NOT NULL DEFAULT 0 COMMENT 'close time in ms',
+  metadata_json TEXT COMMENT 'small business metadata json',
+  PRIMARY KEY (session_id),
+  KEY idx_user_session (uid, session_id),
+  KEY idx_uid_project_active (uid, project_name, status, last_active_at_ms),
+  KEY idx_user_status_active (uid, status, last_active_at_ms),
+  KEY idx_main_thread (main_thread_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci ROW_FORMAT=DYNAMIC COMMENT='DeepAgent session index';

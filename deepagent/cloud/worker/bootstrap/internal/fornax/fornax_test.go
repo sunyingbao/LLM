@@ -9,7 +9,7 @@ import (
 
 	"code.byted.org/flowdevops/fornax_sdk/consts"
 	"code.byted.org/flowdevops/fornax_sdk/infra/ctxmeta"
-	"eino-cli/deepagent/cloud/worker/runtimectx"
+	"eino-cli/deepagent/worker/thread/runtimectx"
 	"github.com/cloudwego/eino/callbacks"
 	"github.com/cloudwego/eino/compose"
 )

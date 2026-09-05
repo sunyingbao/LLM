@@ -332,38 +332,6 @@ func TestFindMatchingBracket(t *testing.T) {
 	})
 }
 
-func TestRepairUnclosed(t *testing.T) {
-	t.Run("add missing closing brace", func(t *testing.T) {
-		s := `{"key": "value"`
-		result := repairUnclosed(s)
-		assert.Equal(t, `{"key": "value"}`, result)
-	})
-
-	t.Run("add missing closing bracket", func(t *testing.T) {
-		s := `[1, 2, 3`
-		result := repairUnclosed(s)
-		assert.Equal(t, `[1, 2, 3]`, result)
-	})
-
-	t.Run("add multiple missing closings", func(t *testing.T) {
-		s := `{"arr": [1, 2`
-		result := repairUnclosed(s)
-		assert.Equal(t, `{"arr": [1, 2]}`, result)
-	})
-
-	t.Run("deeply nested", func(t *testing.T) {
-		s := `{"a": {"b": {"c": 1`
-		result := repairUnclosed(s)
-		assert.Equal(t, `{"a": {"b": {"c": 1}}}`, result)
-	})
-
-	t.Run("already complete", func(t *testing.T) {
-		s := `{"key": "value"}`
-		result := repairUnclosed(s)
-		assert.Equal(t, s, result)
-	})
-}
-
 func TestTruncateString(t *testing.T) {
 	t.Run("short string unchanged", func(t *testing.T) {
 		s := "hello"

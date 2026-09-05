@@ -18,4 +18,4 @@ CREATE TABLE t_memory_source (
   UNIQUE KEY uniq_user_source (user_id, source_thread_id),
   KEY idx_stage1_claim (mode, eligible_at, lease_until),
   KEY idx_user_updated (user_id, updated_at)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci ROW_FORMAT=DYNAMIC COMMENT='AIC Agent SDK worker memory stage1 source candidates';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci ROW_FORMAT=DYNAMIC COMMENT='DeepAgent worker memory stage1 source candidates';

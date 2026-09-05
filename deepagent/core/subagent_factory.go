@@ -48,7 +48,7 @@ func createSubAgentFactory(parentConfig *Config) subagent.SubAgentFactory {
 			}
 		}
 
-		parentFilesystemCfg := parentConfig.effectiveFilesystemConfig()
+		parentFilesystemCfg := parentConfig.filesystemConfig()
 		parentWorkDir := parentFilesystemCfg.WorkDir
 
 		// 显式能力声明：文件系统（含本地上下文）
@@ -63,13 +63,10 @@ func createSubAgentFactory(parentConfig *Config) subagent.SubAgentFactory {
 		}
 
 		// 显式能力声明：Web
-		if sa.EnableWeb && parentConfig.EnableWeb {
-			webConfig := web.DefaultConfig()
-			if parentConfig.WebConfig != nil {
-				*webConfig = *parentConfig.WebConfig
-			}
+		if sa.EnableWeb && parentConfig.WebConfig != nil {
+			webConfig := *parentConfig.WebConfig
 			webConfig.ToolMask = deeptools.CombineMasks(webConfig.ToolMask, sa.ToolMask)
-			opts = append(opts, WithMiddleware(web.New(webConfig)))
+			opts = append(opts, WithMiddleware(web.New(&webConfig)))
 		}
 
 		// 手动指定的 Tools
@@ -108,14 +105,8 @@ func registerSubAgentSharedCustomState(subAgent *DeepAgent, parentConfig *Config
 }
 
 // withSubAgentFeatures 为子代理继承父配置的部分功能
-func withSubAgentFeatures(parentConfig *Config) Option {
-	return func(c *Config) {
-		// 继承工作目录
-		if workDir := parentConfig.effectiveFilesystemWorkDir(); workDir != "" {
-			c.WorkDir = workDir
-			c.workDirExplicit = true
-		}
-
+func withSubAgentFeatures(parentConfig *Config) (option Option) {
+	option = func(c *Config) {
 		// 继承后端
 		if parentConfig.Backend != nil {
 			c.Backend = parentConfig.Backend
@@ -128,10 +119,9 @@ func withSubAgentFeatures(parentConfig *Config) Option {
 
 		// 子代理不继承以下功能，避免复杂性和递归：
 		// - SubAgents（避免递归）
-		// - EnablePlanning（子代理应该专注于具体任务）
 		// - EnableHITL（由父代理控制）
-		// - EnableSummarization（子代理任务通常较短）
 	}
+	return option
 }
 
 // subAgentRunnerAdapter 将 DeepAgent 适配为 SubAgentRunner 接口

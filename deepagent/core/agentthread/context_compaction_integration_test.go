@@ -319,10 +319,12 @@ func TestAgentThreadCompactionContinuesWithRebuiltHistory(t *testing.T) {
 	).AnyTimes()
 
 	store := NewInMemoryHistoryRolloutStore()
-	thread := NewThread("thread-compact-continue", &TurnRunnerConfig{
-		ChatModel:       cm,
-		CheckpointStore: checkpointer.NewInMemoryStore(),
-	}, make(chan Event, 128), DefaultThreadOptions{
+	thread := New("thread-compact-continue", &TurnConfig{
+		Agent: deepagents.Config{
+			Model:           cm,
+			CheckpointStore: checkpointer.NewInMemoryStore(),
+		},
+	}, make(chan Event, 128), ThreadOptions{
 		HistoryStore:       store,
 		CompactionStrategy: strategy,
 		TokenCounter:       compactionTestContentLengthCounter,
@@ -401,22 +403,24 @@ func TestAgentThreadCompactionBeforeApproveResume(t *testing.T) {
 	).AnyTimes()
 
 	approvedBase := &countingToolResult{name: "approval_tool", result: `{"approved":true}`}
-	approvalTool := deeptools.NewInvokableApprovableTool(approvedBase, func(context.Context, *deeptools.ApprovalInfo) bool {
+	approvalTool := deeptools.NewInvokablePolicyTool(approvedBase, deeptools.ApprovalGate(func(context.Context, *deeptools.ApprovalInfo) bool {
 		return true
-	})
+	}))
 
 	bus := make(chan Event, 256)
 	store := NewInMemoryHistoryRolloutStore()
-	thread := NewThread("thread-compact-resume", &TurnRunnerConfig{
-		ChatModel:       cm,
-		Tools:           []tool.BaseTool{approvalTool},
-		CheckpointStore: checkpointer.NewInMemoryStore(),
-		HITLConfig: &deepagents.HITLConfig{
-			NeedApproveTools: map[string]deeptools.NeedApproval{
-				"approval_tool": func(context.Context, *deeptools.ApprovalInfo) bool { return true },
+	thread := New("thread-compact-resume", &TurnConfig{
+		Agent: deepagents.Config{
+			Model:           cm,
+			Tools:           []tool.BaseTool{approvalTool},
+			CheckpointStore: checkpointer.NewInMemoryStore(),
+			HITLConfig: &deepagents.HITLConfig{
+				ToolPolicyGates: map[string]deeptools.ToolPolicyGate{
+					"approval_tool": deeptools.ApprovalGate(func(context.Context, *deeptools.ApprovalInfo) bool { return true }),
+				},
 			},
 		},
-	}, bus, DefaultThreadOptions{
+	}, bus, ThreadOptions{
 		HistoryStore:       store,
 		CompactionStrategy: strategy,
 		TokenCounter:       compactionTestContentLengthCounter,
@@ -489,10 +493,12 @@ func TestIntegrationAgentThreadCompactionWithRealModel(t *testing.T) {
 		for range eventBus {
 		}
 	}()
-	thread := NewThread(threadID, &TurnRunnerConfig{
-		ChatModel:       chatModel,
-		CheckpointStore: checkpointer.NewInMemoryStore(),
-	}, eventBus, DefaultThreadOptions{
+	thread := New(threadID, &TurnConfig{
+		Agent: deepagents.Config{
+			Model:           chatModel,
+			CheckpointStore: checkpointer.NewInMemoryStore(),
+		},
+	}, eventBus, ThreadOptions{
 		HistoryStore:       store,
 		CompactionStrategy: strategy,
 		TokenCounter:       compactionTestContentLengthCounter,

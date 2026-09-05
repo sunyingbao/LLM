@@ -12,7 +12,7 @@ func TestRouterUsesImmutableRuntimeBinding(t *testing.T) {
 	local := &routingClient{kind: RuntimeLocal}
 	remoteFailure := errors.New("remote unavailable")
 	remote := &routingClient{kind: RuntimeRemote, submitErr: remoteFailure}
-	router := &Router{Local: local, Remote: remote, Index: NewMemoryThreadIndex()}
+	router := &Router{Local: local, Remote: remote}
 
 	created, err := router.CreateThread(context.Background(), CreateThreadRequest{Runtime: RuntimeRemote})
 	if err != nil {

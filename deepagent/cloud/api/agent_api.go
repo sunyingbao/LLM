@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"sort"
 	"strings"
 	"time"
@@ -718,14 +719,14 @@ func isRecoverExpired(err error) bool {
 	return err != nil && strings.Contains(strings.ToLower(err.Error()), "recover expired")
 }
 
-func isExpectedSubscribeClose(ctx context.Context, err error) bool {
+func isExpectedSubscribeClose(ctx context.Context, err error) (expected bool) {
 	if err == nil {
 		return false
 	}
 	if ctx != nil && ctx.Err() != nil {
 		return true
 	}
-	if errors.Is(err, context.Canceled) {
+	if errors.Is(err, context.Canceled) || errors.Is(err, io.EOF) {
 		return true
 	}
 	return strings.Contains(strings.ToLower(err.Error()), "context canceled")

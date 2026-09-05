@@ -2,9 +2,7 @@ package deepagents
 
 import (
 	"context"
-	"errors"
 	"fmt"
-	"io"
 	"strings"
 
 	"eino-cli/deepagent/core/constant"
@@ -24,72 +22,84 @@ import (
 	"github.com/cloudwego/eino/schema"
 )
 
-// einoGraphConfig 构建图的配置
-type einoGraphConfig struct {
-	chatModel            model.ToolCallingChatModel
-	tools                []tool.BaseTool
-	maxSteps             int
-	checkpointStore      compose.CheckPointStore
-	interruptBeforeNodes []string
-	interruptAfterNodes  []string
-	middlewareChain      *middleware.MiddlewareChain
-	enableStreamToolCall bool
-	// toolNodePreHandler/toolNodePostHandler 仅作用于非流式 tools 节点。
-	toolNodePreHandler  ToolNodePreHandler
-	toolNodePostHandler ToolNodePostHandler
-	// reactLoopBranchPolicy 控制 model/tools 节点后的分支；为空时保持默认 React loop。
-	reactLoopBranchPolicy graph_lib.ReactLoopBranchPolicy
-}
-
 func buildGraphWithConfig(
 	ctx context.Context,
-	cfg *einoGraphConfig,
-) (compose.Runnable[[]*schema.Message, *schema.Message], error) {
-	// 阶段 1：将工具描述绑定到模型，供模型生成合法的 tool call。
-	modelWithTools, err := bindToolsToModel(ctx, cfg)
+	cfg Config,
+	allTools []tool.BaseTool,
+	chain *middleware.MiddlewareChain,
+) (runnable compose.Runnable[[]*schema.Message, *schema.Message], err error) {
+	modelWithTools, err := bindToolsToModel(ctx, cfg.Model, allTools)
 	if err != nil {
 		return nil, err
 	}
 
-	// 阶段 2：创建 Eino Graph，并为每次运行准备局部状态。
 	graph := compose.NewGraph[[]*schema.Message, *schema.Message](
-		compose.WithGenLocalState(func(ctx context.Context) *types.GraphLocalState {
+		compose.WithGenLocalState(func(_ context.Context) (state *types.GraphLocalState) {
 			return &types.GraphLocalState{}
 		}))
 
-	// 阶段 3：添加模型节点、工具节点和可选的 React Loop 策略节点。
-	err = addModelNode(graph, modelWithTools, cfg)
+	err = graph.AddChatModelNode(constant.NodeKeyModel, modelWithTools,
+		compose.WithStatePreHandler(createModelPreHandler(chain)),
+		choose.If(cfg.EnableStreamToolCall,
+			compose.WithStreamStatePostHandler(createModelStreamPostHandler(chain)),
+			compose.WithStatePostHandler(createModelPostHandler(chain))),
+		compose.WithNodeName(constant.NodeKeyModel),
+	)
 	if err != nil {
 		return nil, err
 	}
 
-	err = addToolsNode(ctx, graph, cfg)
+	err = addToolsNode(ctx, graph, &cfg, allTools, chain)
 	if err != nil {
 		return nil, err
 	}
 
-	err = addReactLoopPolicyNodes(graph, cfg)
+	err = addContinueNode(graph, cfg.ContinueAfterModel != nil)
 	if err != nil {
 		return nil, err
 	}
 
-	// 阶段 4：连接图的入口、模型分支、工具分支和结束节点。
-	err = connectGraph(graph, cfg)
-	if err != nil {
+	if err := graph.AddEdge(compose.START, constant.NodeKeyModel); err != nil {
 		return nil, err
 	}
+	if cfg.ContinueAfterModel != nil {
+		if err := graph.AddEdge(constant.NodeKeyContinue, constant.NodeKeyModel); err != nil {
+			return nil, err
+		}
+	}
+	if err := connectModelRoute(graph, &cfg, len(allTools) > 0); err != nil {
+		return nil, err
+	}
+	if len(allTools) > 0 {
+		if err := graph.AddEdge(constant.NodeKeyTools, constant.NodeKeyModel); err != nil {
+			return nil, err
+		}
+	}
 
-	// 阶段 5：应用运行步数、checkpoint 和中断配置，编译为 Runnable。
-	return compileGraph(ctx, graph, cfg)
+	compileOpts := []compose.GraphCompileOption{
+		compose.WithGraphName(constant.GraphName),
+		compose.WithNodeTriggerMode(compose.AnyPredecessor),
+		compose.WithMaxRunSteps(cfg.MaxSteps),
+	}
+	if cfg.CheckpointStore != nil {
+		compileOpts = append(compileOpts, compose.WithCheckPointStore(cfg.CheckpointStore))
+	}
+	if len(cfg.InterruptBeforeNodes) > 0 {
+		compileOpts = append(compileOpts, compose.WithInterruptBeforeNodes(cfg.InterruptBeforeNodes))
+	}
+	if len(cfg.InterruptAfterNodes) > 0 {
+		compileOpts = append(compileOpts, compose.WithInterruptAfterNodes(cfg.InterruptAfterNodes))
+	}
+	return graph.Compile(ctx, compileOpts...)
 }
 
-func bindToolsToModel(ctx context.Context, cfg *einoGraphConfig) (model.ToolCallingChatModel, error) {
-	if len(cfg.tools) == 0 {
-		return cfg.chatModel, nil
+func bindToolsToModel(ctx context.Context, chatModel model.ToolCallingChatModel, allTools []tool.BaseTool) (boundModel model.ToolCallingChatModel, err error) {
+	if len(allTools) == 0 {
+		return chatModel, nil
 	}
 
-	toolInfos := make([]*schema.ToolInfo, 0, len(cfg.tools))
-	for _, t := range cfg.tools {
+	toolInfos := make([]*schema.ToolInfo, 0, len(allTools))
+	for _, t := range allTools {
 		info, err := t.Info(ctx)
 		if err != nil {
 			return nil, err
@@ -97,39 +107,27 @@ func bindToolsToModel(ctx context.Context, cfg *einoGraphConfig) (model.ToolCall
 		toolInfos = append(toolInfos, info)
 	}
 
-	return cfg.chatModel.WithTools(toolInfos)
-}
-
-func addModelNode(
-	graph *compose.Graph[[]*schema.Message, *schema.Message],
-	modelWithTools model.ToolCallingChatModel,
-	cfg *einoGraphConfig,
-) error {
-	return graph.AddChatModelNode(constant.NodeKeyModel, modelWithTools,
-		compose.WithStatePreHandler(createModelPreHandler(cfg.middlewareChain)),
-		choose.If(cfg.enableStreamToolCall,
-			compose.WithStreamStatePostHandler(createModelStreamPostHandler(cfg.middlewareChain)),
-			compose.WithStatePostHandler(createModelPostHandler(cfg.middlewareChain))),
-		compose.WithNodeName(constant.NodeKeyModel),
-	)
+	return chatModel.WithTools(toolInfos)
 }
 
 func addToolsNode(
 	ctx context.Context,
 	graph *compose.Graph[[]*schema.Message, *schema.Message],
-	cfg *einoGraphConfig,
-) error {
-	if len(cfg.tools) == 0 {
+	cfg *Config,
+	allTools []tool.BaseTool,
+	chain *middleware.MiddlewareChain,
+) (err error) {
+	if len(allTools) == 0 {
 		return nil
 	}
 
 	toolsConfig := compose.ToolsNodeConfig{
-		Tools:               cfg.tools,
-		UnknownToolsHandler: unknownToolHandler(toolNames(ctx, cfg.tools)),
+		Tools:               allTools,
+		UnknownToolsHandler: unknownToolHandler(toolNames(ctx, allTools)),
 		ExecuteSequentially: false,
-		ToolCallMiddlewares: cfg.middlewareChain.ToolCallMiddlewares(),
+		ToolCallMiddlewares: chain.ToolCallMiddlewares(),
 	}
-	if cfg.enableStreamToolCall {
+	if cfg.EnableStreamToolCall {
 		streamingToolsNode, err := graph_lib.CreateStreamingToolLambda(ctx, &toolsConfig)
 		if err != nil {
 			return err
@@ -146,20 +144,20 @@ func addToolsNode(
 	toolNodeOpts := []compose.GraphAddNodeOpt{
 		compose.WithNodeName(constant.NodeKeyTools),
 	}
-	if cfg.toolNodePreHandler != nil {
-		toolNodeOpts = append(toolNodeOpts, compose.WithStatePreHandler(adaptToolNodePreHandler(cfg.toolNodePreHandler)))
+	if cfg.ToolNodePreHandler != nil {
+		toolNodeOpts = append(toolNodeOpts, compose.WithStatePreHandler(adaptToolNodePreHandler(cfg.ToolNodePreHandler)))
 	}
-	if cfg.toolNodePostHandler != nil {
-		toolNodeOpts = append(toolNodeOpts, compose.WithStatePostHandler(adaptToolNodePostHandler(cfg.toolNodePostHandler)))
+	if cfg.ToolNodePostHandler != nil {
+		toolNodeOpts = append(toolNodeOpts, compose.WithStatePostHandler(adaptToolNodePostHandler(cfg.ToolNodePostHandler)))
 	}
 	return graph.AddToolsNode(constant.NodeKeyTools, toolsNode, toolNodeOpts...)
 }
 
-func addReactLoopPolicyNodes(
+func addContinueNode(
 	graph *compose.Graph[[]*schema.Message, *schema.Message],
-	cfg *einoGraphConfig,
-) error {
-	if cfg.reactLoopBranchPolicy == nil {
+	enabled bool,
+) (err error) {
+	if !enabled {
 		return nil
 	}
 
@@ -184,103 +182,17 @@ func addReactLoopPolicyNodes(
 	if err != nil {
 		return err
 	}
-	if err := graph.AddLambdaNode(constant.NodeKeyContinue, continueNode,
+	return graph.AddLambdaNode(constant.NodeKeyContinue, continueNode,
 		compose.WithNodeName(constant.NodeKeyContinue),
-	); err != nil {
-		return err
-	}
-
-	if len(cfg.tools) == 0 {
-		return nil
-	}
-
-	terminalToolMessage := func(messages []*schema.Message) *schema.Message {
-		/*
-			从 Tools 节点输出的多条消息中，选出最后一条非nil的tool 消息作为整个 Graph 的最终结果
-		*/
-		for i := len(messages) - 1; i >= 0; i-- {
-			if messages[i] != nil {
-				return graph_lib.CopyMessage(messages[i])
-			}
-		}
-		return &schema.Message{Role: schema.Assistant}
-	}
-
-	toolResultTerminal, err := compose.AnyLambda[[]*schema.Message, *schema.Message, struct{}](
-		func(_ context.Context, messages []*schema.Message, _ ...struct{}) (*schema.Message, error) {
-			return terminalToolMessage(messages), nil
-		},
-		nil,
-		func(_ context.Context, input *schema.StreamReader[[]*schema.Message], _ ...struct{}) (*schema.Message, error) {
-			if input == nil {
-				return terminalToolMessage(nil), nil
-			}
-			defer input.Close()
-
-			var messages []*schema.Message
-			for {
-				chunk, recvErr := input.Recv()
-				if errors.Is(recvErr, io.EOF) {
-					return terminalToolMessage(messages), nil
-				}
-				if recvErr != nil {
-					return nil, recvErr
-				}
-				for _, message := range chunk {
-					if message != nil {
-						messages = append(messages, graph_lib.CopyMessage(message))
-					}
-				}
-			}
-		},
-		nil,
 	)
-	if err != nil {
-		return err
-	}
-	return graph.AddLambdaNode(constant.NodeKeyToolResultTerminal, toolResultTerminal,
-		compose.WithNodeName(constant.NodeKeyToolResultTerminal),
-	)
-}
-
-func connectGraph(
-	graph *compose.Graph[[]*schema.Message, *schema.Message],
-	cfg *einoGraphConfig,
-) error {
-	if err := graph.AddEdge(compose.START, constant.NodeKeyModel); err != nil {
-		return err
-	}
-	if err := connectPolicyNodeRoutes(graph, cfg); err != nil {
-		return err
-	}
-	if err := connectModelRoute(graph, cfg); err != nil {
-		return err
-	}
-	return connectToolsRoute(graph, cfg)
-}
-
-func connectPolicyNodeRoutes(
-	graph *compose.Graph[[]*schema.Message, *schema.Message],
-	cfg *einoGraphConfig,
-) error {
-	if cfg.reactLoopBranchPolicy == nil {
-		return nil
-	}
-	if err := graph.AddEdge(constant.NodeKeyContinue, constant.NodeKeyModel); err != nil {
-		return err
-	}
-	if len(cfg.tools) == 0 {
-		return nil
-	}
-	return graph.AddEdge(constant.NodeKeyToolResultTerminal, compose.END)
 }
 
 func connectModelRoute(
 	graph *compose.Graph[[]*schema.Message, *schema.Message],
-	cfg *einoGraphConfig,
-) error {
-	hasTools := len(cfg.tools) > 0
-	if !hasTools && cfg.reactLoopBranchPolicy == nil {
+	cfg *Config,
+	hasTools bool,
+) (err error) {
+	if !hasTools && cfg.ContinueAfterModel == nil {
 		return graph.AddEdge(constant.NodeKeyModel, compose.END)
 	}
 
@@ -288,49 +200,32 @@ func connectModelRoute(
 	if hasTools {
 		endNodes[constant.NodeKeyTools] = true
 	}
-	if cfg.reactLoopBranchPolicy != nil {
+	if cfg.ContinueAfterModel != nil {
 		endNodes[constant.NodeKeyContinue] = true
 	}
 
-	selectNextNode := func(ctx context.Context, message *schema.Message, hasToolCall bool) (string, error) {
-		decision := graph_lib.ReactLoopBranchToEnd
+	selectNextNode := func(ctx context.Context, hasToolCall bool) (nextNode string, err error) {
 		if hasTools && hasToolCall {
-			decision = graph_lib.ReactLoopBranchToTools
-		}
-		if cfg.reactLoopBranchPolicy != nil {
-			override, err := cfg.reactLoopBranchPolicy.AfterModel(ctx, graph_lib.ReactLoopAfterModelInput{
-				Message:     graph_lib.CopyMessage(message),
-				Default:     decision,
-				HasToolCall: hasToolCall,
-			})
-			if err != nil {
-				return "", err
-			}
-			if override != graph_lib.ReactLoopBranchDefault {
-				decision = override
-			}
-		}
-
-		switch decision {
-		case graph_lib.ReactLoopBranchToTools:
-			if !hasTools {
-				return "", errors.New("react loop branch decision ToTools requires tools node")
-			}
 			return constant.NodeKeyTools, nil
-		case graph_lib.ReactLoopBranchToExecutor:
-			return constant.NodeKeyContinue, nil
-		case graph_lib.ReactLoopBranchToEnd:
-			return compose.END, nil
-		default:
-			return "", errors.New("unknown react loop branch decision")
 		}
+		if cfg.ContinueAfterModel == nil {
+			return compose.END, nil
+		}
+		continueRun, err := cfg.ContinueAfterModel(ctx)
+		if err != nil {
+			return "", err
+		}
+		if continueRun {
+			return constant.NodeKeyContinue, nil
+		}
+		return compose.END, nil
 	}
 
-	if !cfg.enableStreamToolCall {
+	if !cfg.EnableStreamToolCall {
 		return graph.AddBranch(constant.NodeKeyModel, compose.NewGraphBranch(
 			func(ctx context.Context, message *schema.Message) (string, error) {
 				hasToolCall := message != nil && len(message.ToolCalls) > 0
-				return selectNextNode(ctx, message, hasToolCall)
+				return selectNextNode(ctx, hasToolCall)
 			},
 			endNodes,
 		))
@@ -342,51 +237,10 @@ func connectModelRoute(
 			if err != nil {
 				return "", err
 			}
-			return selectNextNode(ctx, nil, hasToolCall)
+			return selectNextNode(ctx, hasToolCall)
 		},
 		endNodes,
 	))
-}
-
-func connectToolsRoute(
-	graph *compose.Graph[[]*schema.Message, *schema.Message],
-	cfg *einoGraphConfig,
-) error {
-	if len(cfg.tools) == 0 {
-		return nil
-	}
-	if cfg.reactLoopBranchPolicy == nil {
-		return graph.AddEdge(constant.NodeKeyTools, constant.NodeKeyModel)
-	}
-	return graph.AddBranch(constant.NodeKeyTools, graph_lib.CreateReactLoopToolsBranch(
-		cfg.enableStreamToolCall,
-		cfg.reactLoopBranchPolicy,
-	))
-}
-
-func compileGraph(
-	ctx context.Context,
-	graph *compose.Graph[[]*schema.Message, *schema.Message],
-	cfg *einoGraphConfig,
-) (compose.Runnable[[]*schema.Message, *schema.Message], error) {
-	compileOpts := []compose.GraphCompileOption{
-		compose.WithGraphName(constant.GraphName),
-		compose.WithNodeTriggerMode(compose.AnyPredecessor),
-		compose.WithMaxRunSteps(cfg.maxSteps),
-	}
-
-	if cfg.checkpointStore != nil {
-		compileOpts = append(compileOpts, compose.WithCheckPointStore(cfg.checkpointStore))
-	}
-
-	if len(cfg.interruptBeforeNodes) > 0 {
-		compileOpts = append(compileOpts, compose.WithInterruptBeforeNodes(cfg.interruptBeforeNodes))
-	}
-	if len(cfg.interruptAfterNodes) > 0 {
-		compileOpts = append(compileOpts, compose.WithInterruptAfterNodes(cfg.interruptAfterNodes))
-	}
-
-	return graph.Compile(ctx, compileOpts...)
 }
 
 func toolNames(ctx context.Context, tools []tool.BaseTool) []string {
@@ -526,7 +380,6 @@ func collectAllTools(ctx context.Context, chain *middleware.MiddlewareChain, cfg
 	allTools = filterToolsByMask(ctx, allTools, cfg.ToolMask)
 
 	if hitl != nil {
-		apTools := sets.NewStringSetFromSlice(gmap.Keys(hitl.NeedApproveTools))
 		policyTools := sets.NewStringSetFromSlice(gmap.Keys(hitl.ToolPolicyGates))
 		reviewEditTools := sets.NewStringSetFromSlice(gmap.Keys(hitl.NeedReviewAndEditTools))
 
@@ -537,28 +390,13 @@ func collectAllTools(ctx context.Context, chain *middleware.MiddlewareChain, cfg
 				continue
 			}
 
-			if apTools.Contains(tInfo.Name) && policyTools.Contains(tInfo.Name) {
-				return nil, fmt.Errorf("tool %q cannot be configured in both NeedApproveTools and ToolPolicyGates", tInfo.Name)
-			}
-
 			if policyTools.Contains(tInfo.Name) {
 				if invokeTool, ok := t.(tool.InvokableTool); ok {
 					gate := hitl.ToolPolicyGates[tInfo.Name]
 					if gate.Policy == nil {
 						return nil, fmt.Errorf("tool %q policy gate requires Policy", tInfo.Name)
 					}
-					if gate.DenyFormatter == nil {
-						return nil, fmt.Errorf("tool %q policy gate requires DenyFormatter", tInfo.Name)
-					}
 					allTools[i] = tools.NewInvokablePolicyTool(invokeTool, gate)
-				}
-
-				continue
-			}
-
-			if apTools.Contains(tInfo.Name) {
-				if invokeTool, ok := t.(tool.InvokableTool); ok {
-					allTools[i] = tools.NewInvokableApprovableTool(invokeTool, hitl.NeedApproveTools[tInfo.Name])
 				}
 
 				continue
